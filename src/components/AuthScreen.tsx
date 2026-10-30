@@ -32,6 +32,7 @@ export interface AuthUser {
 
 interface AuthScreenProps {
   onLoginSuccess: (user: AuthUser) => void;
+  lockedRole?: UserRole;
 }
 
 // Pre-seeded demo credentials for quick 1-tap testing of each role
@@ -71,7 +72,7 @@ export const DEMO_USERS: Record<UserRole, AuthUser & { pass: string }> = {
   },
 };
 
-export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
+export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, lockedRole }) => {
   const [authMode, setAuthMode] = useState<'LOGIN' | 'SIGNUP'>('LOGIN');
   const [loginMethod, setLoginMethod] = useState<'EMAIL' | 'PHONE'>('EMAIL');
   
@@ -81,7 +82,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [selectedRole, setSelectedRole] = useState<UserRole>('CUSTOMER');
+  const [selectedRole, setSelectedRole] = useState<UserRole>(lockedRole || 'CUSTOMER');
+  const effectiveRole: UserRole = lockedRole || selectedRole;
   
   // Phone OTP state
   const [otpSent, setOtpSent] = useState(false);
@@ -120,16 +122,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       );
 
       if (matchedRole && DEMO_USERS[matchedRole].pass === cleanPass) {
+        if (lockedRole && matchedRole !== lockedRole) {
+          setErrorMessage(`This standalone app is restricted to ${lockedRole} accounts only.`);
+          return;
+        }
         onLoginSuccess(DEMO_USERS[matchedRole]);
         return;
       }
 
       // Allow login with any valid formatted email/pass
       if (cleanPass.length >= 4) {
-        // Derive role from email or selected role
-        let assignedRole: UserRole = selectedRole;
-        if (cleanEmail.includes('admin')) assignedRole = 'ADMIN';
-        else if (cleanEmail.includes('rider') || cleanEmail.includes('partner')) assignedRole = 'RIDER';
+        // Derive role from lockedRole, email, or selected role
+        let assignedRole: UserRole = effectiveRole;
+        if (!lockedRole) {
+          if (cleanEmail.includes('admin')) assignedRole = 'ADMIN';
+          else if (cleanEmail.includes('rider') || cleanEmail.includes('partner')) assignedRole = 'RIDER';
+        }
 
         const user: AuthUser = {
           id: `usr_${Date.now()}`,
@@ -160,12 +168,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         name: fullName.trim(),
         email: cleanEmail,
         phone: phone.trim() || '9876543210',
-        role: selectedRole,
+        role: effectiveRole,
         avatarText: fullName.trim().slice(0, 2).toUpperCase(),
         createdAt: new Date().toISOString().slice(0, 10),
       };
 
-      setSuccessNotice(`Account created successfully! Routing to ${selectedRole} dashboard...`);
+      setSuccessNotice(`Account created successfully! Routing to ${effectiveRole} dashboard...`);
       setTimeout(() => {
         onLoginSuccess(newUser);
       }, 500);
@@ -202,8 +210,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       name: fullName.trim() || `User ${phone.slice(-4)}`,
       email: `${phone.replace(/\D/g, '').slice(-10)}@mobile.quickdelivery.in`,
       phone: phone.replace(/\D/g, '').slice(-10),
-      role: selectedRole,
-      avatarText: selectedRole.slice(0, 2),
+      role: effectiveRole,
+      avatarText: effectiveRole.slice(0, 2),
       createdAt: new Date().toISOString().slice(0, 10),
     };
 
@@ -216,13 +224,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       {/* Brand Logo & Header */}
       <div className="w-full max-w-md text-center space-y-2 mb-6">
         <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-[#059669] to-[#10B981] text-white font-black text-2xl shadow-xl shadow-emerald-950/40 border border-emerald-300/40">
-          ⚡
+          {lockedRole === 'RIDER' ? '🛵' : lockedRole === 'ADMIN' ? '🏢' : '⚡'}
         </div>
         <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-          Quick Delivery
+          {lockedRole === 'RIDER'
+            ? 'Quick Delivery Partner'
+            : lockedRole === 'ADMIN'
+            ? 'Quick Delivery Admin'
+            : 'Quick Delivery'}
         </h1>
         <p className="text-xs text-[#A7F3D0]/80 font-medium">
-          Role-Based Access Control • Customer • Rider Partner • Admin Enterprise
+          {lockedRole === 'CUSTOMER'
+            ? 'Standalone Customer App • Hyperlocal Parcel Booking & Live Tracking'
+            : lockedRole === 'RIDER'
+            ? 'Standalone Rider Partner App • Live Dispatch & 80% Earnings'
+            : lockedRole === 'ADMIN'
+            ? 'Standalone Admin Enterprise App • Real-Time Fleet & Order Control'
+            : 'Role-Based Access Control • Customer • Rider Partner • Admin Enterprise'}
         </p>
       </div>
 
@@ -283,41 +301,49 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
                 <Sparkles className="w-3 h-3 text-[#059669]" />
-                <span>Instant 1-Tap Role Logins (Demo)</span>
+                <span>
+                  {lockedRole ? `Instant 1-Tap ${lockedRole} Login (Demo)` : 'Instant 1-Tap Role Logins (Demo)'}
+                </span>
               </span>
               <span className="text-[9px] text-[#059669] font-bold">Auto-Routes</span>
             </div>
 
-            <div className="grid grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleDemoLogin('CUSTOMER')}
-                className="p-2 rounded-xl bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition cursor-pointer text-center group"
-              >
-                <div className="text-base group-hover:scale-110 transition">👤</div>
-                <div className="text-[11px] font-black text-slate-800 mt-0.5">Customer</div>
-                <div className="text-[9px] text-slate-400">Book &amp; Track</div>
-              </button>
+            <div className={`grid ${lockedRole ? 'grid-cols-1' : 'grid-cols-3'} gap-1.5`}>
+              {(!lockedRole || lockedRole === 'CUSTOMER') && (
+                <button
+                  type="button"
+                  onClick={() => handleDemoLogin('CUSTOMER')}
+                  className="p-2 rounded-xl bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition cursor-pointer text-center group"
+                >
+                  <div className="text-base group-hover:scale-110 transition">👤</div>
+                  <div className="text-[11px] font-black text-slate-800 mt-0.5">Customer</div>
+                  <div className="text-[9px] text-slate-400">Book &amp; Track</div>
+                </button>
+              )}
 
-              <button
-                type="button"
-                onClick={() => handleDemoLogin('RIDER')}
-                className="p-2 rounded-xl bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition cursor-pointer text-center group"
-              >
-                <div className="text-base group-hover:scale-110 transition">🏍️</div>
-                <div className="text-[11px] font-black text-slate-800 mt-0.5">Rider Partner</div>
-                <div className="text-[9px] text-slate-400">Deliver 80%</div>
-              </button>
+              {(!lockedRole || lockedRole === 'RIDER') && (
+                <button
+                  type="button"
+                  onClick={() => handleDemoLogin('RIDER')}
+                  className="p-2 rounded-xl bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition cursor-pointer text-center group"
+                >
+                  <div className="text-base group-hover:scale-110 transition">🏍️</div>
+                  <div className="text-[11px] font-black text-slate-800 mt-0.5">Rider Partner</div>
+                  <div className="text-[9px] text-slate-400">Deliver 80%</div>
+                </button>
+              )}
 
-              <button
-                type="button"
-                onClick={() => handleDemoLogin('ADMIN')}
-                className="p-2 rounded-xl bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition cursor-pointer text-center group"
-              >
-                <div className="text-base group-hover:scale-110 transition">🏢</div>
-                <div className="text-[11px] font-black text-slate-800 mt-0.5">Admin Web</div>
-                <div className="text-[9px] text-slate-400">Command SaaS</div>
-              </button>
+              {(!lockedRole || lockedRole === 'ADMIN') && (
+                <button
+                  type="button"
+                  onClick={() => handleDemoLogin('ADMIN')}
+                  className="p-2 rounded-xl bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition cursor-pointer text-center group"
+                >
+                  <div className="text-base group-hover:scale-110 transition">🏢</div>
+                  <div className="text-[11px] font-black text-slate-800 mt-0.5">Admin Web</div>
+                  <div className="text-[9px] text-slate-400">Command SaaS</div>
+                </button>
+              )}
             </div>
           </div>
 
@@ -439,42 +465,44 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </div>
 
               {/* Role Selection for Sign Up or Custom Role selection */}
-              <div>
-                <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1.5">
-                  Select Portal Role
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'CUSTOMER' as UserRole, label: 'Customer', icon: User },
-                    { id: 'RIDER' as UserRole, label: 'Rider', icon: Bike },
-                    { id: 'ADMIN' as UserRole, label: 'Admin', icon: Building2 },
-                  ].map((r) => {
-                    const IconComp = r.icon;
-                    const isSelected = selectedRole === r.id;
-                    return (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() => setSelectedRole(r.id)}
-                        className={`p-2 rounded-xl border text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                          isSelected
-                            ? 'bg-[#042F2E] text-[#A7F3D0] border-[#059669] shadow-xs'
-                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                        }`}
-                      >
-                        <IconComp className="w-3.5 h-3.5" />
-                        <span>{r.label}</span>
-                      </button>
-                    );
-                  })}
+              {!lockedRole && (
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1.5">
+                    Select Portal Role
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'CUSTOMER' as UserRole, label: 'Customer', icon: User },
+                      { id: 'RIDER' as UserRole, label: 'Rider', icon: Bike },
+                      { id: 'ADMIN' as UserRole, label: 'Admin', icon: Building2 },
+                    ].map((r) => {
+                      const IconComp = r.icon;
+                      const isSelected = selectedRole === r.id;
+                      return (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => setSelectedRole(r.id)}
+                          className={`p-2 rounded-xl border text-xs font-black flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#042F2E] text-[#A7F3D0] border-[#059669] shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          <IconComp className="w-3.5 h-3.5" />
+                          <span>{r.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <button
                 type="submit"
                 className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#042F2E] via-[#065F46] to-[#059669] hover:from-[#021f1e] hover:to-[#047857] text-[#A7F3D0] hover:text-white font-extrabold text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer border border-emerald-400/40 mt-2"
               >
-                <span>{authMode === 'LOGIN' ? `Sign In to ${selectedRole} Portal` : `Create & Launch ${selectedRole} Account`}</span>
+                <span>{authMode === 'LOGIN' ? `Sign In to ${effectiveRole} Portal` : `Create & Launch ${effectiveRole} Account`}</span>
                 <ArrowRight className="w-4 h-4 text-[#10B981]" />
               </button>
             </form>
@@ -503,27 +531,29 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1.5">
-                      Select Access Role
-                    </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(['CUSTOMER', 'RIDER', 'ADMIN'] as UserRole[]).map((r) => (
-                        <button
-                          key={r}
-                          type="button"
-                          onClick={() => setSelectedRole(r)}
-                          className={`p-2 rounded-xl border text-xs font-black transition cursor-pointer ${
-                            selectedRole === r
-                              ? 'bg-[#042F2E] text-[#A7F3D0] border-[#059669]'
-                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                          }`}
-                        >
-                          {r}
-                        </button>
-                      ))}
+                  {!lockedRole && (
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1.5">
+                        Select Access Role
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['CUSTOMER', 'RIDER', 'ADMIN'] as UserRole[]).map((r) => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setSelectedRole(r)}
+                            className={`p-2 rounded-xl border text-xs font-black transition cursor-pointer ${
+                              selectedRole === r
+                                ? 'bg-[#042F2E] text-[#A7F3D0] border-[#059669]'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <button
                     type="submit"
@@ -559,7 +589,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                     className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#042F2E] to-[#059669] text-white font-extrabold text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <CheckCircle2 className="w-4 h-4 text-[#A7F3D0]" />
-                    <span>Verify &amp; Enter {selectedRole} Portal</span>
+                    <span>Verify &amp; Enter {effectiveRole} Portal</span>
                   </button>
 
                   <button

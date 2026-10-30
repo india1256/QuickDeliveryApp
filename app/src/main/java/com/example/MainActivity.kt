@@ -94,7 +94,62 @@ class MainActivity : ComponentActivity() {
         setContent {
             QuickDeliveryTheme {
                 LocalizedContextProvider {
-                    QuickDeliveryUnifiedHub()
+                    when (BuildConfig.APP_ROLE) {
+                        "CUSTOMER" -> {
+                            BackHandler(enabled = true) {
+                                OrderAlertSoundManager.stopOrderAlert()
+                            }
+                            QuickDeliveryCloudSyncBar(showCardUi = false)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .windowInsetsPadding(WindowInsets.statusBars)
+                                    .windowInsetsPadding(WindowInsets.navigationBars)
+                            ) {
+                                CustomerAppScreen()
+                            }
+                        }
+                        "RIDER" -> {
+                            BackHandler(enabled = true) {
+                                OrderAlertSoundManager.stopOrderAlert()
+                            }
+                            QuickDeliveryCloudSyncBar(showCardUi = false)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .windowInsetsPadding(WindowInsets.statusBars)
+                                    .windowInsetsPadding(WindowInsets.navigationBars)
+                            ) {
+                                RiderPartnerCompactScreen(modifier = Modifier.fillMaxSize())
+                            }
+                        }
+                        "ADMIN" -> {
+                            val repository = remember {
+                                SharedOrderRepository.getInstance(this@MainActivity).also { repo ->
+                                    com.example.data.delivery.AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
+                                }
+                            }
+                            val orders by repository.orders.collectAsState()
+                            BackHandler(enabled = true) {
+                                OrderAlertSoundManager.stopOrderAlert()
+                            }
+                            QuickDeliveryCloudSyncBar(showCardUi = false)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .windowInsetsPadding(WindowInsets.statusBars)
+                                    .windowInsetsPadding(WindowInsets.navigationBars)
+                            ) {
+                                AdminEnterpriseControlCenter(
+                                    repository = repository,
+                                    orders = orders,
+                                    onResetOrders = { repository.resetOrdersAndStateForTesting() },
+                                    onExitToCustomer = {}
+                                )
+                            }
+                        }
+                        else -> QuickDeliveryUnifiedHub()
+                    }
                 }
             }
         }

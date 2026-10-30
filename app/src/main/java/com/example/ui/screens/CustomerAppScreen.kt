@@ -2948,7 +2948,7 @@ fun CustomerAppScreen(
                                 Text(
                                     text = "Enter your Pickup & Drop addresses in Step 1 and confirm your booking to track live rider GPS, Pickup/Drop OTPs, and delivery status here.",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MutedText
+                                    color = Color(0xFF475569)
                                 )
                                 Button(
                                     onClick = { currentStep = 1 },

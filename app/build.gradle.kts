@@ -24,6 +24,21 @@ android {
     versionCode = 53
     versionName = "5.3.0"
 
+    val targetAppRole = (project.findProperty("appRole") as? String)?.trim()?.uppercase() ?: "UNIFIED"
+    buildConfigField("String", "APP_ROLE", "\"$targetAppRole\"")
+
+    val customAppIdSuffix = (project.findProperty("appIdSuffix") as? String)?.trim().orEmpty()
+    if (customAppIdSuffix.isNotEmpty()) {
+      applicationIdSuffix = customAppIdSuffix
+    }
+
+    val roleLauncherLabel = when (targetAppRole) {
+      "RIDER" -> "QD Rider Partner"
+      "ADMIN" -> "QD Admin Console"
+      else -> "@string/app_name"
+    }
+    manifestPlaceholders["appLauncherLabel"] = roleLauncherLabel
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 

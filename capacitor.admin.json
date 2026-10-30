@@ -1,0 +1,16 @@
+{
+  "appId": "com.quickdelivery.admin",
+  "appName": "Quick Delivery Admin",
+  "webDir": "dist-admin",
+  "bundledWebRuntime": false,
+  "backgroundColor": "#022C22",
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}

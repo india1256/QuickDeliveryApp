@@ -48,7 +48,7 @@
             android:name=".MainActivity"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
-            android:label="@string/app_name"
+            android:label="${appLauncherLabel}"
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

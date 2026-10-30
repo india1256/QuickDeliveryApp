@@ -1,0 +1,16 @@
+{
+  "appId": "com.quickdelivery.rider",
+  "appName": "Quick Delivery Partner",
+  "webDir": "dist-rider",
+  "bundledWebRuntime": false,
+  "backgroundColor": "#0F172A",
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}

@@ -244,8 +244,13 @@ const MAX_WEIGHT_KG = 20;
 const MAX_COMMISSION_DEBT_PAISE = 15000; // ₹150.00 strict cap
 
 export default function App() {
-  // Dedicated App Mode via URL parameter (?app=customer, ?app=rider, ?app=admin)
+  // Dedicated App Mode via build-time VITE_APP_ROLE or URL parameter (?app=customer, ?app=rider, ?app=admin)
   const [dedicatedAppMode, setDedicatedAppMode] = useState<'customer' | 'rider' | 'admin' | null>(() => {
+    const envRole = ((import.meta as any).env?.VITE_APP_ROLE || '').toLowerCase().trim();
+    if (envRole === 'customer') return 'customer';
+    if (envRole === 'rider' || envRole === 'partner') return 'rider';
+    if (envRole === 'admin' || envRole === 'enterprise') return 'admin';
+
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search).get('app')?.toLowerCase();
       if (p === 'customer') return 'customer';
@@ -256,6 +261,10 @@ export default function App() {
   });
 
   const [viewMode, setViewMode] = useState<'TABS' | 'SPLIT_ALL'>(() => {
+    const envRole = ((import.meta as any).env?.VITE_APP_ROLE || '').toLowerCase().trim();
+    if (envRole === 'customer' || envRole === 'rider' || envRole === 'partner' || envRole === 'admin' || envRole === 'enterprise') {
+      return 'TABS';
+    }
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search).get('app')?.toLowerCase();
       if (p === 'customer' || p === 'rider' || p === 'partner' || p === 'admin' || p === 'enterprise') {
@@ -266,6 +275,11 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<'CUSTOMER' | 'RIDER' | 'ADMIN'>(() => {
+    const envRole = ((import.meta as any).env?.VITE_APP_ROLE || '').toLowerCase().trim();
+    if (envRole === 'customer') return 'CUSTOMER';
+    if (envRole === 'rider' || envRole === 'partner') return 'RIDER';
+    if (envRole === 'admin' || envRole === 'enterprise') return 'ADMIN';
+
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search).get('app')?.toLowerCase();
       if (p === 'customer') return 'CUSTOMER';
@@ -278,7 +292,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
     try {
       const saved = localStorage.getItem('quick_delivery_auth_user');
-      return saved ? JSON.parse(saved) : null;
+      if (!saved) return null;
+      const parsed: AuthUser = JSON.parse(saved);
+      const envRole = ((import.meta as any).env?.VITE_APP_ROLE || '').toLowerCase().trim();
+      const urlRole = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('app')?.toLowerCase() : null;
+      const targetMode = envRole || urlRole;
+      if (targetMode === 'customer' && parsed.role !== 'CUSTOMER') return null;
+      if ((targetMode === 'rider' || targetMode === 'partner') && parsed.role !== 'RIDER') return null;
+      if ((targetMode === 'admin' || targetMode === 'enterprise') && parsed.role !== 'ADMIN') return null;
+      return parsed;
     } catch {
       return null;
     }
@@ -5485,8 +5507,17 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
   };
 
   // --- ROLE-BASED ACCESS CONTROL GUARD: REQUIRE AUTHENTICATION ---
-  if (!currentUser) {
-    return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
+  const lockedRoleForDedicatedApp: UserRole | undefined =
+    dedicatedAppMode === 'customer'
+      ? 'CUSTOMER'
+      : dedicatedAppMode === 'rider'
+      ? 'RIDER'
+      : dedicatedAppMode === 'admin'
+      ? 'ADMIN'
+      : undefined;
+
+  if (!currentUser || (lockedRoleForDedicatedApp && currentUser.role !== lockedRoleForDedicatedApp)) {
+    return <AuthScreen onLoginSuccess={handleLoginSuccess} lockedRole={lockedRoleForDedicatedApp} />;
   }
 
   return (
@@ -5666,39 +5697,41 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                 </span>
               </div>
 
-              {/* Role Switcher Pill (Quick access to test other roles) */}
-              <div className="hidden lg:flex items-center bg-white/10 p-0.5 rounded-xl border border-white/10 text-[10px] font-black">
-                <button
-                  type="button"
-                  onClick={() => handleSwitchRole('CUSTOMER')}
-                  className={`px-2 py-1 rounded-lg transition cursor-pointer ${
-                    currentUser.role === 'CUSTOMER' ? 'bg-[#10B981] text-[#022C22]' : 'text-slate-300 hover:text-white'
-                  }`}
-                  title="Switch to Customer Role"
-                >
-                  👤 Customer
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSwitchRole('RIDER')}
-                  className={`px-2 py-1 rounded-lg transition cursor-pointer ${
-                    currentUser.role === 'RIDER' ? 'bg-amber-400 text-slate-950' : 'text-slate-300 hover:text-white'
-                  }`}
-                  title="Switch to Rider Role"
-                >
-                  🏍️ Rider
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSwitchRole('ADMIN')}
-                  className={`px-2 py-1 rounded-lg transition cursor-pointer ${
-                    currentUser.role === 'ADMIN' ? 'bg-teal-400 text-slate-950' : 'text-slate-300 hover:text-white'
-                  }`}
-                  title="Switch to Admin Role"
-                >
-                  🏢 Admin
-                </button>
-              </div>
+              {/* Role Switcher Pill (Quick access to test other roles - hidden in standalone APK mode) */}
+              {!dedicatedAppMode && (
+                <div className="hidden lg:flex items-center bg-white/10 p-0.5 rounded-xl border border-white/10 text-[10px] font-black">
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchRole('CUSTOMER')}
+                    className={`px-2 py-1 rounded-lg transition cursor-pointer ${
+                      currentUser.role === 'CUSTOMER' ? 'bg-[#10B981] text-[#022C22]' : 'text-slate-300 hover:text-white'
+                    }`}
+                    title="Switch to Customer Role"
+                  >
+                    👤 Customer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchRole('RIDER')}
+                    className={`px-2 py-1 rounded-lg transition cursor-pointer ${
+                      currentUser.role === 'RIDER' ? 'bg-amber-400 text-slate-950' : 'text-slate-300 hover:text-white'
+                    }`}
+                    title="Switch to Rider Role"
+                  >
+                    🏍️ Rider
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchRole('ADMIN')}
+                    className={`px-2 py-1 rounded-lg transition cursor-pointer ${
+                      currentUser.role === 'ADMIN' ? 'bg-teal-400 text-slate-950' : 'text-slate-300 hover:text-white'
+                    }`}
+                    title="Switch to Admin Role"
+                  >
+                    🏢 Admin
+                  </button>
+                </div>
+              )}
 
               {/* Push Notifications & Real-Time Alerts Hub Button */}
               <button
@@ -5732,7 +5765,25 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
 
       {/* Main Content Area - Role-Based Access Control Routing */}
       <main className="max-w-7xl w-full mx-auto p-3 sm:p-6 flex-1">
-        {currentUser.role === 'CUSTOMER' ? (
+        {dedicatedAppMode === 'customer' ? (
+          <div className="max-w-xl mx-auto">
+            <ErrorBoundary inline fallbackTitle="Customer App Panel" fallbackMessage="Reloading Customer App...">
+              {renderCustomerPanel()}
+            </ErrorBoundary>
+          </div>
+        ) : dedicatedAppMode === 'rider' ? (
+          <div className="max-w-xl mx-auto">
+            <ErrorBoundary inline fallbackTitle="Rider App Panel" fallbackMessage="Reloading Rider App...">
+              {renderRiderPanel()}
+            </ErrorBoundary>
+          </div>
+        ) : dedicatedAppMode === 'admin' ? (
+          <div className="w-full">
+            <ErrorBoundary inline fallbackTitle="Admin Dashboard Panel" fallbackMessage="Reloading Admin Dashboard...">
+              {renderAdminPanel()}
+            </ErrorBoundary>
+          </div>
+        ) : currentUser.role === 'CUSTOMER' ? (
           <div className="max-w-xl mx-auto space-y-3">
             <div className="p-3 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
@@ -6085,6 +6136,29 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                       <span>Open Admin App</span>
                     </button>
                   </div>
+                </div>
+              </div>
+
+              {/* CAPACITOR & NATIVE ANDROID APK BUILD COMMANDS */}
+              <div className="p-4 rounded-xl border-2 border-slate-800 bg-slate-900 text-slate-100 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400">
+                    📦 Build 3 Separate Android APKs (Capacitor CLI / Gradle)
+                  </span>
+                  <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">
+                    capacitor.config.ts
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Each APK compiles with its own locked role (<code className="text-emerald-300">VITE_APP_ROLE</code>), unique Android <code className="text-emerald-300">appId</code>, and custom launcher name:
+                </p>
+                <div className="grid grid-cols-1 gap-1.5 font-mono text-[11px] bg-slate-950 p-3 rounded-lg border border-slate-800">
+                  <div className="text-emerald-400"># 1. Customer APK (com.quickdelivery.customer)</div>
+                  <div className="text-slate-200 select-all">npm run apk:customer</div>
+                  <div className="text-amber-400 mt-1"># 2. Rider Partner APK (com.quickdelivery.rider)</div>
+                  <div className="text-slate-200 select-all">npm run apk:rider</div>
+                  <div className="text-teal-400 mt-1"># 3. Admin Enterprise APK (com.quickdelivery.admin)</div>
+                  <div className="text-slate-200 select-all">npm run apk:admin</div>
                 </div>
               </div>
             </div>

@@ -470,11 +470,113 @@ fun QuickDeliveryTopOptionsDialog(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     extraTopContent()
+                    MobileCloudApkDownloadCard()
                 }
             }
         }
     }
 }
+
+@Composable
+fun MobileCloudApkDownloadCard() {
+    val context = LocalContext.current
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("mobile_cloud_apk_download_card"),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDF4))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CloudDone,
+                    contentDescription = "Mobile Cloud APK Builder",
+                    tint = Color(0xFF15803D),
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = "📲 Mobile Cloud APK Download (No Laptop)",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF14532D)
+                )
+            }
+
+            Text(
+                text = "GitHub Actions CI/CD (.github/workflows/build-three-apks.yml) automatic cloud me 3 alag APKs banata hai:\n" +
+                    "• QuickDelivery-Customer.apk\n" +
+                    "• QuickDelivery-Rider-Partner.apk\n" +
+                    "• QuickDelivery-Admin-Enterprise.apk",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF166534)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        runCatching {
+                            val intent = android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://github.com/india1256/QuickDelivery/releases")
+                            ).apply {
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("open_github_releases_apk_btn")
+                ) {
+                    Text(
+                        text = "⬇ Download APKs",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            val intent = android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://github.com/india1256/QuickDelivery/actions")
+                            ).apply {
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("open_github_actions_cloud_btn")
+                ) {
+                    Text(
+                        text = "⚙ Cloud Build Status",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF14532D)
+                    )
+                }
+            }
+        }
+    }
+}
+
 
 
 
