@@ -12,6 +12,7 @@ import com.example.core.R
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
 import com.example.data.model.OrderStatus
+import com.example.security.QuickDeliverySecurityGuard
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -224,17 +225,22 @@ data class CloudDeliveryOrder(
                 OrderStatus.DELIVERED -> "DELIVERED"
                 OrderStatus.CANCELLED -> "CANCELLED"
             }
-            val safeDocId = order.orderId.replace("[^a-zA-Z0-9_\\-]".toRegex(), "_").take(64).ifBlank {
+            val safeDocId = QuickDeliverySecurityGuard.sanitizeIdentifier(order.orderId, 64).ifBlank {
                 "ord_${UUID.randomUUID().toString().replace("-", "").take(12)}"
             }
+            val safeOrderCode = QuickDeliverySecurityGuard.sanitizeIdentifier(order.orderId, 40).ifBlank { "QD-1001" }
+            val safeCustomerName = QuickDeliverySecurityGuard.sanitizeText(order.customerName, 80).ifBlank { "Customer" }
+            val safeCustomerPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(order.customerPhone).padStart(10, '9')
+            val safePickup = QuickDeliverySecurityGuard.sanitizeText(order.pickupAddress.formattedAddress(), 300).ifBlank { "Pickup Address" }
+            val safeDrop = QuickDeliverySecurityGuard.sanitizeText(order.dropAddress.formattedAddress(), 300).ifBlank { "Drop Address" }
             return CloudDeliveryOrder(
                 id = safeDocId,
                 userId = userId,
-                orderCode = order.orderId.take(40).ifBlank { "QD-1001" },
-                customerName = order.customerName.take(80).ifBlank { "Customer" },
-                customerPhone = order.customerPhone.filter { it.isDigit() }.takeLast(10).padStart(10, '9'),
-                pickupAddress = order.pickupAddress.formattedAddress().take(300).ifBlank { "Pickup Address" },
-                dropAddress = order.dropAddress.formattedAddress().take(300).ifBlank { "Drop Address" },
+                orderCode = safeOrderCode,
+                customerName = safeCustomerName,
+                customerPhone = safeCustomerPhone,
+                pickupAddress = safePickup,
+                dropAddress = safeDrop,
                 vehicleType = mappedVehicle,
                 paymentMethod = mappedPaymentMethod,
                 paymentStatus = mappedPaymentStatus,
@@ -359,10 +365,40 @@ class QuickDeliveryCloudRepository(private val db: FirebaseFirestore) {
         require(order.paymentStatus != "VERIFIED_PAID_TO_COMPANY") {
             "Client cannot mark an order paid directly; paymentStatus must be verified by a trusted backend."
         }
-        val orderId = order.id.ifBlank { "ord_${UUID.randomUUID().toString().replace("-", "").take(12)}" }
+        require(order.totalAmountPaise == order.companyCommissionPaise + order.riderEarningPaise) {
+            "Order fare split mismatch: totalAmountPaise must equal companyCommissionPaise + riderEarningPaise."
+        }
+        val cleanName = QuickDeliverySecurityGuard.sanitizeText(order.customerName, 80).ifBlank { "Customer" }
+        val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(order.customerPhone).padStart(10, '9')
+        val cleanPickup = QuickDeliverySecurityGuard.sanitizeText(order.pickupAddress, 300)
+        val cleanDrop = QuickDeliverySecurityGuard.sanitizeText(order.dropAddress, 300)
+        require(cleanPickup.length >= 3 && cleanDrop.length >= 3) {
+            "Pickup and drop addresses must be at least 3 characters after sanitization."
+        }
+        QuickDeliverySecurityGuard.checkAndRecordOrderPlacement(
+            actorKey = uid,
+            pickupAddress = cleanPickup,
+            dropAddress = cleanDrop,
+            vehicleType = order.vehicleType
+        ).getOrThrow()
+
+        val orderId = QuickDeliverySecurityGuard.sanitizeIdentifier(order.id, 64).ifBlank {
+            "ord_${UUID.randomUUID().toString().replace("-", "").take(12)}"
+        }
+        val safeOrderCode = QuickDeliverySecurityGuard.sanitizeIdentifier(order.orderCode, 40).ifBlank { "QD-1001" }
         val docRef = db.collection("delivery_orders").document(orderId)
         try {
-            val payload = order.copy(userId = uid).toWriteMap(isNew = true)
+            val payload = order.copy(
+                id = orderId,
+                userId = uid,
+                orderCode = safeOrderCode,
+                customerName = cleanName,
+                customerPhone = cleanPhone,
+                pickupAddress = cleanPickup,
+                dropAddress = cleanDrop,
+                pickupProofNote = order.pickupProofNote?.let { QuickDeliverySecurityGuard.sanitizeText(it, 300) },
+                deliveryProofNote = order.deliveryProofNote?.let { QuickDeliverySecurityGuard.sanitizeText(it, 300) }
+            ).toWriteMap(isNew = true)
             docRef.set(payload).await()
             orderId
         } catch (e: CancellationException) {
@@ -481,8 +517,14 @@ class QuickDeliveryCloudRepository(private val db: FirebaseFirestore) {
         riderId: String = "RIDER-101"
     ): Result<Unit> = runCatching {
         val uid = requireUserId()
+        QuickDeliverySecurityGuard.checkAndRecordEndpointCall(
+            endpoint = QuickDeliverySecurityGuard.ENDPOINT_RIDER_CLAIM,
+            actorKey = uid
+        ).getOrThrow()
+        val safeOrderId = QuickDeliverySecurityGuard.sanitizeIdentifier(orderId, 64)
+        val safeRiderId = QuickDeliverySecurityGuard.sanitizeIdentifier(riderId, 64).ifBlank { "RIDER-101" }
         val walletRef = db.collection("rider_wallets").document(uid)
-        val orderRef = db.collection("delivery_orders").document(orderId)
+        val orderRef = db.collection("delivery_orders").document(safeOrderId)
         try {
             db.runTransaction { transaction ->
                 val walletSnap = transaction.get(walletRef)
@@ -505,7 +547,7 @@ class QuickDeliveryCloudRepository(private val db: FirebaseFirestore) {
                     orderRef,
                     mapOf(
                         "assignedRiderUid" to uid,
-                        "assignedRiderId" to riderId,
+                        "assignedRiderId" to safeRiderId,
                         "status" to "ASSIGNED",
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
@@ -684,29 +726,36 @@ class QuickDeliveryCloudRepository(private val db: FirebaseFirestore) {
         customMessageId: String = ""
     ): Result<String> = runCatching {
         val uid = requireUserId()
-        val trimmedText = messageText.trim()
+        QuickDeliverySecurityGuard.checkAndRecordEndpointCall(
+            endpoint = QuickDeliverySecurityGuard.ENDPOINT_ORDER_CHAT,
+            actorKey = uid
+        ).getOrThrow()
+        val trimmedText = QuickDeliverySecurityGuard.sanitizeText(messageText, 500)
         require(trimmedText.isNotEmpty() && trimmedText.length <= 500) {
-            "Chat message must be between 1 and 500 characters."
+            "Chat message must be between 1 and 500 characters after sanitization."
         }
         require(senderRole == "CUSTOMER" || senderRole == "RIDER") {
             "senderRole must be CUSTOMER or RIDER."
         }
-        val msgId = customMessageId.ifBlank {
+        val safeOrderId = QuickDeliverySecurityGuard.sanitizeIdentifier(orderId, 64)
+        val msgId = QuickDeliverySecurityGuard.sanitizeIdentifier(customMessageId, 64).ifBlank {
             "msg_${UUID.randomUUID().toString().replace("-", "").take(12)}"
         }
+        val cleanSenderName = QuickDeliverySecurityGuard.sanitizeText(senderName, 80)
+            .ifBlank { if (senderRole == "RIDER") "Rider Partner" else "Customer" }
         val docRef = db.collection("delivery_orders")
-            .document(orderId)
+            .document(safeOrderId)
             .collection("chat_messages")
             .document(msgId)
         try {
             val payload = CloudOrderChatMessage(
                 id = msgId,
-                orderId = orderId,
+                orderId = safeOrderId,
                 senderUid = uid,
                 senderRole = senderRole,
-                senderName = senderName.trim().ifBlank { if (senderRole == "RIDER") "Rider Partner" else "Customer" },
+                senderName = cleanSenderName,
                 messageText = trimmedText,
-                deliveryStage = deliveryStage
+                deliveryStage = deliveryStage?.let { QuickDeliverySecurityGuard.sanitizeIdentifier(it, 64) }
             ).toWriteMap()
             docRef.set(payload).await()
             msgId

@@ -73,6 +73,13 @@ import { CustomerOrderHistoryView } from './components/CustomerOrderHistoryView'
 import { RiderTripHistoryView } from './components/RiderTripHistoryView';
 import { ImageUploadModal } from './components/ImageUploadModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import {
+  checkOrderPlacementRateLimit,
+  sanitizeText,
+  sanitizePhone,
+  issueRoleSessionToken,
+  verifyRoleSessionToken,
+} from './services/securityGuard';
 
 type VehicleType = 'BIKE' | 'EV' | 'MINI_TRUCK';
 type PaymentMethod =
@@ -294,6 +301,10 @@ export default function App() {
       const saved = localStorage.getItem('quick_delivery_auth_user');
       if (!saved) return null;
       const parsed: AuthUser = JSON.parse(saved);
+      if (!verifyRoleSessionToken(parsed)) {
+        localStorage.removeItem('quick_delivery_auth_user');
+        return null;
+      }
       const envRole = ((import.meta as any).env?.VITE_APP_ROLE || '').toLowerCase().trim();
       const urlRole = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('app')?.toLowerCase() : null;
       const targetMode = envRole || urlRole;
@@ -308,9 +319,23 @@ export default function App() {
 
   const handleLoginSuccess = (user: AuthUser) => {
     const savedProfile = dbService.getSavedUserProfile(user.id);
-    const mergedUser: AuthUser = savedProfile
+    const baseMerged: AuthUser = savedProfile
       ? { ...user, ...savedProfile, role: user.role }
       : user;
+    const signedToken =
+      baseMerged.sessionToken ||
+      issueRoleSessionToken({
+        id: baseMerged.id,
+        role: baseMerged.role,
+        phone: baseMerged.phone,
+        email: baseMerged.email,
+      });
+    const mergedUser: AuthUser = {
+      ...baseMerged,
+      name: sanitizeText(baseMerged.name, 80) || baseMerged.name,
+      phone: sanitizePhone(baseMerged.phone) || baseMerged.phone,
+      sessionToken: signedToken,
+    };
     setCurrentUser(mergedUser);
     localStorage.setItem('quick_delivery_auth_user', JSON.stringify(mergedUser));
     dbService.saveUserProfile(mergedUser);
@@ -994,8 +1019,27 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
         setBookingBanner('Maximum allowed parcel weight is 20 kg. Parcels above 20 kg cannot be booked.');
         return;
       }
-      const cleanPickup = pickupAddress.trim() || 'Pickup Location';
-      const cleanDrop = dropAddress.trim() || 'Drop Location';
+      const cleanPickup = sanitizeText(pickupAddress, 300) || 'Pickup Location';
+      const cleanDrop = sanitizeText(dropAddress, 300) || 'Drop Location';
+      const cleanCustName = sanitizeText(customerName, 80) || 'Customer';
+      const cleanCustPhone = sanitizePhone(customerPhone) || '9876543210';
+      const cleanRecvName = sanitizeText(receiverName, 80) || 'Receiver';
+      const cleanRecvPhone = sanitizePhone(receiverPhone) || '9820112233';
+
+      const activePendingCount = orders.filter(
+        (o) => o.status === 'PENDING_ASSIGNMENT'
+      ).length;
+      const rateLimitCheck = checkOrderPlacementRateLimit({
+        userId: currentUser?.id || cleanCustPhone,
+        pickupAddress: cleanPickup,
+        dropAddress: cleanDrop,
+        vehicleType: selectedVehicle || 'BIKE',
+        activePendingCount,
+      });
+      if (!rateLimitCheck.allowed) {
+        setBookingBanner(`🛡️ Security Guard: ${rateLimitCheck.reason}`);
+        return;
+      }
 
       const randomNum = Math.floor(5002 + Math.random() * 4000);
       const code = `QD-${randomNum}`;
@@ -1022,10 +1066,10 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
       const newOrder: DeliveryOrder = {
         id: newId,
         orderCode: code,
-        customerName: customerName.trim() || 'Customer',
-        customerPhone: customerPhone.trim() || '9876543210',
-        receiverName: receiverName.trim() || 'Receiver',
-        receiverPhone: receiverPhone.trim() || '9820112233',
+        customerName: cleanCustName,
+        customerPhone: cleanCustPhone,
+        receiverName: cleanRecvName,
+        receiverPhone: cleanRecvPhone,
         pickupAddress: cleanPickup,
         dropAddress: cleanDrop,
         pickupTag: pickupTag || 'Home',
@@ -1045,7 +1089,7 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
         distanceChargeInr: fareQuote.distanceChargeInr,
         platformFeeInr: fareQuote.platformFeeInr,
         promoDiscountInr: fareQuote.promoDiscountInr,
-        ...(promoApplied && promoCodeInput.trim() ? { promoCode: promoCodeInput.trim() } : {}),
+        ...(promoApplied && promoCodeInput.trim() ? { promoCode: sanitizeText(promoCodeInput, 32) } : {}),
         pickupOtp,
         deliveryOtp,
         assignedRiderRating: '4.9★',

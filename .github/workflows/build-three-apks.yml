@@ -35,70 +35,49 @@ jobs:
       - name: 1. Checkout Repository Code
         uses: actions/checkout@v4
 
-      - name: 2. Set up JDK 21 (Eclipse Temurin)
+      - name: 2. Set up Node.js 20 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 3. Set up JDK 17 (Eclipse Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
-      - name: 3. Set up Android SDK & Accept Licenses
+      - name: 4. Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 4. Accept All Android SDK Licenses & Prepare Build Environment
+      - name: 5. Accept Android SDK Licenses & Install Web/Capacitor Dependencies
         run: |
           yes | sdkmanager --licenses || true
-          if [ ! -f .env ] && [ -f .env.example ]; then
-            cp .env.example .env
-          fi
-          if [ ! -f debug.keystore ]; then
-            if [ -f debug.keystore.base64 ]; then
-              base64 -d debug.keystore.base64 > debug.keystore
-            else
-              keytool -genkey -v \
-                -keystore debug.keystore \
-                -storepass android \
-                -alias androiddebugkey \
-                -keypass android \
-                -keyalg RSA \
-                -keysize 2048 \
-                -validity 10000 \
-                -dname "CN=Android Debug,O=Android,C=US"
-            fi
-          fi
+          rm -f capacitor.config.ts
+          npm install --legacy-peer-deps --no-audit --no-fund
           mkdir -p dist-apks
-
-      - name: 5. Set up Gradle 9.3.1 with Build Cache
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-          cache-read-only: false
 
       - name: 6. Build Customer App APK (QuickDelivery-Customer.apk)
         if: ${{ github.event.inputs.build_target == '' || github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'customer' }}
         run: |
-          gradle :app:assembleDebug -PappRole=CUSTOMER --no-daemon --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk dist-apks/QuickDelivery-Customer.apk
+          node scripts/build-capacitor-apk.mjs customer --apk
           ls -lh dist-apks/QuickDelivery-Customer.apk
 
       - name: 7. Build Rider Partner APK (QuickDelivery-Rider-Partner.apk)
         if: ${{ github.event.inputs.build_target == '' || github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'rider' }}
         run: |
-          gradle :app:assembleDebug -PappRole=RIDER -PappIdSuffix=.rider --no-daemon --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk dist-apks/QuickDelivery-Rider-Partner.apk
+          node scripts/build-capacitor-apk.mjs rider --apk
           ls -lh dist-apks/QuickDelivery-Rider-Partner.apk
 
       - name: 8. Build Admin Enterprise APK (QuickDelivery-Admin-Enterprise.apk)
         if: ${{ github.event.inputs.build_target == '' || github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'admin' }}
         run: |
-          gradle :app:assembleDebug -PappRole=ADMIN -PappIdSuffix=.admin --no-daemon --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk dist-apks/QuickDelivery-Admin-Enterprise.apk
+          node scripts/build-capacitor-apk.mjs admin --apk
           ls -lh dist-apks/QuickDelivery-Admin-Enterprise.apk
 
       - name: 9. Build All-in-One Unified Hub APK (QuickDelivery-AllInOne-Hub.apk)
         if: ${{ github.event.inputs.build_target == '' || github.event.inputs.build_target == 'all' }}
         run: |
-          gradle :app:assembleDebug -PappRole=UNIFIED -PappIdSuffix=.hub --no-daemon --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk dist-apks/QuickDelivery-AllInOne-Hub.apk
+          node scripts/build-capacitor-apk.mjs hub --apk
           ls -lh dist-apks/QuickDelivery-AllInOne-Hub.apk
 
       - name: 10. Upload Customer APK Artifact
@@ -128,8 +107,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: 13. Upload All-3-APKs Combined Bundle
-        if: ${{ always() }}
+      - name: 13. Upload All-APKs Combined Bundle
+        if: ${{ always() && hashFiles('dist-apks/*.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: QuickDelivery-All-APKs-Bundle
@@ -138,7 +117,7 @@ jobs:
           retention-days: 30
 
       - name: 14. Publish Direct 1-Tap Mobile Download Links to GitHub Releases
-        if: ${{ hashFiles('dist-apks/*.apk') != '' }}
+        if: ${{ github.event_name != 'pull_request' && hashFiles('dist-apks/*.apk') != '' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest-apks
@@ -146,14 +125,14 @@ jobs:
           body: |
             ## 📲 Direct 1-Tap Mobile APK Downloads (No Laptop Needed)
 
-            Aap apne Android phone ke Chrome browser se niche diye gaye **Assets** section me click karke teeno `.apk` files sidha download aur install kar sakte hain (bina किसी `.zip` file ko extract kiye):
+            Aap apne Android phone ke Chrome browser se niche diye gaye **Assets** section me click karke teeno `.apk` files sidha download aur install kar sakte hain (bina kisi `.zip` file ko extract kiye):
 
-            1. 🛍️ **`QuickDelivery-Customer.apk`** — Customer Ordering & Live Tracking App (`com.aistudio.quickdelivery.ltkeqf`)
-            2. 🛵 **`QuickDelivery-Rider-Partner.apk`** — Rider Partner Delivery & Earnings App (`com.aistudio.quickdelivery.ltkeqf.rider`)
-            3. 🛡️ **`QuickDelivery-Admin-Enterprise.apk`** — Admin Control Center & Order Management App (`com.aistudio.quickdelivery.ltkeqf.admin`)
-            4. 🌐 **`QuickDelivery-AllInOne-Hub.apk`** — Unified 3-in-1 Switcher App (`com.aistudio.quickdelivery.ltkeqf.hub`)
+            1. 🛍️ **`QuickDelivery-Customer.apk`** — Customer Ordering & Live Tracking App (`com.quickdelivery.customer`)
+            2. 🛵 **`QuickDelivery-Rider-Partner.apk`** — Rider Partner Delivery & Earnings App (`com.quickdelivery.rider`)
+            3. 🛡️ **`QuickDelivery-Admin-Enterprise.apk`** — Admin Control Center & Order Management App (`com.quickdelivery.admin`)
+            4. 🌐 **`QuickDelivery-AllInOne-Hub.apk`** — Unified 3-in-1 Switcher App (`com.quickdelivery.hub`)
 
-            > **Note:** Teeno APKs ke Package IDs alag hain, isliye aap **ek hi Android phone me teeno apps ek saath install** kar sakte hain aur teeno apps real-time Firebase Firestore cloud database se connected hain.
+            > **Note:** Charo APKs ke Package IDs alag hain, isliye aap **ek hi Android phone me saare apps ek saath install** kar sakte hain aur teeno apps real-time Firebase Firestore cloud database se connected hain.
           files: dist-apks/*.apk
           prerelease: false
           make_latest: true

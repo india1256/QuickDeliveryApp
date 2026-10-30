@@ -278,6 +278,48 @@
         "messageText",
         "createdAt"
       ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile (Customer, Rider, or Admin) with strict role immutability and owner-only access.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Authenticated user UID matching the document ID."
+        },
+        "name": {
+          "type": "string",
+          "description": "Sanitized user display name (2 to 80 chars)."
+        },
+        "phone": {
+          "type": "string",
+          "description": "Sanitized 10-to-15 digit mobile number."
+        },
+        "email": {
+          "type": "string",
+          "description": "Optional verified email address."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["CUSTOMER", "RIDER", "ADMIN"],
+          "description": "Bound user role; non-admins can only create CUSTOMER or RIDER profiles and cannot self-escalate."
+        },
+        "profilePhotoUrl": {
+          "type": "string",
+          "description": "Optional profile photo data URL or HTTPS image URL."
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO-8601 or server timestamp of last profile update."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "phone",
+        "role"
+      ]
     }
   },
   "firestore": {
@@ -304,6 +346,12 @@
         "$ref": "#/entities/CompanyLedgerDoc"
       },
       "description": "Audited company wallet ledger entries."
+    },
+    "/user_profiles/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Per-user profile document locked to the authenticated owner and protected against role escalation."
     }
   }
 }

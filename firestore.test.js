@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const {
   initializeTestEnvironment,
   assertFails,
@@ -438,4 +440,98 @@ test("9. Step 51 Multi-Rider Fair Claim, Duplicate Claim Prevention & Pre-Pickup
     })
   );
 });
+
+test("10. Security Audit: Customer cannot spoof DELIVERED status, forge fare split arithmetic, or inject XSS script payloads", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+
+  // 10a. Cannot create an order directly in DELIVERED or ASSIGNED state
+  await assertFails(
+    aliceDb.collection("delivery_orders").doc("order_spoof_delivered").set(
+      validOrderPayload(ALICE_UID, { status: "DELIVERED" })
+    )
+  );
+
+  // 10b. Cannot create an order with tampered 80/20 split (totalAmountPaise != companyCommissionPaise + riderEarningPaise)
+  await assertFails(
+    aliceDb.collection("delivery_orders").doc("order_bad_math").set(
+      validOrderPayload(ALICE_UID, {
+        totalAmountPaise: 12000,
+        companyCommissionPaise: 100,
+        riderEarningPaise: 100,
+      })
+    )
+  );
+
+  // 10c. Cannot inject XSS <script> tags into pickupAddress or customerName
+  await assertFails(
+    aliceDb.collection("delivery_orders").doc("order_xss_1").set(
+      validOrderPayload(ALICE_UID, {
+        pickupAddress: "<script>alert('xss')</script> MG Road",
+      })
+    )
+  );
+
+  // 10d. Create valid PENDING_ASSIGNMENT order -> Customer can cancel before pickup, but CANNOT mark DELIVERED
+  await assertSucceeds(
+    aliceDb.collection("delivery_orders").doc("order_alice_lifecycle").set(
+      validOrderPayload(ALICE_UID)
+    )
+  );
+  await assertFails(
+    aliceDb.collection("delivery_orders").doc("order_alice_lifecycle").update({
+      status: "DELIVERED",
+      updatedAt: new Date(),
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("delivery_orders").doc("order_alice_lifecycle").update({
+      status: "CANCELLED",
+      updatedAt: new Date(),
+    })
+  );
+});
+
+test("11. User Profiles Security: Owner-only access, XSS rejection, and non-admin ADMIN role escalation blocking", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  // Alice can create her own CUSTOMER profile
+  await assertSucceeds(
+    aliceDb.collection("user_profiles").doc(ALICE_UID).set({
+      id: ALICE_UID,
+      name: "Aarav Sharma",
+      phone: "9876543210",
+      role: "CUSTOMER",
+      updatedAt: new Date().toISOString(),
+    })
+  );
+
+  // Bob cannot read or overwrite Alice's profile
+  await assertFails(bobDb.collection("user_profiles").doc(ALICE_UID).get());
+  await assertFails(
+    bobDb.collection("user_profiles").doc(ALICE_UID).update({
+      name: "Hacked by Bob",
+    })
+  );
+
+  // Alice cannot escalate her own role from CUSTOMER to ADMIN
+  await assertFails(
+    aliceDb.collection("user_profiles").doc(ALICE_UID).update({
+      role: "ADMIN",
+      updatedAt: new Date().toISOString(),
+    })
+  );
+
+  // Bob cannot self-register as ADMIN
+  await assertFails(
+    bobDb.collection("user_profiles").doc(BOB_UID).set({
+      id: BOB_UID,
+      name: "Bob Intruder",
+      phone: "9876500000",
+      role: "ADMIN",
+      updatedAt: new Date().toISOString(),
+    })
+  );
+});
+
 

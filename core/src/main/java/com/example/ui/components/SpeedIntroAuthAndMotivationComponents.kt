@@ -87,6 +87,10 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
 import com.example.data.model.OrderStatus
+import com.example.security.QuickDeliverySecurityGuard
+import com.example.ui.auth.GoogleSignInButton
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -193,28 +197,58 @@ object MotivationAndPromoManager {
             _customerStoragePermissionGranted.value = custGranted
             _riderStoragePermissionGranted.value = riderGranted
 
-            // Restore from SharedPreferences or phone storage JSON backup file
+            // Restore from SharedPreferences or phone storage JSON backup file with HMAC role token verification
             val customerBackup = readBackupJsonFromPhoneStorage(context, "customer")
-            cachedCustomerName = prefs.getString("customer_name", null)
+            val rawCustName = prefs.getString("customer_name", null)
                 ?: customerBackup?.optString("name")?.takeIf { it.isNotBlank() }
                 ?: cachedCustomerName
-            cachedCustomerPhone = prefs.getString("customer_phone", null)
+            val rawCustPhone = prefs.getString("customer_phone", null)
                 ?: customerBackup?.optString("phone")?.takeIf { it.isNotBlank() }
                 ?: cachedCustomerPhone
-            cachedCustomerEmail = prefs.getString("customer_email", null)
+            val rawCustEmail = prefs.getString("customer_email", null)
                 ?: customerBackup?.optString("email")?.takeIf { it.isNotBlank() }
                 ?: cachedCustomerEmail
+            val custToken = prefs.getString("customer_session_token", null)
+                ?: customerBackup?.optString("sessionToken")?.takeIf { it.isNotBlank() }
+            if (custToken == null || QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                    context = context,
+                    token = custToken,
+                    expectedRole = "customer",
+                    expectedName = rawCustName,
+                    expectedPhone = rawCustPhone,
+                    expectedEmail = rawCustEmail
+                )
+            ) {
+                cachedCustomerName = QuickDeliverySecurityGuard.sanitizeText(rawCustName, 80)
+                cachedCustomerPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(rawCustPhone)
+                cachedCustomerEmail = QuickDeliverySecurityGuard.sanitizeEmail(rawCustEmail)
+            }
 
             val riderBackup = readBackupJsonFromPhoneStorage(context, "rider")
-            cachedRiderName = prefs.getString("rider_name", null)
+            val rawRiderName = prefs.getString("rider_name", null)
                 ?: riderBackup?.optString("name")?.takeIf { it.isNotBlank() }
                 ?: cachedRiderName
-            cachedRiderPhone = prefs.getString("rider_phone", null)
+            val rawRiderPhone = prefs.getString("rider_phone", null)
                 ?: riderBackup?.optString("phone")?.takeIf { it.isNotBlank() }
                 ?: cachedRiderPhone
-            cachedRiderEmail = prefs.getString("rider_email", null)
+            val rawRiderEmail = prefs.getString("rider_email", null)
                 ?: riderBackup?.optString("email")?.takeIf { it.isNotBlank() }
                 ?: cachedRiderEmail
+            val riderToken = prefs.getString("rider_session_token", null)
+                ?: riderBackup?.optString("sessionToken")?.takeIf { it.isNotBlank() }
+            if (riderToken == null || QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                    context = context,
+                    token = riderToken,
+                    expectedRole = "rider",
+                    expectedName = rawRiderName,
+                    expectedPhone = rawRiderPhone,
+                    expectedEmail = rawRiderEmail
+                )
+            ) {
+                cachedRiderName = QuickDeliverySecurityGuard.sanitizeText(rawRiderName, 80)
+                cachedRiderPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(rawRiderPhone)
+                cachedRiderEmail = QuickDeliverySecurityGuard.sanitizeEmail(rawRiderEmail)
+            }
         }
     }
 
@@ -227,30 +261,45 @@ object MotivationAndPromoManager {
         storageAllowed: Boolean = true
     ) {
         runCatching {
+            val cleanRole = if (rolePrefix.trim().lowercase() == "rider") "rider" else "customer"
+            val cleanName = QuickDeliverySecurityGuard.sanitizeText(name, 80).ifBlank {
+                if (cleanRole == "rider") "Vikram Singh" else "Aarav Sharma"
+            }
+            val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone).ifBlank { "9876543210" }
+            val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email).ifBlank { "$cleanRole@quickdelivery.in" }
+            val signedToken = QuickDeliverySecurityGuard.issueRoleSessionToken(
+                context = context,
+                role = cleanRole,
+                name = cleanName,
+                phone = cleanPhone,
+                email = cleanEmail
+            )
+
             val prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit()
-                .putString("${rolePrefix}_name", name)
-                .putString("${rolePrefix}_phone", phone)
-                .putString("${rolePrefix}_email", email)
-                .putBoolean("${rolePrefix}_logged_in", true)
-                .putBoolean("${rolePrefix}_storage_permission_granted", storageAllowed)
-                .putLong("${rolePrefix}_saved_timestamp", System.currentTimeMillis())
+                .putString("${cleanRole}_name", cleanName)
+                .putString("${cleanRole}_phone", cleanPhone)
+                .putString("${cleanRole}_email", cleanEmail)
+                .putString("${cleanRole}_session_token", signedToken)
+                .putBoolean("${cleanRole}_logged_in", true)
+                .putBoolean("${cleanRole}_storage_permission_granted", storageAllowed)
+                .putLong("${cleanRole}_saved_timestamp", System.currentTimeMillis())
                 .apply()
 
-            if (rolePrefix == "customer") {
-                cachedCustomerName = name
-                cachedCustomerPhone = phone
-                cachedCustomerEmail = email
+            if (cleanRole == "customer") {
+                cachedCustomerName = cleanName
+                cachedCustomerPhone = cleanPhone
+                cachedCustomerEmail = cleanEmail
                 _customerStoragePermissionGranted.value = storageAllowed
             } else {
-                cachedRiderName = name
-                cachedRiderPhone = phone
-                cachedRiderEmail = email
+                cachedRiderName = cleanName
+                cachedRiderPhone = cleanPhone
+                cachedRiderEmail = cleanEmail
                 _riderStoragePermissionGranted.value = storageAllowed
             }
 
             if (storageAllowed) {
-                writeBackupJsonToPhoneStorage(context, rolePrefix, name, phone, email)
+                writeBackupJsonToPhoneStorage(context, cleanRole, cleanName, cleanPhone, cleanEmail, signedToken)
             }
         }
     }
@@ -311,43 +360,73 @@ object MotivationAndPromoManager {
         rolePrefix: String,
         name: String,
         phone: String,
-        email: String
+        email: String,
+        sessionToken: String? = null
     ) {
         runCatching {
+            val cleanRole = if (rolePrefix.trim().lowercase() == "rider") "rider" else "customer"
+            val cleanName = QuickDeliverySecurityGuard.sanitizeText(name, 80)
+            val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone)
+            val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email)
+            val resolvedToken = sessionToken ?: QuickDeliverySecurityGuard.issueRoleSessionToken(
+                context = context,
+                role = cleanRole,
+                name = cleanName,
+                phone = cleanPhone,
+                email = cleanEmail
+            )
             val payload = JSONObject().apply {
-                put("role", rolePrefix)
-                put("name", name)
-                put("phone", phone)
-                put("email", email)
+                put("role", cleanRole)
+                put("name", cleanName)
+                put("phone", cleanPhone)
+                put("email", cleanEmail)
+                put("sessionToken", resolvedToken)
                 put("savedAtEpochMs", System.currentTimeMillis())
                 put("autoLoginEnabled", true)
             }.toString()
 
             // Save in internal app phone storage
-            val internalFile = File(context.filesDir, "quick_delivery_${rolePrefix}_login_backup.json")
+            val internalFile = File(context.filesDir, "quick_delivery_${cleanRole}_login_backup.json")
             internalFile.writeText(payload)
 
             // Also save in external app-specific phone storage directory if mounted
             context.getExternalFilesDir("login_backup")?.let { extDir ->
                 if (!extDir.exists()) extDir.mkdirs()
-                File(extDir, "quick_delivery_${rolePrefix}_login_backup.json").writeText(payload)
+                File(extDir, "quick_delivery_${cleanRole}_login_backup.json").writeText(payload)
             }
         }
     }
 
     private fun readBackupJsonFromPhoneStorage(context: Context, rolePrefix: String): JSONObject? {
         return runCatching {
-            val internalFile = File(context.filesDir, "quick_delivery_${rolePrefix}_login_backup.json")
-            if (internalFile.exists()) {
-                return@runCatching JSONObject(internalFile.readText())
+            val cleanRole = if (rolePrefix.trim().lowercase() == "rider") "rider" else "customer"
+            val internalFile = File(context.filesDir, "quick_delivery_${cleanRole}_login_backup.json")
+            val json = if (internalFile.exists()) {
+                JSONObject(internalFile.readText())
+            } else {
+                val extFile = context.getExternalFilesDir("login_backup")?.let {
+                    File(it, "quick_delivery_${cleanRole}_login_backup.json")
+                }
+                if (extFile != null && extFile.exists()) {
+                    JSONObject(extFile.readText())
+                } else {
+                    null
+                }
+            } ?: return@runCatching null
+
+            val token = json.optString("sessionToken", "")
+            if (token.isNotBlank() && !QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                    context = context,
+                    token = token,
+                    expectedRole = cleanRole,
+                    expectedName = json.optString("name"),
+                    expectedPhone = json.optString("phone"),
+                    expectedEmail = json.optString("email")
+                )
+            ) {
+                return@runCatching null
             }
-            val extFile = context.getExternalFilesDir("login_backup")?.let {
-                File(it, "quick_delivery_${rolePrefix}_login_backup.json")
-            }
-            if (extFile != null && extFile.exists()) {
-                return@runCatching JSONObject(extFile.readText())
-            }
-            null
+            json
         }.getOrNull()
     }
 
@@ -1170,12 +1249,20 @@ fun QuickDeliveryUserAuthScreen(
 
                 Button(
                     onClick = {
+                        val rateCheck = QuickDeliverySecurityGuard.checkAndRecordEndpointCall(
+                            endpoint = QuickDeliverySecurityGuard.ENDPOINT_AUTH_ATTEMPT,
+                            actorKey = prefsKeyPrefix
+                        )
+                        if (rateCheck.isFailure) {
+                            errorMessage = rateCheck.exceptionOrNull()?.message
+                            return@Button
+                        }
                         if (isNewUserSignUp) {
-                            val finalName = fullName.trim().ifBlank {
+                            val finalName = QuickDeliverySecurityGuard.sanitizeText(fullName, 80).ifBlank {
                                 if (prefsKeyPrefix == "rider") "Vikram Singh" else "Aarav Sharma"
                             }
-                            val finalPhone = mobileNumber.trim().ifBlank { "9876543210" }
-                            val finalEmail = emailId.trim().ifBlank { "${prefsKeyPrefix}@quickdelivery.in" }
+                            val finalPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(mobileNumber).ifBlank { "9876543210" }
+                            val finalEmail = QuickDeliverySecurityGuard.sanitizeEmail(emailId).ifBlank { "${prefsKeyPrefix}@quickdelivery.in" }
                             MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
                                 context = context,
                                 rolePrefix = prefsKeyPrefix,
@@ -1186,23 +1273,30 @@ fun QuickDeliveryUserAuthScreen(
                             )
                             onAuthenticated(finalName, finalPhone, finalEmail)
                         } else {
-                            val identifier = existingMobileOrEmail.trim()
+                            val identifier = QuickDeliverySecurityGuard.sanitizeText(existingMobileOrEmail, 120)
                             if (identifier.isBlank()) {
                                 errorMessage = "Please enter your Mobile Number or Email ID to Sign In."
                                 return@Button
                             }
-                            val savedName = prefs.getString("${prefsKeyPrefix}_name", null)
-                                ?: if (prefsKeyPrefix == "rider") "Vikram Singh" else "Aarav Sharma"
+                            val savedName = QuickDeliverySecurityGuard.sanitizeText(
+                                prefs.getString("${prefsKeyPrefix}_name", null),
+                                80
+                            ).ifBlank {
+                                if (prefsKeyPrefix == "rider") "Vikram Singh" else "Aarav Sharma"
+                            }
                             val resolvedPhone = if (identifier.all { it.isDigit() } && identifier.length >= 10) {
                                 identifier.take(10)
                             } else {
-                                prefs.getString("${prefsKeyPrefix}_phone", "9876543210") ?: "9876543210"
+                                QuickDeliverySecurityGuard.sanitizePhoneNumber(
+                                    prefs.getString("${prefsKeyPrefix}_phone", "9876543210")
+                                ).ifBlank { "9876543210" }
                             }
                             val resolvedEmail = if (identifier.contains("@")) {
-                                identifier
+                                QuickDeliverySecurityGuard.sanitizeEmail(identifier)
                             } else {
-                                prefs.getString("${prefsKeyPrefix}_email", "${prefsKeyPrefix}@quickdelivery.in")
-                                    ?: "${prefsKeyPrefix}@quickdelivery.in"
+                                QuickDeliverySecurityGuard.sanitizeEmail(
+                                    prefs.getString("${prefsKeyPrefix}_email", "${prefsKeyPrefix}@quickdelivery.in")
+                                ).ifBlank { "${prefsKeyPrefix}@quickdelivery.in" }
                             }
                             MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
                                 context = context,
@@ -1231,6 +1325,32 @@ fun QuickDeliveryUserAuthScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
+
+                GoogleSignInButton(
+                    onAuthSuccess = {
+                        val user = runCatching { Firebase.auth.currentUser }.getOrNull()
+                        val googleName = QuickDeliverySecurityGuard.sanitizeText(user?.displayName, 80).ifBlank {
+                            if (prefsKeyPrefix == "rider") "Vikram Singh" else "Aarav Sharma"
+                        }
+                        val googleEmail = QuickDeliverySecurityGuard.sanitizeEmail(user?.email).ifBlank {
+                            "${prefsKeyPrefix}@quickdelivery.in"
+                        }
+                        val googlePhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(mobileNumber).ifBlank { "9876543210" }
+                        MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
+                            context = context,
+                            rolePrefix = prefsKeyPrefix,
+                            name = googleName,
+                            phone = googlePhone,
+                            email = googleEmail,
+                            storageAllowed = allowPhoneStoragePermission
+                        )
+                        onAuthenticated(googleName, googlePhone, googleEmail)
+                    },
+                    onAuthError = { errMsg ->
+                        errorMessage = errMsg
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }

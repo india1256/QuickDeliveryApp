@@ -172,4 +172,94 @@ class SecurityAndPricingIntegrationTest {
         )
         assertFalse(healthyState.isCriticalPower)
     }
+
+    @Test
+    fun testRateLimitingInputSanitizationAndRoleSessionTokenSecurity() = runTest {
+        com.example.security.QuickDeliverySecurityGuard.resetRateLimitsForTesting()
+
+        // 1. Input Sanitization against XSS & NoSQL injection
+        val dirtyInput = "<script>alert('hack')</script> Indiranagar \$where javascript:evil() 100ft Road"
+        val cleanInput = com.example.security.QuickDeliverySecurityGuard.sanitizeText(dirtyInput, 200)
+        assertFalse(cleanInput.contains("<script", ignoreCase = true))
+        assertFalse(cleanInput.contains("javascript:", ignoreCase = true))
+        assertFalse(cleanInput.contains("\$where", ignoreCase = true))
+        assertTrue(cleanInput.contains("Indiranagar"))
+
+        // 2. Role-bound HMAC-SHA256 Session Token verification & tamper protection
+        val customerToken = com.example.security.QuickDeliverySecurityGuard.issueRoleSessionToken(
+            role = "CUSTOMER",
+            name = "Aarav Sharma",
+            phone = "9876543210",
+            email = "aarav@example.com"
+        )
+        assertTrue(
+            com.example.security.QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                token = customerToken,
+                expectedRole = "CUSTOMER",
+                expectedPhone = "9876543210",
+                expectedEmail = "aarav@example.com"
+            )
+        )
+        // Must reject role privilege escalation (using a CUSTOMER token for ADMIN or RIDER)
+        assertFalse(
+            com.example.security.QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                token = customerToken,
+                expectedRole = "ADMIN",
+                expectedPhone = "9876543210",
+                expectedEmail = "aarav@example.com"
+            )
+        )
+        // Must reject tampered signature
+        assertFalse(
+            com.example.security.QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                token = customerToken + "tampered",
+                expectedRole = "CUSTOMER",
+                expectedPhone = "9876543210",
+                expectedEmail = "aarav@example.com"
+            )
+        )
+
+        // 3. Order Placement Rate Limiting & Duplicate Burst Spam Prevention
+        val firstOrder = com.example.security.QuickDeliverySecurityGuard.checkAndRecordOrderPlacement(
+            actorKey = "SPAM-TEST-USER-1",
+            pickupAddress = "MG Road Metro",
+            dropAddress = "Koramangala 4th Block",
+            vehicleType = "BIKE",
+            currentActivePendingOrders = 0
+        )
+        assertTrue(firstOrder.isSuccess)
+
+        // Immediate identical duplicate route within 8s cooldown must be blocked
+        val duplicateBurst = com.example.security.QuickDeliverySecurityGuard.checkAndRecordOrderPlacement(
+            actorKey = "SPAM-TEST-USER-1",
+            pickupAddress = "MG Road Metro",
+            dropAddress = "Koramangala 4th Block",
+            vehicleType = "BIKE",
+            currentActivePendingOrders = 1
+        )
+        assertTrue(duplicateBurst.isFailure)
+
+        // Flooding > 5 orders within 60 seconds must be rate-limited
+        for (i in 2..5) {
+            val allowed = com.example.security.QuickDeliverySecurityGuard.checkAndRecordOrderPlacement(
+                actorKey = "SPAM-TEST-USER-1",
+                pickupAddress = "Pickup Point $i",
+                dropAddress = "Drop Point $i",
+                vehicleType = "BIKE",
+                currentActivePendingOrders = 0
+            )
+            assertTrue(allowed.isSuccess)
+        }
+        val sixthRapidOrder = com.example.security.QuickDeliverySecurityGuard.checkAndRecordOrderPlacement(
+            actorKey = "SPAM-TEST-USER-1",
+            pickupAddress = "Pickup Point 6",
+            dropAddress = "Drop Point 6",
+            vehicleType = "BIKE",
+            currentActivePendingOrders = 0
+        )
+        assertTrue(sixthRapidOrder.isFailure)
+
+        com.example.security.QuickDeliverySecurityGuard.resetRateLimitsForTesting()
+    }
 }
+

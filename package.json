@@ -13,9 +13,9 @@
     "cap:customer": "node scripts/build-capacitor-apk.mjs customer --sync",
     "cap:rider": "node scripts/build-capacitor-apk.mjs rider --sync",
     "cap:admin": "node scripts/build-capacitor-apk.mjs admin --sync",
-    "apk:customer": "node scripts/build-capacitor-apk.mjs customer --sync && gradle :app:assembleDebug -PappRole=customer",
-    "apk:rider": "node scripts/build-capacitor-apk.mjs rider --sync && gradle :app:assembleDebug -PappRole=rider",
-    "apk:admin": "node scripts/build-capacitor-apk.mjs admin --sync && gradle :app:assembleDebug -PappRole=admin",
+    "apk:customer": "node scripts/build-capacitor-apk.mjs customer --apk",
+    "apk:rider": "node scripts/build-capacitor-apk.mjs rider --apk",
+    "apk:admin": "node scripts/build-capacitor-apk.mjs admin --apk",
     "preview": "vite preview"
   },
   "dependencies": {

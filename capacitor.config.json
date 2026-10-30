@@ -1,0 +1,16 @@
+{
+  "appId": "com.quickdelivery.customer",
+  "appName": "Quick Delivery",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "backgroundColor": "#042F2E",
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}

@@ -17,6 +17,7 @@ import com.example.data.model.UpiAppOption
 import com.example.data.model.VehicleType
 import com.example.data.pricing.ServerFareEngine
 import com.example.data.repository.SharedOrderRepository
+import com.example.security.QuickDeliverySecurityGuard
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -639,6 +640,7 @@ object AutomatedFairRiderAssignmentEngine {
             }
             _activeOffersByOrder.value = emptyMap()
             _dispatchAuditLog.value = emptyList()
+            QuickDeliverySecurityGuard.resetRateLimitsForTesting()
         }
     }
 
@@ -761,19 +763,76 @@ object AutomatedFairRiderAssignmentEngine {
                 )
                 return Result.failure(err)
             }
+            val sanitizedFields = QuickDeliverySecurityGuard.validateAndSanitizeOrderInputs(
+                customerName = customerName,
+                customerPhone = customerPhone,
+                pickupAddress = pickupAddress.fullAddress,
+                dropAddress = dropAddress.fullAddress,
+                pickupLat = pickupAddress.lat,
+                pickupLng = pickupAddress.lng,
+                dropLat = dropAddress.lat,
+                dropLng = dropAddress.lng
+            ).getOrElse { err ->
+                recordAudit(
+                    orderId = "REJECTED-INPUT",
+                    eventType = "BACKEND_INPUT_SANITIZATION_REJECTED",
+                    riderId = null,
+                    riderName = null,
+                    detail = err.message ?: "Invalid order input fields"
+                )
+                return Result.failure(err)
+            }
+
+            val cleanCustomerId = QuickDeliverySecurityGuard.sanitizeIdentifier(customerId).ifBlank { "CUST-1001" }
+            val activePendingForCustomer = repository.orders.value.count {
+                it.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                    QuickDeliverySecurityGuard.sanitizePhoneNumber(it.customerPhone) == sanitizedFields.customerPhone
+            }
+
+            QuickDeliverySecurityGuard.checkAndRecordOrderPlacement(
+                actorKey = "$cleanCustomerId:${sanitizedFields.customerPhone}",
+                pickupAddress = sanitizedFields.pickupAddress,
+                dropAddress = sanitizedFields.dropAddress,
+                vehicleType = vehicleType.name,
+                activePendingOrdersCount = activePendingForCustomer
+            ).getOrElse { rateErr ->
+                recordAudit(
+                    orderId = "REJECTED-RATE-LIMIT",
+                    eventType = "BACKEND_RATE_LIMIT_BLOCKED",
+                    riderId = null,
+                    riderName = null,
+                    detail = rateErr.message ?: "Order rate limit exceeded"
+                )
+                return Result.failure(rateErr)
+            }
+
+            val sanitizedPickup = pickupAddress.copy(
+                fullAddress = sanitizedFields.pickupAddress,
+                landmark = QuickDeliverySecurityGuard.sanitizeText(pickupAddress.landmark, 120),
+                contactName = QuickDeliverySecurityGuard.sanitizeText(pickupAddress.contactName, 80).ifBlank { sanitizedFields.customerName },
+                contactPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(pickupAddress.contactPhone).ifBlank { sanitizedFields.customerPhone }
+            )
+            val sanitizedDrop = dropAddress.copy(
+                fullAddress = sanitizedFields.dropAddress,
+                landmark = QuickDeliverySecurityGuard.sanitizeText(dropAddress.landmark, 120),
+                contactName = QuickDeliverySecurityGuard.sanitizeText(dropAddress.contactName, 80).ifBlank { "Receiver" },
+                contactPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(dropAddress.contactPhone).ifBlank { sanitizedFields.customerPhone }
+            )
+
             val normalizedPackage = packageDetails.copy(
                 weightKg = if (validatedWeight % 1.0 == 0.0) {
                     validatedWeight.toInt().toString()
                 } else {
                     String.format(Locale.US, "%.1f", validatedWeight)
-                }
+                },
+                description = QuickDeliverySecurityGuard.sanitizeText(packageDetails.description, 160).ifBlank { "Parcel" }
             )
             return repository.createCustomerOrder(
-                customerId = customerId,
-                customerName = customerName,
-                customerPhone = customerPhone,
-                pickupAddress = pickupAddress,
-                dropAddress = dropAddress,
+                customerId = cleanCustomerId,
+                customerName = sanitizedFields.customerName,
+                customerPhone = sanitizedFields.customerPhone,
+                pickupAddress = sanitizedPickup,
+                dropAddress = sanitizedDrop,
                 packageDetails = normalizedPackage,
                 vehicleType = vehicleType,
                 paymentMethod = paymentMethod,
@@ -1330,6 +1389,7 @@ object AutomatedFairRiderAssignmentEngine {
             offerTimeoutSeconds = 30
             maxGpsStalenessMs = 15L * 60L * 1000L
             allowCompatibleVehicleUpgradeFallback = true
+            QuickDeliverySecurityGuard.resetRateLimitsForTesting()
             if (repository != null) {
                 resetPricingAndWeightPolicyToDefaults(repository)
                 ensureBalancedActiveRiderFleet(repository)

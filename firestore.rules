@@ -23,6 +23,12 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // Input Sanitization Helper: Rejects HTML/XSS script tags, event handlers, and NoSQL operator injection
+    function isSafeString(text) {
+      return text is string &&
+             !text.matches('(?i).*(<script|</script|javascript:|onerror=|onload=|\\$where|\\$ne|__proto__).*');
+    }
+
     function isAdmin() {
       return isSignedIn() && (
         (('email' in request.auth.token) && request.auth.token.email == 'ravindergupta141@gmail.com' && ('email_verified' in request.auth.token) && request.auth.token.email_verified == true) ||
@@ -41,14 +47,16 @@ service cloud.firestore {
              get(/databases/$(database)/documents/rider_wallets/$(request.auth.uid)).data.commissionDebtPaise <= 15000;
     }
 
-    // Validation Helper 1: DeliveryOrder
+    // Validation Helper 1: DeliveryOrder (with XSS sanitization & 80/20 fare arithmetic invariant)
     function isValidDeliveryOrder(data) {
       return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
              data.orderCode is string && data.orderCode.size() >= 3 && data.orderCode.size() <= 40 &&
-             data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 80 &&
+             data.orderCode.matches('^[a-zA-Z0-9_\\-]+$') &&
+             isSafeString(data.customerName) && data.customerName.size() >= 2 && data.customerName.size() <= 80 &&
              data.customerPhone is string && data.customerPhone.size() >= 10 && data.customerPhone.size() <= 15 &&
-             data.pickupAddress is string && data.pickupAddress.size() >= 3 && data.pickupAddress.size() <= 300 &&
-             data.dropAddress is string && data.dropAddress.size() >= 3 && data.dropAddress.size() <= 300 &&
+             data.customerPhone.matches('^[0-9+\\-() ]{10,15}$') &&
+             isSafeString(data.pickupAddress) && data.pickupAddress.size() >= 3 && data.pickupAddress.size() <= 300 &&
+             isSafeString(data.dropAddress) && data.dropAddress.size() >= 3 && data.dropAddress.size() <= 300 &&
              data.vehicleType is string && data.vehicleType in ['BIKE', 'EV', 'MINI_TRUCK'] &&
              data.paymentMethod is string && data.paymentMethod in ['CASH_ON_DELIVERY', 'GATEWAY_UPI', 'CREDIT_CARD', 'DEBIT_CARD', 'NET_BANKING', 'DIRECT_RIDER_UPI'] &&
              data.paymentStatus is string && data.paymentStatus in ['CASH_COLLECT_ON_DELIVERY', 'DIRECT_RIDER_UPI_PENDING', 'PENDING_GATEWAY_VERIFICATION', 'VERIFIED_PAID_TO_COMPANY', 'PAYMENT_FAILED', 'REFUNDED'] &&
@@ -56,10 +64,11 @@ service cloud.firestore {
              data.totalAmountPaise is int && data.totalAmountPaise >= 1000 && data.totalAmountPaise <= 10000000 &&
              data.companyCommissionPaise is int && data.companyCommissionPaise >= 0 && data.companyCommissionPaise <= 2000000 &&
              data.riderEarningPaise is int && data.riderEarningPaise >= 0 && data.riderEarningPaise <= 8000000 &&
+             data.totalAmountPaise == data.companyCommissionPaise + data.riderEarningPaise &&
              (!('assignedRiderUid' in data) || (data.assignedRiderUid is string && data.assignedRiderUid.size() >= 1 && data.assignedRiderUid.size() <= 128)) &&
              (!('assignedRiderId' in data) || (data.assignedRiderId is string && data.assignedRiderId.size() >= 1 && data.assignedRiderId.size() <= 64)) &&
-             (!('pickupProofNote' in data) || (data.pickupProofNote is string && data.pickupProofNote.size() <= 300)) &&
-             (!('deliveryProofNote' in data) || (data.deliveryProofNote is string && data.deliveryProofNote.size() <= 300)) &&
+             (!('pickupProofNote' in data) || (isSafeString(data.pickupProofNote) && data.pickupProofNote.size() <= 300)) &&
+             (!('deliveryProofNote' in data) || (isSafeString(data.deliveryProofNote) && data.deliveryProofNote.size() <= 300)) &&
              (!('riderLat' in data) || (data.riderLat is number && data.riderLat >= -90.0 && data.riderLat <= 90.0)) &&
              (!('riderLng' in data) || (data.riderLng is number && data.riderLng >= -180.0 && data.riderLng <= 180.0)) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
@@ -70,7 +79,7 @@ service cloud.firestore {
     function isValidRiderWallet(data) {
       return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
              data.riderId is string && data.riderId.size() >= 3 && data.riderId.size() <= 64 &&
-             data.riderName is string && data.riderName.size() >= 2 && data.riderName.size() <= 80 &&
+             isSafeString(data.riderName) && data.riderName.size() >= 2 && data.riderName.size() <= 80 &&
              data.balancePaise is int && data.balancePaise >= -15000 && data.balancePaise <= 100000000 &&
              data.commissionDebtPaise is int && data.commissionDebtPaise >= 0 && data.commissionDebtPaise <= 15000 &&
              data.maxCommissionDebtPaise is int && data.maxCommissionDebtPaise == 15000 &&
@@ -89,7 +98,7 @@ service cloud.firestore {
              data.amountPaise is int && data.amountPaise > 0 && data.amountPaise <= 100000000 &&
              data.isCredit is bool &&
              data.settlementStatus is string && data.settlementStatus in ['PENDING_IN_GATEWAY', 'SETTLED_TO_BANK', 'RECEIVABLE_FROM_RIDER', 'VERIFIED_LEDGER_FINAL'] &&
-             data.description is string && data.description.size() >= 3 && data.description.size() <= 300 &&
+             isSafeString(data.description) && data.description.size() >= 3 && data.description.size() <= 300 &&
              data.createdAt is timestamp && data.createdAt <= request.time;
     }
 
@@ -98,15 +107,65 @@ service cloud.firestore {
       return data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 128 &&
              data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128 &&
              data.senderRole is string && data.senderRole in ['CUSTOMER', 'RIDER'] &&
-             data.senderName is string && data.senderName.size() >= 2 && data.senderName.size() <= 80 &&
-             data.messageText is string && data.messageText.size() >= 1 && data.messageText.size() <= 500 &&
+             isSafeString(data.senderName) && data.senderName.size() >= 2 && data.senderName.size() <= 80 &&
+             isSafeString(data.messageText) && data.messageText.size() >= 1 && data.messageText.size() <= 500 &&
              (!('deliveryStage' in data) || (data.deliveryStage is string && data.deliveryStage.size() >= 1 && data.deliveryStage.size() <= 64)) &&
              data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // Validation Helper 5: UserProfile (Role-locked profile with XSS sanitization)
+    function isValidUserProfile(data) {
+      return data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+             isSafeString(data.name) && data.name.size() >= 2 && data.name.size() <= 80 &&
+             data.phone is string && data.phone.size() >= 10 && data.phone.size() <= 15 &&
+             data.phone.matches('^[0-9+\\-() ]{10,15}$') &&
+             data.role is string && data.role in ['CUSTOMER', 'RIDER', 'ADMIN'] &&
+             (!('email' in data) || (isSafeString(data.email) && data.email.size() <= 120)) &&
+             (!('profilePhotoUrl' in data) || (data.profilePhotoUrl is string && data.profilePhotoUrl.size() <= 500000)) &&
+             (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64) || data.updatedAt is timestamp);
     }
 
     match /admins/{adminUid} {
       allow get: if isSignedIn() && request.auth.uid == adminUid && isValidId(adminUid);
       allow list, create, update, delete: if false;
+    }
+
+    // Collection 0: User Profiles (Owner-isolated & protected against role self-escalation)
+    match /user_profiles/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (
+        request.auth.uid == userId || isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        existing().id == request.auth.uid || isAdmin()
+      );
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().id == request.auth.uid &&
+                       incoming().keys().hasAll(['id', 'name', 'phone', 'role']) &&
+                       incoming().keys().hasOnly([
+                         'id', 'name', 'phone', 'email', 'role',
+                         'profilePhotoUrl', 'vehicleType', 'vehicleNumber',
+                         'sessionToken', 'sessionExpiresAt', 'updatedAt'
+                       ]) &&
+                       isValidUserProfile(incoming()) &&
+                       (isAdmin() || incoming().role in ['CUSTOMER', 'RIDER']);
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       (request.auth.uid == userId || isAdmin()) &&
+                       incoming().id == existing().id &&
+                       incoming().keys().hasOnly([
+                         'id', 'name', 'phone', 'email', 'role',
+                         'profilePhotoUrl', 'vehicleType', 'vehicleNumber',
+                         'sessionToken', 'sessionExpiresAt', 'updatedAt'
+                       ]) &&
+                       isValidUserProfile(incoming()) &&
+                       (isAdmin() || (incoming().role == existing().role && incoming().role in ['CUSTOMER', 'RIDER']));
+
+      allow delete: if isAdmin() && isValidId(userId);
     }
 
     // Collection 1: Delivery Orders
@@ -165,7 +224,11 @@ service cloud.firestore {
                        isValidDeliveryOrder(incoming()) &&
                        (
                          isAdmin() ||
-                         incoming().paymentStatus in ['CASH_COLLECT_ON_DELIVERY', 'DIRECT_RIDER_UPI_PENDING', 'PENDING_GATEWAY_VERIFICATION']
+                         (
+                           incoming().status == 'PENDING_ASSIGNMENT' &&
+                           !('assignedRiderUid' in incoming()) &&
+                           incoming().paymentStatus in ['CASH_COLLECT_ON_DELIVERY', 'DIRECT_RIDER_UPI_PENDING', 'PENDING_GATEWAY_VERIFICATION']
+                         )
                        );
 
       allow update: if isSignedIn() &&
@@ -184,6 +247,10 @@ service cloud.firestore {
                                existing().userId == request.auth.uid &&
                                incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'status', 'updatedAt']) &&
                                (
+                                 incoming().status == existing().status ||
+                                 (incoming().status == 'CANCELLED' && existing().status in ['PENDING_ASSIGNMENT', 'ASSIGNED', 'ARRIVED_AT_PICKUP'])
+                               ) &&
+                               (
                                  incoming().paymentStatus == existing().paymentStatus ||
                                  incoming().paymentStatus in ['CASH_COLLECT_ON_DELIVERY', 'DIRECT_RIDER_UPI_PENDING', 'PENDING_GATEWAY_VERIFICATION', 'PAYMENT_FAILED']
                                )
@@ -192,7 +259,10 @@ service cloud.firestore {
                                'assignedRiderUid' in existing() &&
                                existing().assignedRiderUid == request.auth.uid &&
                                (
-                                 incoming().diff(existing()).affectedKeys().hasOnly(['status', 'pickupProofNote', 'deliveryProofNote', 'riderLat', 'riderLng', 'updatedAt']) ||
+                                 (
+                                   incoming().status in ['ASSIGNED', 'ARRIVED_AT_PICKUP', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED'] &&
+                                   incoming().diff(existing()).affectedKeys().hasOnly(['status', 'pickupProofNote', 'deliveryProofNote', 'riderLat', 'riderLng', 'updatedAt'])
+                                 ) ||
                                  (
                                    existing().status == 'ASSIGNED' &&
                                    incoming().status == 'PENDING_ASSIGNMENT' &&

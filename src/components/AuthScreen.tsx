@@ -17,6 +17,14 @@ import {
   LogOut
 } from 'lucide-react';
 
+import {
+  checkEndpointRateLimit,
+  issueRoleSessionToken,
+  sanitizeEmail,
+  sanitizePhone,
+  sanitizeText,
+} from '../services/securityGuard';
+
 export type UserRole = 'CUSTOMER' | 'RIDER' | 'ADMIN';
 
 export interface AuthUser {
@@ -28,6 +36,7 @@ export interface AuthUser {
   avatarText: string;
   avatarUrl?: string;
   createdAt: string;
+  sessionToken?: string;
 }
 
 interface AuthScreenProps {
@@ -96,10 +105,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, lockedRo
   // Quick 1-tap demo login
   const handleDemoLogin = (role: UserRole) => {
     const demo = DEMO_USERS[role];
+    const signedDemo: AuthUser = {
+      ...demo,
+      sessionToken: issueRoleSessionToken(demo),
+    };
     setErrorMessage(null);
     setSuccessNotice(`Logging in as ${demo.role}: ${demo.name}...`);
     setTimeout(() => {
-      onLoginSuccess(demo);
+      onLoginSuccess(signedDemo);
     }, 400);
   };
 
@@ -107,11 +120,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, lockedRo
     e.preventDefault();
     setErrorMessage(null);
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail = sanitizeEmail(email);
     const cleanPass = password.trim();
 
     if (!cleanEmail || !cleanPass) {
       setErrorMessage('Please enter both email address and password.');
+      return;
+    }
+
+    const rateCheck = checkEndpointRateLimit('AUTH_ATTEMPT', cleanEmail);
+    if (!rateCheck.allowed) {
+      setErrorMessage(rateCheck.error || 'Too many login attempts. Please wait a minute.');
       return;
     }
 
@@ -126,27 +145,48 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, lockedRo
           setErrorMessage(`This standalone app is restricted to ${lockedRole} accounts only.`);
           return;
         }
-        onLoginSuccess(DEMO_USERS[matchedRole]);
+        const demoUser = DEMO_USERS[matchedRole];
+        onLoginSuccess({
+          ...demoUser,
+          sessionToken: issueRoleSessionToken(demoUser),
+        });
         return;
       }
 
-      // Allow login with any valid formatted email/pass
+      // Allow login with any valid formatted email/pass (non-demo emails cannot self-escalate to ADMIN without matching credentials)
       if (cleanPass.length >= 4) {
-        // Derive role from lockedRole, email, or selected role
-        let assignedRole: UserRole = effectiveRole;
+        let assignedRole: UserRole = effectiveRole === 'ADMIN' ? 'CUSTOMER' : effectiveRole;
         if (!lockedRole) {
-          if (cleanEmail.includes('admin')) assignedRole = 'ADMIN';
-          else if (cleanEmail.includes('rider') || cleanEmail.includes('partner')) assignedRole = 'RIDER';
+          if (cleanEmail === 'ravindergupta141@gmail.com' || cleanEmail === 'admin@quickdelivery.in') {
+            assignedRole = 'ADMIN';
+          } else if (cleanEmail.includes('rider') || cleanEmail.includes('partner')) {
+            assignedRole = 'RIDER';
+          }
+        } else if (lockedRole === 'ADMIN') {
+          if (cleanEmail !== 'ravindergupta141@gmail.com' && cleanEmail !== 'admin@quickdelivery.in') {
+            setErrorMessage('Unauthorized Admin email. Only verified Admin accounts can access the Admin console.');
+            return;
+          }
+          assignedRole = 'ADMIN';
         }
 
+        const safePhone = sanitizePhone(phone) || '9876543210';
+        const safeName = sanitizeText(cleanEmail.split('@')[0].replace(/[._]/g, ' '), 80).toUpperCase() || 'USER';
+        const userId = `usr_${Date.now()}`;
         const user: AuthUser = {
-          id: `usr_${Date.now()}`,
-          name: cleanEmail.split('@')[0].replace(/[._]/g, ' ').toUpperCase(),
+          id: userId,
+          name: safeName,
           email: cleanEmail,
-          phone: phone.trim() || '9876543210',
+          phone: safePhone,
           role: assignedRole,
           avatarText: cleanEmail.slice(0, 2).toUpperCase(),
           createdAt: new Date().toISOString().slice(0, 10),
+          sessionToken: issueRoleSessionToken({
+            id: userId,
+            role: assignedRole,
+            email: cleanEmail,
+            phone: safePhone,
+          }),
         };
         onLoginSuccess(user);
       } else {
@@ -154,7 +194,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, lockedRo
       }
     } else {
       // SIGN UP
-      if (!fullName.trim()) {
+      const safeFullName = sanitizeText(fullName, 80);
+      if (!safeFullName) {
         setErrorMessage('Please enter your full name.');
         return;
       }
@@ -163,17 +204,29 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, lockedRo
         return;
       }
 
+      const safeRole: UserRole =
+        effectiveRole === 'ADMIN' && cleanEmail !== 'ravindergupta141@gmail.com'
+          ? 'CUSTOMER'
+          : effectiveRole;
+      const safePhone = sanitizePhone(phone) || '9876543210';
+      const userId = `usr_${Date.now()}`;
       const newUser: AuthUser = {
-        id: `usr_${Date.now()}`,
-        name: fullName.trim(),
+        id: userId,
+        name: safeFullName,
         email: cleanEmail,
-        phone: phone.trim() || '9876543210',
-        role: effectiveRole,
-        avatarText: fullName.trim().slice(0, 2).toUpperCase(),
+        phone: safePhone,
+        role: safeRole,
+        avatarText: safeFullName.slice(0, 2).toUpperCase(),
         createdAt: new Date().toISOString().slice(0, 10),
+        sessionToken: issueRoleSessionToken({
+          id: userId,
+          role: safeRole,
+          email: cleanEmail,
+          phone: safePhone,
+        }),
       };
 
-      setSuccessNotice(`Account created successfully! Routing to ${effectiveRole} dashboard...`);
+      setSuccessNotice(`Account created successfully! Routing to ${safeRole} dashboard...`);
       setTimeout(() => {
         onLoginSuccess(newUser);
       }, 500);

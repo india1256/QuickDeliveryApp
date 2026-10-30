@@ -11,6 +11,14 @@ import {
   type Firestore,
   type Unsubscribe,
 } from 'firebase/firestore';
+import {
+  sanitizeEmail,
+  sanitizeIdentifier,
+  sanitizePhone,
+  sanitizeText,
+  issueRoleSessionToken,
+  verifyRoleSessionToken,
+} from './securityGuard';
 
 export interface FirebaseConfig {
   apiKey: string;
@@ -84,17 +92,18 @@ export function normalizeOrderRecord(raw: any): any {
       ? raw.riderEarningPaise
       : totalAmountPaise - companyCommissionPaise;
 
-  const code = String(raw.orderCode || raw.id || 'QD-5002');
+  const code = sanitizeIdentifier(raw.orderCode || raw.id || 'QD-5002', 40) || 'QD-5002';
+  const safeId = sanitizeIdentifier(raw.id || `ord_${code.toLowerCase()}`, 64) || `ord_${code.toLowerCase()}`;
   return sanitizeForFirestore({
     ...raw,
-    id: String(raw.id || `ord_${code.toLowerCase()}`),
+    id: safeId,
     orderCode: code,
-    customerName: String(raw.customerName || 'Customer'),
-    customerPhone: String(raw.customerPhone || '9876543210'),
-    receiverName: String(raw.receiverName || 'Receiver'),
-    receiverPhone: String(raw.receiverPhone || '9820112233'),
-    pickupAddress: String(raw.pickupAddress || 'Pickup Location'),
-    dropAddress: String(raw.dropAddress || 'Drop Location'),
+    customerName: sanitizeText(raw.customerName || 'Customer', 80) || 'Customer',
+    customerPhone: sanitizePhone(raw.customerPhone || '9876543210') || '9876543210',
+    receiverName: sanitizeText(raw.receiverName || 'Receiver', 80) || 'Receiver',
+    receiverPhone: sanitizePhone(raw.receiverPhone || '9820112233') || '9820112233',
+    pickupAddress: sanitizeText(raw.pickupAddress || 'Pickup Location', 300) || 'Pickup Location',
+    dropAddress: sanitizeText(raw.dropAddress || 'Drop Location', 300) || 'Drop Location',
     pickupTag: raw.pickupTag || 'Home',
     dropTag: raw.dropTag || 'Office',
     packageCategory: raw.packageCategory || 'Documents',
@@ -230,17 +239,38 @@ class DatabaseService {
     try {
       const profilesRaw = localStorage.getItem(STORAGE_KEYS.USER_PROFILES);
       const profilesMap: Record<string, any> = profilesRaw ? JSON.parse(profilesRaw) : {};
+      const safeId = sanitizeIdentifier(user.id, 64);
+      const safeRole =
+        user.role === 'ADMIN' || user.role === 'RIDER' || user.role === 'CUSTOMER'
+          ? user.role
+          : 'CUSTOMER';
+      const safeName = sanitizeText(user.name, 80) || 'User';
+      const safeEmail = sanitizeEmail(user.email) || 'user@quickdelivery.in';
+      const safePhone = sanitizePhone(user.phone) || '9876543210';
+      const sessionToken = issueRoleSessionToken({
+        id: safeId,
+        role: safeRole,
+        email: safeEmail,
+        phone: safePhone,
+      });
+
       const updatedProfile = sanitizeForFirestore({
-        ...profilesMap[user.id],
+        ...profilesMap[safeId],
         ...user,
+        id: safeId,
+        name: safeName,
+        email: safeEmail,
+        phone: safePhone,
+        role: safeRole,
+        sessionToken,
         updatedAt: new Date().toISOString(),
       });
-      profilesMap[user.id] = updatedProfile;
+      profilesMap[safeId] = updatedProfile;
       localStorage.setItem(STORAGE_KEYS.USER_PROFILES, JSON.stringify(profilesMap));
       localStorage.setItem('quick_delivery_auth_user', JSON.stringify(updatedProfile));
 
       if (this.db) {
-        const userRef = doc(this.db, 'user_profiles', user.id);
+        const userRef = doc(this.db, 'user_profiles', safeId);
         await setDoc(userRef, updatedProfile, { merge: true });
       }
       return true;
@@ -255,7 +285,11 @@ class DatabaseService {
       const profilesRaw = localStorage.getItem(STORAGE_KEYS.USER_PROFILES);
       if (!profilesRaw) return null;
       const profilesMap: Record<string, any> = JSON.parse(profilesRaw);
-      return profilesMap[userId] || null;
+      const profile = profilesMap[sanitizeIdentifier(userId, 64)] || null;
+      if (profile && !verifyRoleSessionToken(profile)) {
+        return null;
+      }
+      return profile;
     } catch {
       return null;
     }
