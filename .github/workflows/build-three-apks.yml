@@ -30,10 +30,14 @@ jobs:
     name: Cloud Build — Customer, Rider & Admin APKs
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
 
     steps:
       - name: 1. Checkout Repository Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 2. Set up Node.js 20 LTS
         uses: actions/setup-node@v4
@@ -116,25 +120,63 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: 14. Publish Direct 1-Tap Mobile Download Links to GitHub Releases
-        if: ${{ github.event_name != 'pull_request' && hashFiles('dist-apks/*.apk') != '' }}
+      - name: 14. Prepare Release Tags for Built APKs
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && hashFiles('dist-apks/*.apk') != '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -lh dist-apks/*.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "v5.3.${GITHUB_RUN_NUMBER}" -m "Quick Delivery APKs Build #${GITHUB_RUN_NUMBER}"
+          git tag -fa "latest-apks" -m "Latest Quick Delivery APKs (Build #${GITHUB_RUN_NUMBER})"
+          git push origin "refs/tags/v5.3.${GITHUB_RUN_NUMBER}" --force
+          git push origin "refs/tags/latest-apks" --force
+
+      - name: 15. Create Automatic Versioned GitHub Release with Built APKs (dist-apks/*.apk)
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && hashFiles('dist-apks/*.apk') != '' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest-apks
-          name: "📲 Quick Delivery — Direct Mobile APK Downloads (Customer, Rider & Admin)"
+          tag_name: v5.3.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: "📲 Quick Delivery v5.3.${{ github.run_number }} — Customer, Rider & Admin APKs"
           body: |
-            ## 📲 Direct 1-Tap Mobile APK Downloads (No Laptop Needed)
+            ## 📲 Direct 1-Tap Mobile APK Downloads (Build #${{ github.run_number }})
 
-            Aap apne Android phone ke Chrome browser se niche diye gaye **Assets** section me click karke teeno `.apk` files sidha download aur install kar sakte hain (bina kisi `.zip` file ko extract kiye):
+            Click any `.apk` file below under **Assets** on your Android phone to download and install directly (no `.zip` extraction required):
 
             1. 🛍️ **`QuickDelivery-Customer.apk`** — Customer Ordering & Live Tracking App (`com.quickdelivery.customer`)
             2. 🛵 **`QuickDelivery-Rider-Partner.apk`** — Rider Partner Delivery & Earnings App (`com.quickdelivery.rider`)
             3. 🛡️ **`QuickDelivery-Admin-Enterprise.apk`** — Admin Control Center & Order Management App (`com.quickdelivery.admin`)
             4. 🌐 **`QuickDelivery-AllInOne-Hub.apk`** — Unified 3-in-1 Switcher App (`com.quickdelivery.hub`)
 
-            > **Note:** Charo APKs ke Package IDs alag hain, isliye aap **ek hi Android phone me saare apps ek saath install** kar sakte hain aur teeno apps real-time Firebase Firestore cloud database se connected hain.
+            > **Note:** Each APK has a unique Android Package ID so all apps can be installed side-by-side on the same phone and sync live via Firebase Firestore.
           files: dist-apks/*.apk
+          draft: false
           prerelease: false
-          make_latest: true
+          make_latest: 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 16. Update Rolling 'latest-apks' GitHub Release with Built APKs (dist-apks/*.apk)
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && hashFiles('dist-apks/*.apk') != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-apks
+          target_commitish: ${{ github.sha }}
+          name: "📲 Quick Delivery (Latest) — Direct Mobile APK Downloads (Customer, Rider & Admin)"
+          body: |
+            ## 📲 Direct 1-Tap Mobile APK Downloads (Always Latest Build)
+
+            Click any `.apk` file below under **Assets** on your Android phone to download and install directly:
+
+            1. 🛍️ **`QuickDelivery-Customer.apk`** — Customer Ordering & Live Tracking App (`com.quickdelivery.customer`)
+            2. 🛵 **`QuickDelivery-Rider-Partner.apk`** — Rider Partner Delivery & Earnings App (`com.quickdelivery.rider`)
+            3. 🛡️ **`QuickDelivery-Admin-Enterprise.apk`** — Admin Control Center & Order Management App (`com.quickdelivery.admin`)
+            4. 🌐 **`QuickDelivery-AllInOne-Hub.apk`** — Unified 3-in-1 Switcher App (`com.quickdelivery.hub`)
+          files: dist-apks/*.apk
+          draft: false
+          prerelease: false
+          make_latest: 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
