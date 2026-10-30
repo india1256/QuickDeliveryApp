@@ -5960,13 +5960,69 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
 
             {/* Modal Body */}
             <div className="p-5 space-y-4 overflow-y-auto">
+              {/* Direct Local APK & ZIP Download Center (No GitHub Actions Needed) */}
+              <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-950 via-teal-900 to-emerald-900 text-white border border-emerald-400/40 shadow-lg space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-400/20 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-300/30">
+                      Direct Mobile APK Downloads • Locally Built
+                    </span>
+                    <h4 className="font-extrabold text-sm sm:text-base mt-1">
+                      📥 1-Tap Direct Android APK &amp; ZIP Downloads
+                    </h4>
+                    <p className="text-[11px] text-emerald-100/85">
+                      Tap any button below to download the pre-built signed Android APK directly to your phone:
+                    </p>
+                  </div>
+                  <a
+                    href="/apks/QuickDelivery-All-4-APKs.zip"
+                    download="QuickDelivery-All-4-APKs.zip"
+                    className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs flex items-center gap-1.5 shadow-md transition"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download All 4 APKs (.ZIP)</span>
+                  </a>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <a
+                    href="/apks/QuickDelivery-Customer.apk"
+                    download="QuickDelivery-Customer.apk"
+                    className="px-3 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 border border-emerald-300/30 text-white text-xs font-bold flex items-center justify-between gap-2 transition"
+                  >
+                    <span>🛍️ Customer App (.APK)</span>
+                    <Download className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                  </a>
+                  <a
+                    href="/apks/QuickDelivery-Rider-Partner.apk"
+                    download="QuickDelivery-Rider-Partner.apk"
+                    className="px-3 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 border border-amber-300/30 text-white text-xs font-bold flex items-center justify-between gap-2 transition"
+                  >
+                    <span>🛵 Rider Partner (.APK)</span>
+                    <Download className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  </a>
+                  <a
+                    href="/apks/QuickDelivery-Admin-Enterprise.apk"
+                    download="QuickDelivery-Admin-Enterprise.apk"
+                    className="px-3 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 border border-teal-300/30 text-white text-xs font-bold flex items-center justify-between gap-2 transition"
+                  >
+                    <span>🛡️ Admin Console (.APK)</span>
+                    <Download className="w-3.5 h-3.5 text-teal-300 shrink-0" />
+                  </a>
+                  <a
+                    href="/apks/QuickDelivery-AllInOne-Hub.apk"
+                    download="QuickDelivery-AllInOne-Hub.apk"
+                    className="px-3 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 border border-emerald-300/30 text-white text-xs font-bold flex items-center justify-between gap-2 transition"
+                  >
+                    <span>🌐 All-in-One Hub (.APK)</span>
+                    <Download className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                  </a>
+                </div>
+              </div>
+
               <div className="text-xs text-slate-600 leading-relaxed bg-emerald-50/80 p-3 rounded-xl border border-emerald-200">
-                💡 <strong>How it works:</strong> Each phone opens its dedicated URL below in{' '}
-                <strong>Google Chrome</strong>. Chrome will offer an &quot;Install App&quot; prompt
-                or you can tap the top <strong>📲 Install Button</strong> (or Chrome menu{' '}
-                <strong>⋮ &gt; Install app / Add to Home screen</strong>). Each phone gets its own
-                isolated standalone app icon while sharing the exact same live order bookings and
-                database!
+                💡 <strong>How it works:</strong> Each phone can either download the signed <strong>.APK</strong> above or open its dedicated URL below in{' '}
+                <strong>Google Chrome</strong>. Each app has a unique package ID so all 4 apps can be installed side-by-side on the same phone!
               </div>
 
               {/* 3 Dedicated App Cards */}
