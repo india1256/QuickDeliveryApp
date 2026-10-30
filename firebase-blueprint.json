@@ -1,0 +1,309 @@
+{
+  "entities": {
+    "DeliveryOrder": {
+      "title": "DeliveryOrder",
+      "description": "Cross-device customer parcel delivery order synced between Customer, Rider, and Admin apps.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the customer who created the order."
+        },
+        "orderCode": {
+          "type": "string",
+          "description": "Human-readable order code (e.g. QD-4012)."
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Customer display name."
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Customer 10-digit mobile number."
+        },
+        "pickupAddress": {
+          "type": "string",
+          "description": "Pickup location address text."
+        },
+        "dropAddress": {
+          "type": "string",
+          "description": "Drop-off location address text."
+        },
+        "vehicleType": {
+          "type": "string",
+          "enum": ["BIKE", "EV", "MINI_TRUCK"],
+          "description": "Selected delivery vehicle class."
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["CASH_ON_DELIVERY", "GATEWAY_UPI", "CREDIT_CARD", "DEBIT_CARD", "NET_BANKING", "DIRECT_RIDER_UPI"],
+          "description": "Customer checkout payment method (no customer wallet)."
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["CASH_COLLECT_ON_DELIVERY", "DIRECT_RIDER_UPI_PENDING", "PENDING_GATEWAY_VERIFICATION", "VERIFIED_PAID_TO_COMPANY", "PAYMENT_FAILED", "REFUNDED"],
+          "description": "Server/gateway verified payment state."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING_ASSIGNMENT", "ASSIGNED", "ARRIVED_AT_PICKUP", "PICKED_UP", "IN_TRANSIT", "DELIVERED", "CANCELLED"],
+          "description": "Current order lifecycle state."
+        },
+        "totalAmountPaise": {
+          "type": "integer",
+          "description": "Total order fare in paise."
+        },
+        "companyCommissionPaise": {
+          "type": "integer",
+          "description": "20% company commission in paise."
+        },
+        "riderEarningPaise": {
+          "type": "integer",
+          "description": "80% rider net earning in paise."
+        },
+        "assignedRiderUid": {
+          "type": "string",
+          "description": "Optional Firebase UID of assigned rider."
+        },
+        "assignedRiderId": {
+          "type": "string",
+          "description": "Optional Rider Partner ID (e.g. RIDER-101)."
+        },
+        "pickupProofNote": {
+          "type": "string",
+          "description": "Optional pickup OTP and camera proof metadata."
+        },
+        "deliveryProofNote": {
+          "type": "string",
+          "description": "Optional delivery OTP and camera proof metadata."
+        },
+        "riderLat": {
+          "type": "number",
+          "description": "Optional live GPS latitude of the assigned rider."
+        },
+        "riderLng": {
+          "type": "number",
+          "description": "Optional live GPS longitude of the assigned rider."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp populated via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp populated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "orderCode",
+        "customerName",
+        "customerPhone",
+        "pickupAddress",
+        "dropAddress",
+        "vehicleType",
+        "paymentMethod",
+        "paymentStatus",
+        "status",
+        "totalAmountPaise",
+        "companyCommissionPaise",
+        "riderEarningPaise",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "RiderWallet": {
+      "title": "RiderWallet",
+      "description": "Rider partner wallet tracking 80/20 earnings, ₹150 (15000 paise) commission debt limit, work mode, and battery health.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the rider."
+        },
+        "riderId": {
+          "type": "string",
+          "description": "Rider Partner ID (e.g. RIDER-101)."
+        },
+        "riderName": {
+          "type": "string",
+          "description": "Rider full name."
+        },
+        "balancePaise": {
+          "type": "integer",
+          "description": "Rider wallet balance in paise (may not fall below -15000)."
+        },
+        "commissionDebtPaise": {
+          "type": "integer",
+          "description": "Outstanding 20% commission owed to company in paise (0 to 500000)."
+        },
+        "maxCommissionDebtPaise": {
+          "type": "integer",
+          "description": "Enforced maximum commission debt threshold in paise (15000 = ₹150)."
+        },
+        "workMode": {
+          "type": "string",
+          "enum": ["FULL_TIME", "PART_TIME"],
+          "description": "Rider shift work mode."
+        },
+        "shiftStatus": {
+          "type": "string",
+          "enum": ["ONLINE_ACTIVE", "OFFLINE_RESTING", "GOING_HOME_ENDED"],
+          "description": "Rider availability state."
+        },
+        "batteryPercent": {
+          "type": "integer",
+          "description": "Latest device battery percentage reported by PowerManager."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp populated via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp populated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "riderId",
+        "riderName",
+        "balancePaise",
+        "commissionDebtPaise",
+        "maxCommissionDebtPaise",
+        "workMode",
+        "shiftStatus",
+        "batteryPercent",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CompanyLedgerDoc": {
+      "title": "CompanyLedgerDoc",
+      "description": "Immutable server-side company wallet ledger entry for gateway collections, commissions, repayments, and bank settlements.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the actor recording the verified ledger entry."
+        },
+        "entryType": {
+          "type": "string",
+          "enum": ["CUSTOMER_GATEWAY_COLLECTION", "COMPANY_COMMISSION_EARNED", "RIDER_COMMISSION_RECEIVABLE", "RIDER_COMMISSION_REPAYMENT", "GATEWAY_PROCESSING_FEE", "BANK_SETTLEMENT_TRANSFER", "ADMIN_MANUAL_ADJUSTMENT"],
+          "description": "Category of company ledger entry."
+        },
+        "referenceId": {
+          "type": "string",
+          "description": "Order ID, Gateway Payment ID, or Settlement UTR."
+        },
+        "amountPaise": {
+          "type": "integer",
+          "description": "Entry amount in paise (> 0)."
+        },
+        "isCredit": {
+          "type": "boolean",
+          "description": "True if credit to company ledger, false if debit."
+        },
+        "settlementStatus": {
+          "type": "string",
+          "enum": ["PENDING_IN_GATEWAY", "SETTLED_TO_BANK", "RECEIVABLE_FROM_RIDER", "VERIFIED_LEDGER_FINAL"],
+          "description": "Settlement tracking status."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable audit description."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp populated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "entryType",
+        "referenceId",
+        "amountPaise",
+        "isCredit",
+        "settlementStatus",
+        "description",
+        "createdAt"
+      ]
+    },
+    "OrderChatMessage": {
+      "title": "OrderChatMessage",
+      "description": "Real-time chat message exchanged between the customer and the assigned rider during an active delivery order.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "Parent delivery order document ID."
+        },
+        "senderUid": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the message sender (customer or assigned rider)."
+        },
+        "senderRole": {
+          "type": "string",
+          "enum": ["CUSTOMER", "RIDER"],
+          "description": "Role of the sender in the delivery order."
+        },
+        "senderName": {
+          "type": "string",
+          "description": "Display name of the customer or assigned rider sending the message."
+        },
+        "messageText": {
+          "type": "string",
+          "description": "Chat message body text (1 to 500 characters)."
+        },
+        "deliveryStage": {
+          "type": "string",
+          "description": "Optional order status stage when the message was sent."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp populated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "orderId",
+        "senderUid",
+        "senderRole",
+        "senderName",
+        "messageText",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/delivery_orders/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/DeliveryOrder"
+      },
+      "description": "Cross-device customer delivery orders."
+    },
+    "/delivery_orders/{orderId}/chat_messages/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/OrderChatMessage"
+      },
+      "description": "Real-time chat messages between the order customer and the assigned rider."
+    },
+    "/rider_wallets/{riderUid}": {
+      "schema": {
+        "$ref": "#/entities/RiderWallet"
+      },
+      "description": "Per-rider wallet, commission debt, shift mode, and battery telemetry."
+    },
+    "/company_ledger/{entryId}": {
+      "schema": {
+        "$ref": "#/entities/CompanyLedgerDoc"
+      },
+      "description": "Audited company wallet ledger entries."
+    }
+  }
+}

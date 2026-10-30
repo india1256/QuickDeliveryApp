@@ -1,0 +1,328 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (('email' in request.auth.token) && request.auth.token.email == 'ravindergupta141@gmail.com' && ('email_verified' in request.auth.token) && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isAuthorizedRider() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/rider_wallets/$(request.auth.uid));
+    }
+
+    function isEligibleOnlineRider() {
+      return isAuthorizedRider() &&
+             get(/databases/$(database)/documents/rider_wallets/$(request.auth.uid)).data.shiftStatus == 'ONLINE_ACTIVE' &&
+             get(/databases/$(database)/documents/rider_wallets/$(request.auth.uid)).data.commissionDebtPaise <= 15000;
+    }
+
+    // Validation Helper 1: DeliveryOrder
+    function isValidDeliveryOrder(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.orderCode is string && data.orderCode.size() >= 3 && data.orderCode.size() <= 40 &&
+             data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 80 &&
+             data.customerPhone is string && data.customerPhone.size() >= 10 && data.customerPhone.size() <= 15 &&
+             data.pickupAddress is string && data.pickupAddress.size() >= 3 && data.pickupAddress.size() <= 300 &&
+             data.dropAddress is string && data.dropAddress.size() >= 3 && data.dropAddress.size() <= 300 &&
+             data.vehicleType is string && data.vehicleType in ['BIKE', 'EV', 'MINI_TRUCK'] &&
+             data.paymentMethod is string && data.paymentMethod in ['CASH_ON_DELIVERY', 'GATEWAY_UPI', 'CREDIT_CARD', 'DEBIT_CARD', 'NET_BANKING', 'DIRECT_RIDER_UPI'] &&
+             data.paymentStatus is string && data.paymentStatus in ['CASH_COLLECT_ON_DELIVERY', 'DIRECT_RIDER_UPI_PENDING', 'PENDING_GATEWAY_VERIFICATION', 'VERIFIED_PAID_TO_COMPANY', 'PAYMENT_FAILED', 'REFUNDED'] &&
+             data.status is string && data.status in ['PENDING_ASSIGNMENT', 'ASSIGNED', 'ARRIVED_AT_PICKUP', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'] &&
+             data.totalAmountPaise is int && data.totalAmountPaise >= 1000 && data.totalAmountPaise <= 10000000 &&
+             data.companyCommissionPaise is int && data.companyCommissionPaise >= 0 && data.companyCommissionPaise <= 2000000 &&
+             data.riderEarningPaise is int && data.riderEarningPaise >= 0 && data.riderEarningPaise <= 8000000 &&
+             (!('assignedRiderUid' in data) || (data.assignedRiderUid is string && data.assignedRiderUid.size() >= 1 && data.assignedRiderUid.size() <= 128)) &&
+             (!('assignedRiderId' in data) || (data.assignedRiderId is string && data.assignedRiderId.size() >= 1 && data.assignedRiderId.size() <= 64)) &&
+             (!('pickupProofNote' in data) || (data.pickupProofNote is string && data.pickupProofNote.size() <= 300)) &&
+             (!('deliveryProofNote' in data) || (data.deliveryProofNote is string && data.deliveryProofNote.size() <= 300)) &&
+             (!('riderLat' in data) || (data.riderLat is number && data.riderLat >= -90.0 && data.riderLat <= 90.0)) &&
+             (!('riderLng' in data) || (data.riderLng is number && data.riderLng >= -180.0 && data.riderLng <= 180.0)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // Validation Helper 2: RiderWallet (strictly enforces ₹150 = 15000 paise commissionDebtPaise cap)
+    function isValidRiderWallet(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.riderId is string && data.riderId.size() >= 3 && data.riderId.size() <= 64 &&
+             data.riderName is string && data.riderName.size() >= 2 && data.riderName.size() <= 80 &&
+             data.balancePaise is int && data.balancePaise >= -15000 && data.balancePaise <= 100000000 &&
+             data.commissionDebtPaise is int && data.commissionDebtPaise >= 0 && data.commissionDebtPaise <= 15000 &&
+             data.maxCommissionDebtPaise is int && data.maxCommissionDebtPaise == 15000 &&
+             data.workMode is string && data.workMode in ['FULL_TIME', 'PART_TIME'] &&
+             data.shiftStatus is string && data.shiftStatus in ['ONLINE_ACTIVE', 'OFFLINE_RESTING', 'GOING_HOME_ENDED'] &&
+             data.batteryPercent is int && data.batteryPercent >= 0 && data.batteryPercent <= 100 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // Validation Helper 3: CompanyLedgerDoc
+    function isValidCompanyLedgerDoc(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.entryType is string && data.entryType in ['CUSTOMER_GATEWAY_COLLECTION', 'COMPANY_COMMISSION_EARNED', 'RIDER_COMMISSION_RECEIVABLE', 'RIDER_COMMISSION_REPAYMENT', 'GATEWAY_PROCESSING_FEE', 'BANK_SETTLEMENT_TRANSFER', 'ADMIN_MANUAL_ADJUSTMENT'] &&
+             data.referenceId is string && data.referenceId.size() >= 2 && data.referenceId.size() <= 100 &&
+             data.amountPaise is int && data.amountPaise > 0 && data.amountPaise <= 100000000 &&
+             data.isCredit is bool &&
+             data.settlementStatus is string && data.settlementStatus in ['PENDING_IN_GATEWAY', 'SETTLED_TO_BANK', 'RECEIVABLE_FROM_RIDER', 'VERIFIED_LEDGER_FINAL'] &&
+             data.description is string && data.description.size() >= 3 && data.description.size() <= 300 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // Validation Helper 4: OrderChatMessage (Customer <-> Assigned Rider Real-Time Chat)
+    function isValidOrderChatMessage(data) {
+      return data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 128 &&
+             data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128 &&
+             data.senderRole is string && data.senderRole in ['CUSTOMER', 'RIDER'] &&
+             data.senderName is string && data.senderName.size() >= 2 && data.senderName.size() <= 80 &&
+             data.messageText is string && data.messageText.size() >= 1 && data.messageText.size() <= 500 &&
+             (!('deliveryStage' in data) || (data.deliveryStage is string && data.deliveryStage.size() >= 1 && data.deliveryStage.size() <= 64)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && request.auth.uid == adminUid && isValidId(adminUid);
+      allow list, create, update, delete: if false;
+    }
+
+    // Collection 1: Delivery Orders
+    match /delivery_orders/{orderId} {
+      function isOrderCustomer() {
+        return exists(/databases/$(database)/documents/delivery_orders/$(orderId)) &&
+               get(/databases/$(database)/documents/delivery_orders/$(orderId)).data.userId == request.auth.uid;
+      }
+
+      function isOrderAssignedRider() {
+        return exists(/databases/$(database)/documents/delivery_orders/$(orderId)) &&
+               ('assignedRiderUid' in get(/databases/$(database)/documents/delivery_orders/$(orderId)).data) &&
+               get(/databases/$(database)/documents/delivery_orders/$(orderId)).data.assignedRiderUid == request.auth.uid;
+      }
+
+      function isOrderChatParticipant() {
+        return isSignedIn() && isValidId(orderId) && (
+          isOrderCustomer() || isOrderAssignedRider() || isAdmin()
+        );
+      }
+
+      allow get: if isSignedIn() && isValidId(orderId) && (
+        existing().userId == request.auth.uid ||
+        ('assignedRiderUid' in existing() && existing().assignedRiderUid == request.auth.uid) ||
+        (existing().status == 'PENDING_ASSIGNMENT' && isAuthorizedRider()) ||
+        isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        ('assignedRiderUid' in existing() && existing().assignedRiderUid == request.auth.uid) ||
+        (existing().status == 'PENDING_ASSIGNMENT' && isAuthorizedRider()) ||
+        isAdmin()
+      );
+
+      allow create: if isSignedIn() &&
+                       isValidId(orderId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'orderCode', 'customerName', 'customerPhone',
+                         'pickupAddress', 'dropAddress', 'vehicleType',
+                         'paymentMethod', 'paymentStatus', 'status',
+                         'totalAmountPaise', 'companyCommissionPaise', 'riderEarningPaise',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'orderCode', 'customerName', 'customerPhone',
+                         'pickupAddress', 'dropAddress', 'vehicleType',
+                         'paymentMethod', 'paymentStatus', 'status',
+                         'totalAmountPaise', 'companyCommissionPaise', 'riderEarningPaise',
+                         'assignedRiderUid', 'assignedRiderId',
+                         'pickupProofNote', 'deliveryProofNote',
+                         'riderLat', 'riderLng',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidDeliveryOrder(incoming()) &&
+                       (
+                         isAdmin() ||
+                         incoming().paymentStatus in ['CASH_COLLECT_ON_DELIVERY', 'DIRECT_RIDER_UPI_PENDING', 'PENDING_GATEWAY_VERIFICATION']
+                       );
+
+      allow update: if isSignedIn() &&
+                       isValidId(orderId) &&
+                       isValidDeliveryOrder(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().orderCode == existing().orderCode &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         (
+                           existing().status != 'DELIVERED' &&
+                           existing().status != 'CANCELLED' &&
+                           (
+                             (
+                               existing().userId == request.auth.uid &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'status', 'updatedAt']) &&
+                               (
+                                 incoming().paymentStatus == existing().paymentStatus ||
+                                 incoming().paymentStatus in ['CASH_COLLECT_ON_DELIVERY', 'DIRECT_RIDER_UPI_PENDING', 'PENDING_GATEWAY_VERIFICATION', 'PAYMENT_FAILED']
+                               )
+                             ) ||
+                             (
+                               'assignedRiderUid' in existing() &&
+                               existing().assignedRiderUid == request.auth.uid &&
+                               (
+                                 incoming().diff(existing()).affectedKeys().hasOnly(['status', 'pickupProofNote', 'deliveryProofNote', 'riderLat', 'riderLng', 'updatedAt']) ||
+                                 (
+                                   existing().status == 'ASSIGNED' &&
+                                   incoming().status == 'PENDING_ASSIGNMENT' &&
+                                   !('assignedRiderUid' in incoming()) &&
+                                   !('assignedRiderId' in incoming()) &&
+                                   incoming().diff(existing()).affectedKeys().hasOnly(['assignedRiderUid', 'assignedRiderId', 'status', 'updatedAt'])
+                                 )
+                               )
+                             ) ||
+                             (
+                               existing().status == 'PENDING_ASSIGNMENT' &&
+                               !('assignedRiderUid' in existing()) &&
+                               isEligibleOnlineRider() &&
+                               incoming().assignedRiderUid == request.auth.uid &&
+                               incoming().status == 'ASSIGNED' &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['assignedRiderUid', 'assignedRiderId', 'status', 'updatedAt'])
+                             )
+                           )
+                         )
+                       );
+
+      allow delete: if isAdmin() && isValidId(orderId);
+
+      // Subcollection 1A: Real-Time Order Chat Messages (Customer <-> Assigned Rider)
+      match /chat_messages/{messageId} {
+        allow get: if isOrderChatParticipant() && isValidId(messageId);
+        allow list: if isOrderChatParticipant();
+        allow create: if isOrderChatParticipant() &&
+                         isValidId(messageId) &&
+                         incoming().orderId == orderId &&
+                         incoming().senderUid == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'orderId', 'senderUid', 'senderRole', 'senderName', 'messageText', 'createdAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'orderId', 'senderUid', 'senderRole', 'senderName', 'messageText', 'deliveryStage', 'createdAt'
+                         ]) &&
+                         isValidOrderChatMessage(incoming()) &&
+                         (
+                           isAdmin() ||
+                           (incoming().senderRole == 'CUSTOMER' && isOrderCustomer()) ||
+                           (incoming().senderRole == 'RIDER' && isOrderAssignedRider())
+                         );
+        allow update, delete: if false;
+      }
+    }
+
+    // Collection 2: Rider Wallets
+    match /rider_wallets/{riderUid} {
+      allow get: if isSignedIn() && isValidId(riderUid) && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+
+      allow create: if isSignedIn() &&
+                       isValidId(riderUid) &&
+                       request.auth.uid == riderUid &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'riderId', 'riderName', 'balancePaise',
+                         'commissionDebtPaise', 'maxCommissionDebtPaise',
+                         'workMode', 'shiftStatus', 'batteryPercent',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'riderId', 'riderName', 'balancePaise',
+                         'commissionDebtPaise', 'maxCommissionDebtPaise',
+                         'workMode', 'shiftStatus', 'batteryPercent',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidRiderWallet(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(riderUid) &&
+                       isValidRiderWallet(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().riderId == existing().riderId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isAdmin() ||
+                         (
+                           request.auth.uid == riderUid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'balancePaise', 'commissionDebtPaise', 'workMode',
+                             'shiftStatus', 'batteryPercent', 'updatedAt'
+                           ])
+                         )
+                       );
+
+      allow delete: if isAdmin() && isValidId(riderUid);
+    }
+
+    // Collection 3: Company Wallet Ledger (Append-Only Audit Trail)
+    match /company_ledger/{entryId} {
+      allow get: if isSignedIn() && isValidId(entryId) && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+
+      allow create: if isSignedIn() &&
+                       isValidId(entryId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'entryType', 'referenceId', 'amountPaise',
+                         'isCredit', 'settlementStatus', 'description', 'createdAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'entryType', 'referenceId', 'amountPaise',
+                         'isCredit', 'settlementStatus', 'description', 'createdAt'
+                       ]) &&
+                       isValidCompanyLedgerDoc(incoming()) &&
+                       (
+                         isAdmin() ||
+                         incoming().settlementStatus in ['PENDING_IN_GATEWAY', 'RECEIVABLE_FROM_RIDER']
+                       );
+
+      allow update: if isAdmin() &&
+                       isValidId(entryId) &&
+                       isValidCompanyLedgerDoc(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['settlementStatus', 'description']);
+
+      allow delete: if false;
+    }
+  }
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_language_active_badge">সক্রিয় ভাষা (Locale)</string>
+    <string name="profile_language_change_btn">পছন্দের ভাষা পরিবর্তন করুন</string>
+    <string name="profile_language_reset_btn">ডিফল্টে (English) রিসেট করুন</string>
+    <string name="profile_language_settings_subtitle">Android কনফিগারেশন ওভাররাইড ব্যবহার করে আপনার পছন্দের ভাষা সংরক্ষণ করুন।</string>
+    <string name="profile_language_settings_title">প্রোফাইল ভাষা এবং লোকেল সেটিংস</string>
+</resources>

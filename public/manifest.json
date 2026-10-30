@@ -1,0 +1,69 @@
+{
+  "name": "Quick Delivery",
+  "short_name": "Quick Delivery",
+  "description": "Fast & Reliable Hyperlocal Parcel Delivery with Real-time GPS Tracking, Live OTP Security & Instant Rider Payouts",
+  "start_url": "/",
+  "id": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#042F2E",
+  "theme_color": "#059669",
+  "lang": "en",
+  "categories": ["business", "logistics", "shopping", "utilities"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Book Delivery",
+      "short_name": "Book Order",
+      "description": "Quickly book a parcel pickup and drop",
+      "url": "/?tab=CUSTOMER",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Rider Partner",
+      "short_name": "Rider Duty",
+      "description": "Go on-duty and accept incoming orders",
+      "url": "/?tab=RIDER",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Admin Command",
+      "short_name": "Admin Web",
+      "description": "Enterprise delivery logistics command center",
+      "url": "/?tab=ADMIN",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

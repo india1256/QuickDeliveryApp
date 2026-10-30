@@ -1,0 +1,8 @@
+{
+  "name": "Quick Delivery",
+  "description": "Fast, transparent parcel delivery customer app with real-time tracking, upfront pricing, and seamless OTP handovers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

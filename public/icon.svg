@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#042F2E"/>
+      <stop offset="50%" stop-color="#065F46"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#10B981"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="104" fill="url(#bgGrad)"/>
+  <rect x="12" y="12" width="488" height="488" rx="92" fill="none" stroke="#34D399" stroke-width="6" stroke-opacity="0.35"/>
+
+  <!-- Delivery Box + Lightning Fast Graphic -->
+  <g filter="url(#shadow)" transform="translate(0, -10)">
+    <!-- Speed Lines -->
+    <path d="M 80 200 L 140 200" stroke="#6EE7B7" stroke-width="10" stroke-linecap="round" stroke-opacity="0.7"/>
+    <path d="M 60 250 L 130 250" stroke="#A7F3D0" stroke-width="12" stroke-linecap="round" stroke-opacity="0.9"/>
+    <path d="M 90 300 L 150 300" stroke="#6EE7B7" stroke-width="10" stroke-linecap="round" stroke-opacity="0.7"/>
+
+    <!-- Central Package Icon -->
+    <path d="M 256 120 L 370 185 L 256 250 L 142 185 Z" fill="#10B981" stroke="#A7F3D0" stroke-width="6" stroke-linejoin="round"/>
+    <path d="M 142 195 L 256 260 L 256 390 L 142 325 Z" fill="#047857" stroke="#A7F3D0" stroke-width="6" stroke-linejoin="round"/>
+    <path d="M 370 195 L 256 260 L 256 390 L 370 325 Z" fill="#059669" stroke="#A7F3D0" stroke-width="6" stroke-linejoin="round"/>
+
+    <!-- Package Tape -->
+    <path d="M 230 135 L 282 165 L 282 375 L 230 345 Z" fill="#34D399" fill-opacity="0.45"/>
+
+    <!-- Lightning Bolt Flash -->
+    <polygon points="275,150 215,265 260,265 235,365 315,240 270,240" fill="#FDE047" stroke="#CA8A04" stroke-width="4"/>
+  </g>
+
+  <!-- QD Badge Banner -->
+  <rect x="136" y="405" width="240" height="58" rx="29" fill="#022C22" stroke="#34D399" stroke-width="3" filter="url(#shadow)"/>
+  <text x="256" y="443" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="900" fill="#FFFFFF" text-anchor="middle" letter-spacing="3">QUICK DELIVERY</text>
+</svg>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_language_active_badge">ಸಕ್ರಿಯ ಭಾಷೆ (Locale)</string>
+    <string name="profile_language_change_btn">ಆದ್ಯತೆಯ ಭಾಷೆ ಬದಲಾಯಿಸಿ</string>
+    <string name="profile_language_reset_btn">ಡೀಫಾಲ್ಟ್‌ಗೆ (English) ಮರುಹೊಂದಿಸಿ</string>
+    <string name="profile_language_settings_subtitle">Android ಕಾನ್ಫಿಗರೇಶನ್ ಓವರ್‌ರೈಡ್ ಬಳಸಿ ನಿಮ್ಮ ಆದ್ಯತೆಯ ಭಾಷೆಯನ್ನು ಉಳಿಸಿ.</string>
+    <string name="profile_language_settings_title">ಪ್ರೊಫೈಲ್ ಭಾಷೆ ಮತ್ತು ಲೊಕೇಲ್ ಸೆಟ್ಟಿಂಗ್‌ಗಳು</string>
+</resources>
