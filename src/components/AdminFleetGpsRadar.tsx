@@ -152,7 +152,7 @@ export const AdminFleetGpsRadar: React.FC<AdminFleetGpsRadarProps> = ({
             <button
               type="button"
               onClick={() => setMapTheme('TACTICAL_RADAR')}
-              className={`px-2.5 py-1 rounded-lg transition ${
+              className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
                 mapTheme === 'TACTICAL_RADAR' ? 'bg-[#10B981] text-[#022C22]' : 'text-slate-300 hover:text-white'
               }`}
             >
@@ -161,13 +161,37 @@ export const AdminFleetGpsRadar: React.FC<AdminFleetGpsRadarProps> = ({
             <button
               type="button"
               onClick={() => setMapTheme('METRO_STREET')}
-              className={`px-2.5 py-1 rounded-lg transition ${
+              className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
                 mapTheme === 'METRO_STREET' ? 'bg-[#10B981] text-[#022C22]' : 'text-slate-300 hover:text-white'
               }`}
             >
               Street (Light)
             </button>
+            <button
+              type="button"
+              onClick={() => setMapTheme('SATELLITE')}
+              className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                mapTheme === 'SATELLITE' ? 'bg-[#10B981] text-[#022C22]' : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Satellite
+            </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              setMapTheme((prev) => (prev === 'SATELLITE' ? 'TACTICAL_RADAR' : 'SATELLITE'))
+            }
+            className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-extrabold flex items-center gap-1.5 transition cursor-pointer ${
+              mapTheme === 'SATELLITE'
+                ? 'bg-amber-400 text-slate-950 border-amber-200 shadow-sm'
+                : 'bg-white/10 hover:bg-white/20 border-white/25 text-white'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Toggle Satellite View</span>
+          </button>
 
           <button
             type="button"
@@ -224,7 +248,11 @@ export const AdminFleetGpsRadar: React.FC<AdminFleetGpsRadarProps> = ({
         {/* Main Radar Canvas View (Col 8) */}
         <div
           className={`lg:col-span-8 relative overflow-hidden flex items-center justify-center p-2 sm:p-4 select-none ${
-            mapTheme === 'TACTICAL_RADAR' ? 'bg-[#031A19]' : 'bg-[#E5E9EC]'
+            mapTheme === 'SATELLITE'
+              ? 'bg-[#0B221E]'
+              : mapTheme === 'TACTICAL_RADAR'
+              ? 'bg-[#031A19]'
+              : 'bg-[#E5E9EC]'
           }`}
         >
           {/* High-Tech Vector Grid Canvas */}
@@ -238,10 +266,23 @@ export const AdminFleetGpsRadar: React.FC<AdminFleetGpsRadarProps> = ({
                 <path
                   d="M 40 0 L 0 0 0 40"
                   fill="none"
-                  stroke={mapTheme === 'TACTICAL_RADAR' ? '#043634' : '#CBD5E1'}
+                  stroke={
+                    mapTheme === 'SATELLITE'
+                      ? 'rgba(167, 243, 208, 0.14)'
+                      : mapTheme === 'TACTICAL_RADAR'
+                      ? '#043634'
+                      : '#CBD5E1'
+                  }
                   strokeWidth="1"
                 />
               </pattern>
+
+              {/* Satellite terrain gradient */}
+              <linearGradient id="satelliteTerrain" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#0E2A21" />
+                <stop offset="45%" stopColor="#16382C" />
+                <stop offset="100%" stopColor="#0B212D" />
+              </linearGradient>
 
               {/* Pulsing beacon glow */}
               <radialGradient id="vehiclePulse" cx="50%" cy="50%" r="50%">
@@ -251,18 +292,55 @@ export const AdminFleetGpsRadar: React.FC<AdminFleetGpsRadarProps> = ({
               </radialGradient>
             </defs>
 
+            {/* Satellite Base Layer when Satellite View is active */}
+            {mapTheme === 'SATELLITE' && (
+              <g>
+                <rect width="500" height="440" fill="url(#satelliteTerrain)" />
+                {/* Satellite Urban Blocks, Green Canopy & Water Bodies for High-Contrast Pickup/Drop Visibility */}
+                <polygon points="20,30 160,25 180,120 40,130" fill="#143D2B" opacity="0.7" />
+                <polygon points="280,40 470,30 480,175 300,160" fill="#1A4331" opacity="0.65" />
+                <polygon points="180,150 320,145 340,290 175,280" fill="#1F2937" opacity="0.55" />
+                <polygon points="40,260 190,250 210,410 35,400" fill="#133829" opacity="0.7" />
+                {/* Ulsoor / Bellandur Lake Satellite Water Features */}
+                <ellipse cx="325" cy="205" rx="42" ry="22" fill="#0C4A6E" opacity="0.75" />
+                <ellipse cx="140" cy="195" rx="28" ry="15" fill="#075985" opacity="0.7" />
+              </g>
+            )}
+
             {/* Background Grid */}
             <rect width="500" height="440" fill="url(#radarGrid)" />
 
             {/* Major Arterial Roads / Expressways in Vector Canvas */}
-            <g stroke={mapTheme === 'TACTICAL_RADAR' ? '#064E4B' : '#94A3B8'} strokeWidth="4" strokeLinecap="round" opacity="0.6">
+            <g
+              stroke={
+                mapTheme === 'SATELLITE'
+                  ? '#F59E0B'
+                  : mapTheme === 'TACTICAL_RADAR'
+                  ? '#064E4B'
+                  : '#94A3B8'
+              }
+              strokeWidth={mapTheme === 'SATELLITE' ? '3' : '4'}
+              strokeLinecap="round"
+              opacity={mapTheme === 'SATELLITE' ? '0.45' : '0.6'}
+            >
               <line x1="40" y1="220" x2="460" y2="220" /> {/* Inner Ring Road */}
               <line x1="250" y1="30" x2="250" y2="410" /> {/* Hosur / Bellary Highway */}
               <line x1="60" y1="80" x2="440" y2="360" />  {/* Outer Ring Road Express */}
             </g>
 
             {/* City Landmark Labels */}
-            <g fontSize="9" fontWeight="bold" fill={mapTheme === 'TACTICAL_RADAR' ? '#4FD1C5' : '#64748B'} opacity="0.7">
+            <g
+              fontSize="9"
+              fontWeight="bold"
+              fill={
+                mapTheme === 'SATELLITE'
+                  ? '#FDE68A'
+                  : mapTheme === 'TACTICAL_RADAR'
+                  ? '#4FD1C5'
+                  : '#64748B'
+              }
+              opacity={mapTheme === 'SATELLITE' ? '0.9' : '0.7'}
+            >
               <text x="50" y="70">HEBBAL</text>
               <text x="210" y="160">MG ROAD</text>
               <text x="270" y="130">INDIRANAGAR</text>
@@ -285,15 +363,70 @@ export const AdminFleetGpsRadar: React.FC<AdminFleetGpsRadarProps> = ({
                     x2={f.endX}
                     y2={f.endY}
                     stroke={routeColor}
-                    strokeWidth={isSelected ? '3' : '2'}
+                    strokeWidth={isSelected || mapTheme === 'SATELLITE' ? '3' : '2'}
                     strokeDasharray={isSelected ? '4,4' : '3,3'}
-                    opacity={isSelected ? 0.9 : 0.4}
+                    opacity={isSelected || mapTheme === 'SATELLITE' ? 0.95 : 0.4}
                   />
 
-                  {/* Pickup Pin */}
-                  <circle cx={f.startX} cy={f.startY} r="4" fill="#10B981" />
-                  {/* Drop Pin */}
-                  <circle cx={f.endX} cy={f.endY} r="4" fill="#EF4444" />
+                  {/* Pickup Pin (Enhanced halo & label in Satellite View) */}
+                  {mapTheme === 'SATELLITE' && (
+                    <circle
+                      cx={f.startX}
+                      cy={f.startY}
+                      r="9"
+                      fill="rgba(16, 185, 129, 0.28)"
+                      stroke="#34D399"
+                      strokeWidth="1.5"
+                    />
+                  )}
+                  <circle
+                    cx={f.startX}
+                    cy={f.startY}
+                    r={mapTheme === 'SATELLITE' ? '5' : '4'}
+                    fill="#10B981"
+                  />
+                  {mapTheme === 'SATELLITE' && (
+                    <text
+                      x={f.startX}
+                      y={f.startY - 11}
+                      textAnchor="middle"
+                      fill="#A7F3D0"
+                      fontSize="7"
+                      fontWeight="bold"
+                    >
+                      PICKUP
+                    </text>
+                  )}
+
+                  {/* Drop Pin (Enhanced halo & label in Satellite View) */}
+                  {mapTheme === 'SATELLITE' && (
+                    <circle
+                      cx={f.endX}
+                      cy={f.endY}
+                      r="9"
+                      fill="rgba(239, 68, 68, 0.28)"
+                      stroke="#F87171"
+                      strokeWidth="1.5"
+                    />
+                  )}
+                  <circle
+                    cx={f.endX}
+                    cy={f.endY}
+                    r={mapTheme === 'SATELLITE' ? '5' : '4'}
+                    fill="#EF4444"
+                  />
+                  {mapTheme === 'SATELLITE' && (
+                    <text
+                      x={f.endX}
+                      y={f.endY - 11}
+                      textAnchor="middle"
+                      fill="#FECACA"
+                      fontSize="7"
+                      fontWeight="bold"
+                    >
+                      DROP
+                    </text>
+                  )}
 
                   {/* Vehicle Pulsing Wave (if selected or moving) */}
                   <circle
