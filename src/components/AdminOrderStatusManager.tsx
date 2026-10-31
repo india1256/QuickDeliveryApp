@@ -70,6 +70,12 @@ export interface ManagedOrder {
   deliveryProofNote?: string;
   createdAt: string;
   cancellationReason?: string;
+  scheduledMinutes?: number;
+  estimatedMinutes?: number;
+  delayMinutes?: number;
+  isDelayed?: boolean;
+  statusLabel?: string;
+  delayNotificationSent?: boolean;
   statusHistory?: Array<{
     status: OrderStatusKey;
     timestamp: string;
@@ -90,6 +96,7 @@ interface AdminOrderStatusManagerProps {
       cancellationReason?: string;
     }
   ) => void;
+  onUpdateOrderEta?: (orderId: string, newEstimatedMinutes: number) => void;
   onBulkUpdateStatus?: (orderIds: string[], newStatus: OrderStatusKey) => void;
   onTrackOrder: (order: ManagedOrder) => void;
   onDownloadGstInvoice: (order: ManagedOrder) => void;
@@ -106,6 +113,7 @@ const AVAILABLE_RIDERS = [
 export const AdminOrderStatusManager: React.FC<AdminOrderStatusManagerProps> = ({
   orders,
   onUpdateOrderStatus,
+  onUpdateOrderEta,
   onBulkUpdateStatus,
   onTrackOrder,
   onDownloadGstInvoice,
@@ -230,7 +238,24 @@ export const AdminOrderStatusManager: React.FC<AdminOrderStatusManagerProps> = (
   }, [orders, statusFilter, paymentFilter, searchQuery, sortBy]);
 
   // Status Badge Helper
-  const getStatusBadge = (status: OrderStatusKey) => {
+  const getStatusBadge = (status: OrderStatusKey, order?: ManagedOrder) => {
+    const isTerminal = status === 'DELIVERED' || status === 'CANCELLED';
+    const schedMins = order?.scheduledMinutes || 20;
+    const estMins = order?.estimatedMinutes || schedMins;
+    const isDelayedOrder =
+      !isTerminal &&
+      (Boolean(order?.isDelayed) ||
+        order?.statusLabel === 'Delayed' ||
+        estMins - schedMins > 10);
+
+    if (isDelayedOrder) {
+      return {
+        label: 'Delayed',
+        bg: 'bg-rose-100 text-rose-900 border-rose-300',
+        dot: 'bg-rose-600 animate-ping',
+      };
+    }
+
     switch (status) {
       case 'PENDING_ASSIGNMENT':
         return {
@@ -589,12 +614,15 @@ export const AdminOrderStatusManager: React.FC<AdminOrderStatusManagerProps> = (
         ) : (
           <div className="divide-y divide-slate-200">
             {filteredOrders.map((order) => {
-              const badge = getStatusBadge(order.status);
+              const badge = getStatusBadge(order.status, order);
               const totalInr = Math.round(order.totalAmountPaise / 100);
               const rider80Inr = Math.round(order.riderEarningPaise / 100);
               const admin20Inr = Math.round(order.companyCommissionPaise / 100);
               const isSelected = selectedOrderIds.includes(order.id);
               const isMapExpanded = expandedMapOrderId === order.id;
+              const isTerminalOrder = order.status === 'DELIVERED' || order.status === 'CANCELLED';
+              const schedMins = order.scheduledMinutes || 20;
+              const estMins = order.estimatedMinutes || schedMins;
 
               return (
                 <div
@@ -622,6 +650,18 @@ export const AdminOrderStatusManager: React.FC<AdminOrderStatusManagerProps> = (
                           <span className={`w-2 h-2 rounded-full ${badge.dot}`} />
                           <span>{badge.label}</span>
                         </div>
+                        {!isTerminalOrder && (
+                          <span
+                            className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                              badge.label === 'Delayed'
+                                ? 'bg-rose-50 text-rose-800 border-rose-300'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            }`}
+                          >
+                            SLA: {schedMins}m • Est: {estMins}m
+                            {badge.label === 'Delayed' ? ` (+${estMins - schedMins}m Delay)` : ''}
+                          </span>
+                        )}
                         <span className="text-[11px] font-semibold text-slate-500">
                           {order.createdAt}
                         </span>
@@ -708,6 +748,27 @@ export const AdminOrderStatusManager: React.FC<AdminOrderStatusManagerProps> = (
                         >
                           Cancelled
                         </button>
+
+                        {/* Admin SLA Delay / ETA Trigger (>10 min threshold) */}
+                        {!isTerminalOrder && onUpdateOrderEta && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateOrderEta(
+                                order.id,
+                                badge.label === 'Delayed' ? schedMins : schedMins + 12
+                              )
+                            }
+                            title="Simulate or clear >10 min delivery delay (triggers Customer & Rider alerts + 'Delayed' label)"
+                            className={`px-2 py-1 rounded-lg text-[10px] font-extrabold transition cursor-pointer ${
+                              badge.label === 'Delayed'
+                                ? 'bg-rose-600 text-white shadow-xs hover:bg-rose-700'
+                                : 'bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200'
+                            }`}
+                          >
+                            {badge.label === 'Delayed' ? 'Reset On-Time' : '⏱️ +12m Delay (>10m SLA)'}
+                          </button>
+                        )}
                       </div>
                     </div>
 

@@ -92,6 +92,24 @@ export function normalizeOrderRecord(raw: any): any {
       ? raw.riderEarningPaise
       : totalAmountPaise - companyCommissionPaise;
 
+  const distanceKm =
+    typeof raw.distanceKm === 'number' && !Number.isNaN(raw.distanceKm) ? raw.distanceKm : 4.5;
+  const status = String(raw.status || 'PENDING_ASSIGNMENT');
+  const isTerminal = status === 'DELIVERED' || status === 'CANCELLED';
+  const scheduledMinutes =
+    typeof raw.scheduledMinutes === 'number' && raw.scheduledMinutes > 0
+      ? Math.round(raw.scheduledMinutes)
+      : Math.max(15, Math.round(distanceKm * 3 + 8));
+  const estimatedMinutes =
+    typeof raw.estimatedMinutes === 'number' && raw.estimatedMinutes > 0
+      ? Math.round(raw.estimatedMinutes)
+      : scheduledMinutes;
+  const delayMinutes = Math.max(0, estimatedMinutes - scheduledMinutes);
+  const isDelayed =
+    !isTerminal &&
+    (delayMinutes > 10 || Boolean(raw.isDelayed) || raw.statusLabel === 'Delayed');
+  const statusLabel = isDelayed ? 'Delayed' : raw.statusLabel;
+
   const code = sanitizeIdentifier(raw.orderCode || raw.id || 'QD-5002', 40) || 'QD-5002';
   const safeId = sanitizeIdentifier(raw.id || `ord_${code.toLowerCase()}`, 64) || `ord_${code.toLowerCase()}`;
   return sanitizeForFirestore({
@@ -109,12 +127,11 @@ export function normalizeOrderRecord(raw: any): any {
     packageCategory: raw.packageCategory || 'Documents',
     weightBracket: raw.weightBracket || 'Up to 5kg',
     weightKg: typeof raw.weightKg === 'number' && !Number.isNaN(raw.weightKg) ? raw.weightKg : 2,
-    distanceKm:
-      typeof raw.distanceKm === 'number' && !Number.isNaN(raw.distanceKm) ? raw.distanceKm : 4.5,
+    distanceKm,
     vehicleType,
     paymentMethod: String(raw.paymentMethod || 'CASH_ON_DELIVERY'),
     paymentStatus: String(raw.paymentStatus || 'CASH_COLLECT_ON_DELIVERY'),
-    status: String(raw.status || 'PENDING_ASSIGNMENT'),
+    status,
     totalAmountPaise,
     companyCommissionPaise,
     riderEarningPaise,
@@ -123,6 +140,12 @@ export function normalizeOrderRecord(raw: any): any {
     createdAt: String(
       raw.createdAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     ),
+    scheduledMinutes,
+    estimatedMinutes,
+    delayMinutes,
+    isDelayed,
+    ...(statusLabel ? { statusLabel } : {}),
+    delayNotificationSent: Boolean(raw.delayNotificationSent),
   });
 }
 

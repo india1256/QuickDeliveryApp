@@ -154,6 +154,12 @@ interface DeliveryOrder {
   riderLng?: number;
   createdAt: string;
   cancellationReason?: string;
+  scheduledMinutes?: number;
+  estimatedMinutes?: number;
+  delayMinutes?: number;
+  isDelayed?: boolean;
+  statusLabel?: string;
+  delayNotificationSent?: boolean;
 }
 
 interface RiderWallet {
@@ -488,6 +494,118 @@ export default function App() {
     }, 1000);
     return () => clearInterval(interval);
   }, [orders]);
+
+  // Automated Delivery Delay Monitor:
+  // Whenever an active order's estimated delivery time exceeds scheduled time by > 10 minutes
+  // (either via live trip elapsed timer or traffic/ETA update), automatically update its status label
+  // to 'Delayed' and dispatch automated notifications to BOTH Customer and Rider.
+  const handleUpdateOrderEstimatedTime = (orderId: string, newEstimatedMinutes: number) => {
+    setOrders((prev) =>
+      prev.map((ord) => {
+        if (ord.id !== orderId) return ord;
+        const isTerminal = ord.status === 'DELIVERED' || ord.status === 'CANCELLED';
+        const schedMins = ord.scheduledMinutes || Math.max(15, Math.round((ord.distanceKm || 4) * 3 + 8));
+        const estMins = Math.max(1, Math.round(newEstimatedMinutes));
+        const delayMins = Math.max(0, estMins - schedMins);
+        const exceedsThreshold = !isTerminal && delayMins > 10;
+
+        let notified = Boolean(ord.delayNotificationSent);
+        if (exceedsThreshold && !notified) {
+          notified = true;
+          try {
+            notificationService.triggerOrderDelayAlerts({
+              orderId: ord.id,
+              orderCode: ord.orderCode,
+              customerName: ord.customerName,
+              riderName: ord.assignedRiderName || riderWallet.riderName,
+              dropAddress: ord.dropAddress,
+              scheduledMinutes: schedMins,
+              estimatedMinutes: estMins,
+              delayMinutes: delayMins,
+            });
+          } catch (err) {
+            console.warn('Delay notification error:', err);
+          }
+          setBookingBanner(
+            `⚠️ Order #${ord.orderCode} status updated to 'Delayed' (Est. ${estMins} mins vs Scheduled ${schedMins} mins, +${delayMins} mins). Automated alert sent to Customer & Rider!`
+          );
+          setRiderNotice(
+            `⚠️ SLA Delay Alert: Order #${ord.orderCode} exceeds scheduled time by +${delayMins} mins (>10 min threshold). Status updated to 'Delayed'.`
+          );
+        } else if (!exceedsThreshold) {
+          notified = false;
+        }
+
+        const updated: DeliveryOrder = {
+          ...ord,
+          scheduledMinutes: schedMins,
+          estimatedMinutes: estMins,
+          delayMinutes: delayMins,
+          isDelayed: exceedsThreshold,
+          statusLabel: exceedsThreshold ? 'Delayed' : undefined,
+          delayNotificationSent: notified,
+        };
+        Promise.resolve(dbService.saveOrder(updated)).catch(() => {});
+        return updated;
+      })
+    );
+  };
+
+  useEffect(() => {
+    const elapsedMins = Math.floor(tripTimerSeconds / 60);
+    setOrders((prev) => {
+      let anyChanged = false;
+      const next = prev.map((ord) => {
+        const isTerminal = ord.status === 'DELIVERED' || ord.status === 'CANCELLED';
+        if (isTerminal) return ord;
+
+        const schedMins =
+          ord.scheduledMinutes || Math.max(15, Math.round((ord.distanceKm || 4) * 3 + 8));
+        const timerProjectedEst =
+          ord.status === 'PICKED_UP' || ord.status === 'IN_TRANSIT'
+            ? Math.max(ord.estimatedMinutes || schedMins, schedMins + elapsedMins)
+            : ord.estimatedMinutes || schedMins;
+        const delayMins = Math.max(0, timerProjectedEst - schedMins);
+        const exceedsThreshold = delayMins > 10;
+
+        if (
+          exceedsThreshold &&
+          (!ord.isDelayed || ord.statusLabel !== 'Delayed' || !ord.delayNotificationSent)
+        ) {
+          anyChanged = true;
+          if (!ord.delayNotificationSent) {
+            try {
+              notificationService.triggerOrderDelayAlerts({
+                orderId: ord.id,
+                orderCode: ord.orderCode,
+                customerName: ord.customerName,
+                riderName: ord.assignedRiderName || riderWallet.riderName,
+                dropAddress: ord.dropAddress,
+                scheduledMinutes: schedMins,
+                estimatedMinutes: timerProjectedEst,
+                delayMinutes: delayMins,
+              });
+            } catch (err) {
+              console.warn('Auto delay notification error:', err);
+            }
+          }
+          const updated: DeliveryOrder = {
+            ...ord,
+            scheduledMinutes: schedMins,
+            estimatedMinutes: timerProjectedEst,
+            delayMinutes: delayMins,
+            isDelayed: true,
+            statusLabel: 'Delayed',
+            delayNotificationSent: true,
+          };
+          Promise.resolve(dbService.saveOrder(updated)).catch(() => {});
+          return updated;
+        }
+        return ord;
+      });
+      return anyChanged ? next : prev;
+    });
+  }, [orders, tripTimerSeconds, riderWallet.riderName]);
 
   const formatTimer = (secs: number) => {
     const mins = Math.floor(secs / 60);
@@ -1063,6 +1181,8 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
         setCustomerWalletInr((prev) => Math.max(0, prev - fareQuote.totalInr));
       }
 
+      const scheduledDeliveryMinutes = Math.max(15, Math.round(fareQuote.distanceKm * 3 + 8));
+
       const newOrder: DeliveryOrder = {
         id: newId,
         orderCode: code,
@@ -1095,6 +1215,11 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
         assignedRiderRating: '4.9★',
         assignedRiderPlate: 'KA-01-EQ-4821',
         createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        scheduledMinutes: scheduledDeliveryMinutes,
+        estimatedMinutes: scheduledDeliveryMinutes,
+        delayMinutes: 0,
+        isDelayed: false,
+        delayNotificationSent: false,
       };
 
       setOrders((prev) => [newOrder, ...(Array.isArray(prev) ? prev : [])]);
@@ -2574,16 +2699,30 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                 <div className="p-4 rounded-2xl bg-[#0D1B2A] text-white space-y-4 border border-slate-800 shadow-md">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[11px] uppercase tracking-wider text-[#A7F3D0] font-extrabold">
                           LIVE TRACKING • #{activeOrder.orderCode}
                         </span>
                         <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-[#A7F3D0] border border-emerald-400/30 text-[10px] font-bold">
                           {activeOrder.packageCategory || 'Documents'} • {activeOrder.weightKg} kg
                         </span>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border flex items-center gap-1 ${
+                            activeOrder.isDelayed || activeOrder.statusLabel === 'Delayed'
+                              ? 'bg-rose-500 text-white border-rose-300 animate-pulse'
+                              : 'bg-emerald-500/20 text-[#A7F3D0] border-emerald-400/30'
+                          }`}
+                        >
+                          {activeOrder.isDelayed || activeOrder.statusLabel === 'Delayed'
+                            ? '⚠️ Status: Delayed'
+                            : (activeOrder.status || 'PENDING_ASSIGNMENT').replace(/_/g, ' ')}
+                        </span>
                       </div>
                       <h3 className="text-sm font-extrabold mt-0.5 text-white">
-                        {(activeOrder.status || 'PENDING_ASSIGNMENT').replace(/_/g, ' ')} • {getVehicleLabel(activeOrder.vehicleType)}
+                        {activeOrder.isDelayed || activeOrder.statusLabel === 'Delayed'
+                          ? 'Delayed'
+                          : (activeOrder.status || 'PENDING_ASSIGNMENT').replace(/_/g, ' ')}{' '}
+                        • {getVehicleLabel(activeOrder.vehicleType)}
                       </h3>
                       <p className="text-[11px] text-slate-300 mt-0.5">
                         {activeOrder.pickupTag || 'Pickup'}: {activeOrder.pickupAddress} →{' '}
@@ -2602,6 +2741,72 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                         <FileText className="w-3.5 h-3.5" />
                         Download GST Invoice
                       </button>
+                    </div>
+                  </div>
+
+                  {/* Scheduled vs. Estimated Delivery Time & Automated >10-Minute Delay Monitor */}
+                  <div
+                    className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2.5 text-xs ${
+                      activeOrder.isDelayed || activeOrder.statusLabel === 'Delayed'
+                        ? 'bg-rose-950/80 border-rose-500/60 text-rose-100'
+                        : 'bg-white/5 border-white/10 text-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Clock
+                        className={`w-4 h-4 shrink-0 ${
+                          activeOrder.isDelayed || activeOrder.statusLabel === 'Delayed'
+                            ? 'text-rose-400 animate-pulse'
+                            : 'text-[#A7F3D0]'
+                        }`}
+                      />
+                      <div>
+                        <div className="font-extrabold flex items-center gap-2 flex-wrap">
+                          <span>
+                            Scheduled: {activeOrder.scheduledMinutes || 20} mins • Estimated:{' '}
+                            {activeOrder.estimatedMinutes || activeOrder.scheduledMinutes || 20} mins
+                          </span>
+                          {(activeOrder.isDelayed || activeOrder.statusLabel === 'Delayed') && (
+                            <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider">
+                              Delayed (+{activeOrder.delayMinutes || 12} mins &gt; 10m SLA)
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] opacity-85 mt-0.5">
+                          {activeOrder.isDelayed || activeOrder.statusLabel === 'Delayed'
+                            ? 'Automated delay notification dispatched to both Customer & Rider.'
+                            : 'Automated SLA Guard triggers Customer & Rider alerts if estimated time exceeds scheduled by > 10 mins.'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleUpdateOrderEstimatedTime(
+                            activeOrder.id,
+                            (activeOrder.scheduledMinutes || 20) + 12
+                          )
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-extrabold transition cursor-pointer"
+                      >
+                        ⏱️ Simulate +12m Delay (&gt;10m)
+                      </button>
+                      {(activeOrder.isDelayed || activeOrder.statusLabel === 'Delayed') && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleUpdateOrderEstimatedTime(
+                              activeOrder.id,
+                              activeOrder.scheduledMinutes || 20
+                            )
+                          }
+                          className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[11px] font-extrabold transition cursor-pointer"
+                        >
+                          Reset On-Time
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -3518,6 +3723,17 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                             <span className="text-xs font-extrabold px-2 py-0.5 rounded-md bg-emerald-50 text-[#059669] border border-emerald-200">
                               #{order.orderCode}
                             </span>
+                            <span
+                              className={`text-xs font-extrabold px-2.5 py-0.5 rounded-md border ${
+                                order.isDelayed || order.statusLabel === 'Delayed'
+                                  ? 'bg-rose-600 text-white border-rose-700 animate-pulse'
+                                  : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              }`}
+                            >
+                              {order.isDelayed || order.statusLabel === 'Delayed'
+                                ? 'Delayed'
+                                : order.status.replace(/_/g, ' ')}
+                            </span>
                             <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-800">
                               📦 {order.packageCategory || 'Documents'} • {order.weightKg} kg
                             </span>
@@ -3532,6 +3748,47 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                             <div>
                               <strong className="text-orange-600">Drop:</strong> {order.dropAddress} (
                               {order.receiverName || 'Receiver'})
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              <span
+                                className={`text-[11px] font-extrabold px-2 py-0.5 rounded border ${
+                                  order.isDelayed || order.statusLabel === 'Delayed'
+                                    ? 'bg-rose-50 text-rose-800 border-rose-300'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                                }`}
+                              >
+                                Scheduled: {order.scheduledMinutes || 20}m • Est:{' '}
+                                {order.estimatedMinutes || order.scheduledMinutes || 20}m
+                                {order.isDelayed || order.statusLabel === 'Delayed'
+                                  ? ` (+${order.delayMinutes || 12}m Delayed)`
+                                  : ''}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleUpdateOrderEstimatedTime(
+                                    order.id,
+                                    (order.scheduledMinutes || 20) + 12
+                                  )
+                                }
+                                className="px-2 py-0.5 rounded bg-rose-100 hover:bg-rose-200 text-rose-900 border border-rose-300 text-[10px] font-extrabold transition cursor-pointer"
+                              >
+                                ⏱️ Report +12m Traffic Delay (&gt;10m SLA)
+                              </button>
+                              {(order.isDelayed || order.statusLabel === 'Delayed') && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleUpdateOrderEstimatedTime(
+                                      order.id,
+                                      order.scheduledMinutes || 20
+                                    )
+                                  }
+                                  className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-[10px] font-extrabold transition cursor-pointer"
+                                >
+                                  Clear Delay
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -5507,6 +5764,9 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                 orders={orders as any}
                 onUpdateOrderStatus={(orderId, newStatus, details) =>
                   handleAdminUpdateOrderStatus(orderId, newStatus as any, details)
+                }
+                onUpdateOrderEta={(orderId, newEstMins) =>
+                  handleUpdateOrderEstimatedTime(orderId, newEstMins)
                 }
                 onBulkUpdateStatus={(orderIds, newStatus) =>
                   handleAdminBulkUpdateStatus(orderIds, newStatus as any)

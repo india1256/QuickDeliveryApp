@@ -48,6 +48,11 @@ interface DeliveryOrder {
   assignedRiderPlate?: string;
   assignedRiderPhone?: string;
   createdAt: string;
+  scheduledMinutes?: number;
+  estimatedMinutes?: number;
+  delayMinutes?: number;
+  isDelayed?: boolean;
+  statusLabel?: string;
 }
 
 interface LiveOrderTrackingModalProps {
@@ -130,13 +135,22 @@ export const LiveOrderTrackingModal: React.FC<LiveOrderTrackingModalProps> = ({
               <Navigation className="w-6 h-6 text-[#A7F3D0] animate-pulse" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-extrabold text-base sm:text-lg leading-tight">
                   Live Order GPS Tracking
                 </h3>
                 <span className="text-[10px] font-extrabold uppercase tracking-wider bg-emerald-400/20 text-[#A7F3D0] border border-emerald-300/30 px-2 py-0.5 rounded-full">
                   #{order.orderCode || order.id}
                 </span>
+                {(order.isDelayed ||
+                  order.statusLabel === 'Delayed' ||
+                  ((order.estimatedMinutes || 0) - (order.scheduledMinutes || 20) > 10 &&
+                    order.status !== 'DELIVERED' &&
+                    order.status !== 'CANCELLED')) && (
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-rose-500 text-white border border-rose-200 px-2.5 py-0.5 rounded-full animate-pulse">
+                    ⚠️ Delayed
+                  </span>
+                )}
               </div>
               <p className="text-xs text-emerald-100/85 mt-0.5">
                 Real-time door-to-door rider telemetry, delivery OTPs &amp; instant chat
@@ -154,6 +168,29 @@ export const LiveOrderTrackingModal: React.FC<LiveOrderTrackingModalProps> = ({
 
         {/* Body */}
         <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1 bg-slate-50/70">
+          {(order.isDelayed ||
+            order.statusLabel === 'Delayed' ||
+            ((order.estimatedMinutes || 0) - (order.scheduledMinutes || 20) > 10 &&
+              order.status !== 'DELIVERED' &&
+              order.status !== 'CANCELLED')) && (
+            <div className="p-3 rounded-xl bg-rose-50 border-2 border-rose-300 flex items-center justify-between gap-3 text-rose-950">
+              <div className="flex items-center gap-2.5">
+                <Clock className="w-5 h-5 text-rose-600 shrink-0" />
+                <div>
+                  <div className="text-xs font-black uppercase tracking-wider text-rose-900">
+                    ⚠️ Status: Delayed (Exceeds Scheduled SLA by &gt;10 mins)
+                  </div>
+                  <div className="text-xs font-semibold text-rose-800">
+                    Scheduled: {order.scheduledMinutes || 20} mins • Estimated: {order.estimatedMinutes || 32} mins (+
+                    {Math.max(11, (order.estimatedMinutes || 32) - (order.scheduledMinutes || 20))} mins delay). Automated alert sent to Customer &amp; Rider.
+                  </div>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 rounded-full bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider shrink-0">
+                Delayed
+              </span>
+            </div>
+          )}
           
           {/* Cash on Delivery (COD) Banner if applicable */}
           {isCod && (

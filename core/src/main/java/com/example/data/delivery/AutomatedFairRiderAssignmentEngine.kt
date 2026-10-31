@@ -1427,4 +1427,73 @@ object AutomatedFairRiderAssignmentEngine {
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return ((earthRadiusKm * c) * 100.0).roundToInt() / 100.0
     }
+
+    data class DeliveryDelayEvaluationResult(
+        val orderId: String,
+        val scheduledMinutes: Int,
+        val estimatedMinutes: Int,
+        val delayMinutes: Int,
+        val isDelayed: Boolean,
+        val statusLabel: String,
+        val customerNotificationMessage: String?,
+        val riderNotificationMessage: String?
+    )
+
+    /**
+     * Evaluates whether an order's estimated delivery time exceeds the scheduled time by more than 10 minutes.
+     * When `estimatedMinutes - scheduledMinutes > 10`, updates the order status label to `"Delayed"` and
+     * generates automated notification payloads for both the customer and the rider.
+     */
+    fun evaluateDeliveryDelayAndNotify(
+        orderId: String,
+        scheduledMinutes: Int,
+        estimatedMinutes: Int,
+        customerName: String = "Customer",
+        riderId: String? = null,
+        riderName: String? = null
+    ): DeliveryDelayEvaluationResult {
+        synchronized(lock) {
+            val safeScheduled = max(1, scheduledMinutes)
+            val safeEstimated = max(1, estimatedMinutes)
+            val delayMinutes = max(0, safeEstimated - safeScheduled)
+            val exceedsTenMinuteThreshold = delayMinutes > 10
+
+            if (!exceedsTenMinuteThreshold) {
+                return DeliveryDelayEvaluationResult(
+                    orderId = orderId,
+                    scheduledMinutes = safeScheduled,
+                    estimatedMinutes = safeEstimated,
+                    delayMinutes = delayMinutes,
+                    isDelayed = false,
+                    statusLabel = "On Time",
+                    customerNotificationMessage = null,
+                    riderNotificationMessage = null
+                )
+            }
+
+            val customerMsg =
+                "Order #$orderId status updated to 'Delayed': Estimated delivery ($safeEstimated mins) exceeds scheduled time ($safeScheduled mins) by +$delayMinutes mins."
+            val riderMsg =
+                "SLA Delay Alert for Order #$orderId: Estimated delivery ($safeEstimated mins) exceeds scheduled ($safeScheduled mins) by +$delayMinutes mins. Status updated to 'Delayed'."
+
+            recordAudit(
+                orderId = orderId,
+                eventType = "ORDER_DELAYED_ALERT",
+                riderId = riderId,
+                riderName = riderName,
+                detail = "Status='Delayed' (+$delayMinutes mins > 10m SLA). Notified Customer ($customerName) & Rider (${riderName ?: "Assigned Partner"})."
+            )
+
+            return DeliveryDelayEvaluationResult(
+                orderId = orderId,
+                scheduledMinutes = safeScheduled,
+                estimatedMinutes = safeEstimated,
+                delayMinutes = delayMinutes,
+                isDelayed = true,
+                statusLabel = "Delayed",
+                customerNotificationMessage = customerMsg,
+                riderNotificationMessage = riderMsg
+            )
+        }
+    }
 }

@@ -193,3 +193,55 @@ test('4. Order Placement Rate Limiting & Anti-Spam Protection: blocks duplicate 
 
   resetSecurityRateLimitsForTesting();
 });
+
+test('5. Automated Delivery Delay Alert (>10 mins): notifies both Customer and Rider and sets statusLabel to Delayed', async () => {
+  const { notificationService } = await import('./src/services/notificationService.ts');
+
+  notificationService.clearAll();
+
+  // Trigger delay alert when estimatedMinutes (34) exceeds scheduledMinutes (20) by 14 mins (> 10 mins)
+  const result = notificationService.triggerOrderDelayAlerts({
+    orderId: 'ord_qd-7001',
+    orderCode: 'QD-7001',
+    customerName: 'Aarav Sharma',
+    riderName: 'Vikram Singh',
+    dropAddress: 'Indiranagar 100ft Road',
+    scheduledMinutes: 20,
+    estimatedMinutes: 34,
+  });
+
+  const allNotifications = notificationService.getNotifications();
+
+  assert.equal(result.delayMinutes, 14);
+  assert.equal(result.statusLabel, 'Delayed');
+  assert.equal(allNotifications.length, 2, 'Must dispatch notifications to both Customer and Rider');
+
+  const rolesNotified = allNotifications.map((n) => n.role).sort();
+  assert.deepEqual(rolesNotified, ['CUSTOMER', 'RIDER']);
+  assert.ok(allNotifications.every((n) => n.type === 'ORDER_DELAYED'));
+  assert.ok(allNotifications.every((n) => n.message.includes('Delayed')));
+
+  // Verify evaluateOrderDelayState sets isDelayed=true and statusLabel='Delayed' when estimatedMinutes - scheduledMinutes > 10
+  const delayedOrder = notificationService.evaluateOrderDelayState({
+    id: 'ord_qd-7001',
+    orderCode: 'QD-7001',
+    status: 'IN_TRANSIT',
+    scheduledMinutes: 20,
+    estimatedMinutes: 34,
+  });
+  assert.equal(delayedOrder.isDelayed, true);
+  assert.equal(delayedOrder.statusLabel, 'Delayed');
+  assert.equal(delayedOrder.delayMinutes, 14);
+
+  // Verify on-time order (<= 10 mins difference) is not marked Delayed
+  const onTimeOrder = notificationService.evaluateOrderDelayState({
+    id: 'ord_qd-7002',
+    orderCode: 'QD-7002',
+    status: 'IN_TRANSIT',
+    scheduledMinutes: 20,
+    estimatedMinutes: 28,
+  });
+  assert.equal(onTimeOrder.isDelayed, false);
+  assert.equal(onTimeOrder.statusLabel, undefined);
+});
+

@@ -13,6 +13,7 @@ export type NotificationType =
   | 'RIDER_ARRIVED'
   | 'ORDER_PICKED_UP'
   | 'ORDER_DELIVERED'
+  | 'ORDER_DELAYED'
   | 'COD_COLLECTED'
   | 'SYSTEM_ALERT';
 
@@ -279,7 +280,15 @@ class NotificationService {
     soundType?: NotificationSound;
     actionLabel?: string;
   }): NotificationItem {
-    const sound = params.soundType || (params.type === 'DISPATCH_NEW' ? 'ORDER_DISPATCH' : params.type === 'ORDER_DELIVERED' ? 'DELIVERED' : 'STATUS_UPDATE');
+    const sound =
+      params.soundType ||
+      (params.type === 'DISPATCH_NEW'
+        ? 'ORDER_DISPATCH'
+        : params.type === 'ORDER_DELIVERED'
+        ? 'DELIVERED'
+        : params.type === 'ORDER_DELAYED'
+        ? 'ALERT'
+        : 'STATUS_UPDATE');
 
     const newItem: NotificationItem = {
       id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -361,6 +370,99 @@ class NotificationService {
   public clearAll() {
     this.notifications = [];
     this.notifySubscribers();
+  }
+
+  /**
+   * Triggers automated notifications to BOTH Customer and Rider when estimated delivery time
+   * exceeds scheduled time by more than 10 minutes, and reports the 'Delayed' status label.
+   */
+  public triggerOrderDelayAlerts(params: {
+    orderId: string;
+    orderCode: string;
+    customerName?: string;
+    riderName?: string;
+    dropAddress?: string;
+    scheduledMinutes: number;
+    estimatedMinutes: number;
+    delayMinutes?: number;
+  }): {
+    delayMinutes: number;
+    statusLabel: 'Delayed';
+    customerNotification: NotificationItem;
+    riderNotification: NotificationItem;
+  } {
+    const schedMins = Math.max(1, Math.round(params.scheduledMinutes || 20));
+    const estMins = Math.max(1, Math.round(params.estimatedMinutes || schedMins + 12));
+    const computedDelay =
+      typeof params.delayMinutes === 'number' && params.delayMinutes > 0
+        ? Math.round(params.delayMinutes)
+        : Math.max(11, estMins - schedMins);
+
+    const riderNotification = this.sendNotification({
+      title: `⚠️ SLA Delay Alert: Order #${params.orderCode} Delayed`,
+      message: `Order #${params.orderCode} status updated to 'Delayed'. Estimated delivery (${estMins} mins) exceeds scheduled time (${schedMins} mins) by +${computedDelay} mins (>10 min threshold). Proceed safely to ${params.dropAddress || 'drop location'}.`,
+      role: 'RIDER',
+      type: 'ORDER_DELAYED',
+      orderCode: params.orderCode,
+      orderId: params.orderId,
+      soundType: 'ALERT',
+      actionLabel: 'View Active Trip',
+    });
+
+    const customerNotification = this.sendNotification({
+      title: `⚠️ Order #${params.orderCode} Status: Delayed`,
+      message: `Hi ${params.customerName || 'Customer'}, your order #${params.orderCode} status has been updated to 'Delayed' because estimated delivery (${estMins} mins) exceeds scheduled time (${schedMins} mins) by +${computedDelay} mins. Partner ${params.riderName || 'Vikram Singh'} is en route.`,
+      role: 'CUSTOMER',
+      type: 'ORDER_DELAYED',
+      orderCode: params.orderCode,
+      orderId: params.orderId,
+      soundType: 'ALERT',
+      actionLabel: 'Track Order',
+    });
+
+    return {
+      delayMinutes: computedDelay,
+      statusLabel: 'Delayed',
+      customerNotification,
+      riderNotification,
+    };
+  }
+
+  /**
+   * Evaluates an order's scheduled vs estimated delivery minutes and returns updated delay fields
+   * and the 'Delayed' status label when estimatedMinutes - scheduledMinutes > 10 on active orders.
+   */
+  public evaluateOrderDelayState<T extends Record<string, any>>(order: T): T & {
+    scheduledMinutes: number;
+    estimatedMinutes: number;
+    delayMinutes: number;
+    isDelayed: boolean;
+    statusLabel?: string;
+  } {
+    const status = String(order.status || 'PENDING_ASSIGNMENT');
+    const isTerminal = status === 'DELIVERED' || status === 'CANCELLED';
+    const distanceKm = typeof order.distanceKm === 'number' ? order.distanceKm : 4.5;
+    const scheduledMinutes =
+      typeof order.scheduledMinutes === 'number' && order.scheduledMinutes > 0
+        ? Math.round(order.scheduledMinutes)
+        : Math.max(15, Math.round(distanceKm * 3 + 8));
+    const estimatedMinutes =
+      typeof order.estimatedMinutes === 'number' && order.estimatedMinutes > 0
+        ? Math.round(order.estimatedMinutes)
+        : scheduledMinutes;
+    const delayMinutes = Math.max(0, estimatedMinutes - scheduledMinutes);
+    const isDelayed =
+      !isTerminal &&
+      (delayMinutes > 10 || Boolean(order.isDelayed) || order.statusLabel === 'Delayed');
+
+    return {
+      ...order,
+      scheduledMinutes,
+      estimatedMinutes,
+      delayMinutes,
+      isDelayed,
+      statusLabel: isDelayed ? 'Delayed' : undefined,
+    };
   }
 }
 

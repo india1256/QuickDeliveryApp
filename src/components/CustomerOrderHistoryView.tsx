@@ -67,6 +67,12 @@ export interface CustomerOrder {
   deliveryPhotoUrl?: string;
   createdAt: string;
   cancellationReason?: string;
+  scheduledMinutes?: number;
+  estimatedMinutes?: number;
+  delayMinutes?: number;
+  isDelayed?: boolean;
+  statusLabel?: string;
+  delayNotificationSent?: boolean;
 }
 
 interface CustomerOrderHistoryViewProps {
@@ -147,7 +153,24 @@ export const CustomerOrderHistoryView: React.FC<CustomerOrderHistoryViewProps> =
     });
   }, [orders, activeTab, searchQuery]);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, order?: CustomerOrder) => {
+    const isTerminal = status === 'DELIVERED' || status === 'CANCELLED';
+    const schedMins = order?.scheduledMinutes || 20;
+    const estMins = order?.estimatedMinutes || schedMins;
+    const isDelayedOrder =
+      !isTerminal &&
+      (Boolean(order?.isDelayed) ||
+        order?.statusLabel === 'Delayed' ||
+        estMins - schedMins > 10);
+
+    if (isDelayedOrder) {
+      return {
+        label: 'Delayed',
+        badgeClass: 'bg-rose-100 text-rose-900 border-rose-300',
+        dotClass: 'bg-rose-600 animate-ping',
+      };
+    }
+
     switch (status) {
       case 'PENDING_ASSIGNMENT':
         return {
@@ -366,7 +389,7 @@ export const CustomerOrderHistoryView: React.FC<CustomerOrderHistoryViewProps> =
           </div>
         ) : (
           filteredOrders.map((order) => {
-            const badge = getStatusBadge(order.status);
+            const badge = getStatusBadge(order.status, order);
             const totalInr = Math.round(order.totalAmountPaise / 100);
             const isDelivered = order.status === 'DELIVERED';
             const isCancelled = order.status === 'CANCELLED';
@@ -391,6 +414,20 @@ export const CustomerOrderHistoryView: React.FC<CustomerOrderHistoryViewProps> =
                       <span className={`w-2 h-2 rounded-full ${badge.dotClass}`} />
                       <span>{badge.label}</span>
                     </div>
+                    {isActive && order.scheduledMinutes && (
+                      <span
+                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
+                          badge.label === 'Delayed'
+                            ? 'bg-rose-50 text-rose-800 border-rose-300'
+                            : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        }`}
+                      >
+                        Sched: {order.scheduledMinutes}m • Est: {order.estimatedMinutes || order.scheduledMinutes}m
+                        {badge.label === 'Delayed'
+                          ? ` (+${Math.max(0, (order.estimatedMinutes || 0) - order.scheduledMinutes)}m Delay)`
+                          : ''}
+                      </span>
+                    )}
                     <span className="text-[11px] text-slate-500">{order.createdAt}</span>
                   </div>
 
