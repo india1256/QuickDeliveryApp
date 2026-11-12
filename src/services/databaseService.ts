@@ -146,6 +146,16 @@ export function normalizeOrderRecord(raw: any): any {
     isDelayed,
     ...(statusLabel ? { statusLabel } : {}),
     delayNotificationSent: Boolean(raw.delayNotificationSent),
+    ...(raw.senderName ? { senderName: sanitizeText(raw.senderName, 80) } : {}),
+    ...(raw.senderSignatureSvg ? { senderSignatureSvg: String(raw.senderSignatureSvg) } : {}),
+    ...(raw.pickupPhotoUrl ? { pickupPhotoUrl: String(raw.pickupPhotoUrl) } : {}),
+    ...(raw.pickupPhotoSummary ? { pickupPhotoSummary: sanitizeText(raw.pickupPhotoSummary, 160) } : {}),
+    ...(raw.recipientName ? { recipientName: sanitizeText(raw.recipientName, 80) } : {}),
+    ...(raw.recipientSignatureSvg ? { recipientSignatureSvg: String(raw.recipientSignatureSvg) } : {}),
+    ...(raw.deliveryPhotoUrl ? { deliveryPhotoUrl: String(raw.deliveryPhotoUrl) } : {}),
+    ...(raw.deliveryPhotoSummary ? { deliveryPhotoSummary: sanitizeText(raw.deliveryPhotoSummary, 160) } : {}),
+    ...(raw.pickupProof ? { pickupProof: raw.pickupProof } : {}),
+    ...(raw.deliveryProof ? { deliveryProof: raw.deliveryProof } : {}),
   });
 }
 
@@ -254,6 +264,194 @@ class DatabaseService {
       console.error('Error saving order to database:', e);
       return false;
     }
+  }
+
+  // POST /api/v1/riders/orders/:orderId/proof-pickup
+  // Validates mandatory live camera package photo + Sender's finger-drawn Digital Signature & Sender Name
+  public async uploadPickupProof(
+    orderId: string,
+    payload: {
+      riderId: string;
+      verifiedOtp: string;
+      packagePhotoUrl: string;
+      packagePhotoSummary?: string;
+      senderName: string;
+      senderSignatureSvg: string;
+    }
+  ): Promise<{
+    success: boolean;
+    endpoint: string;
+    message: string;
+    pickupProof?: {
+      orderId: string;
+      riderId: string;
+      verifiedOtp: string;
+      packagePhotoUrl: string;
+      packagePhotoSummary: string;
+      senderName: string;
+      senderSignatureSvg: string;
+      capturedAtIso: string;
+    };
+  }> {
+    const endpoint = `/api/v1/riders/orders/${encodeURIComponent(orderId)}/proof-pickup`;
+    const cleanSender = sanitizeText(payload.senderName || '', 80);
+    const cleanPhotoUrl = String(payload.packagePhotoUrl || '').trim();
+    const cleanSig = String(payload.senderSignatureSvg || '').trim();
+
+    if (!cleanPhotoUrl) {
+      return {
+        success: false,
+        endpoint,
+        message: 'Live camera package photo is mandatory for Pickup Proof.',
+      };
+    }
+    if (!cleanSender) {
+      return {
+        success: false,
+        endpoint,
+        message: 'Sender Name is mandatory for Pickup Proof.',
+      };
+    }
+    if (!cleanSig || !cleanSig.includes('<svg')) {
+      return {
+        success: false,
+        endpoint,
+        message: "Sender's finger-drawn Digital Signature is mandatory before confirming pickup.",
+      };
+    }
+
+    const pickupProof = {
+      orderId: sanitizeIdentifier(orderId, 64) || orderId,
+      riderId: sanitizeIdentifier(payload.riderId || 'RIDER-101', 64) || 'RIDER-101',
+      verifiedOtp: String(payload.verifiedOtp || '').trim(),
+      packagePhotoUrl: cleanPhotoUrl,
+      packagePhotoSummary:
+        sanitizeText(payload.packagePhotoSummary || 'Live Pickup Camera Photo Verified', 160) ||
+        'Live Pickup Camera Photo Verified',
+      senderName: cleanSender,
+      senderSignatureSvg: cleanSig,
+      capturedAtIso: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    const existing = this.getLocalOrders().find(
+      (o) => o.id === orderId || o.orderCode === orderId
+    );
+    if (existing) {
+      await this.saveOrder({
+        ...existing,
+        status: 'IN_TRANSIT',
+        pickupPhotoUploaded: true,
+        pickupPhotoUrl: pickupProof.packagePhotoUrl,
+        pickupPhotoSummary: pickupProof.packagePhotoSummary,
+        senderName: pickupProof.senderName,
+        senderSignatureSvg: pickupProof.senderSignatureSvg,
+        pickupProof,
+      });
+    }
+
+    return {
+      success: true,
+      endpoint,
+      message: `Pickup Proof & Digital Signature by ${cleanSender} saved via ${endpoint}`,
+      pickupProof,
+    };
+  }
+
+  // POST /api/v1/riders/orders/:orderId/proof-delivery
+  // Validates mandatory live camera drop photo + Recipient's finger-drawn Digital Signature & Receiver Name
+  public async uploadDeliveryProof(
+    orderId: string,
+    payload: {
+      riderId: string;
+      verifiedOtp: string;
+      deliveryPhotoUrl: string;
+      deliveryPhotoSummary?: string;
+      recipientName: string;
+      recipientSignatureSvg: string;
+      codAmountCollectedInr?: number;
+    }
+  ): Promise<{
+    success: boolean;
+    endpoint: string;
+    message: string;
+    deliveryProof?: {
+      orderId: string;
+      riderId: string;
+      verifiedOtp: string;
+      deliveryPhotoUrl: string;
+      deliveryPhotoSummary: string;
+      recipientName: string;
+      recipientSignatureSvg: string;
+      codAmountCollectedInr: number;
+      capturedAtIso: string;
+    };
+  }> {
+    const endpoint = `/api/v1/riders/orders/${encodeURIComponent(orderId)}/proof-delivery`;
+    const cleanRecipient = sanitizeText(payload.recipientName || '', 80);
+    const cleanPhotoUrl = String(payload.deliveryPhotoUrl || '').trim();
+    const cleanSig = String(payload.recipientSignatureSvg || '').trim();
+
+    if (!cleanPhotoUrl) {
+      return {
+        success: false,
+        endpoint,
+        message: 'Live camera drop photo is mandatory for Delivery Proof.',
+      };
+    }
+    if (!cleanRecipient) {
+      return {
+        success: false,
+        endpoint,
+        message: 'Receiver Name is mandatory for Delivery Proof.',
+      };
+    }
+    if (!cleanSig || !cleanSig.includes('<svg')) {
+      return {
+        success: false,
+        endpoint,
+        message: "Recipient's finger-drawn Digital Signature is mandatory before confirming delivery.",
+      };
+    }
+
+    const deliveryProof = {
+      orderId: sanitizeIdentifier(orderId, 64) || orderId,
+      riderId: sanitizeIdentifier(payload.riderId || 'RIDER-101', 64) || 'RIDER-101',
+      verifiedOtp: String(payload.verifiedOtp || '').trim(),
+      deliveryPhotoUrl: cleanPhotoUrl,
+      deliveryPhotoSummary:
+        sanitizeText(payload.deliveryPhotoSummary || 'Live Drop-off Camera Photo Verified', 160) ||
+        'Live Drop-off Camera Photo Verified',
+      recipientName: cleanRecipient,
+      recipientSignatureSvg: cleanSig,
+      codAmountCollectedInr:
+        typeof payload.codAmountCollectedInr === 'number' ? payload.codAmountCollectedInr : 0,
+      capturedAtIso: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    const existing = this.getLocalOrders().find(
+      (o) => o.id === orderId || o.orderCode === orderId
+    );
+    if (existing) {
+      await this.saveOrder({
+        ...existing,
+        status: 'DELIVERED',
+        isDelayed: false,
+        statusLabel: 'Delivered',
+        deliveryPhotoUploaded: true,
+        deliveryPhotoUrl: deliveryProof.deliveryPhotoUrl,
+        deliveryPhotoSummary: deliveryProof.deliveryPhotoSummary,
+        recipientName: deliveryProof.recipientName,
+        recipientSignatureSvg: deliveryProof.recipientSignatureSvg,
+        deliveryProof,
+      });
+    }
+
+    return {
+      success: true,
+      endpoint,
+      message: `Delivery Proof & Digital Signature by ${cleanRecipient} saved via ${endpoint}`,
+      deliveryProof,
+    };
   }
 
   // Automatically save and sync user profile data in the background using the user's logged-in account

@@ -48,6 +48,7 @@ class CustomerMainActivity : ComponentActivity() {
         QuickDeliveryFirebaseInitializer.ensureInitialized(this)
         OrderAlertSoundManager.ensureChannels(this)
         AppPermissionManager.inspectPermissions(this)
+        com.example.data.cloud.MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(this, "CUSTOMER")
         enableEdgeToEdge()
         setContent {
             QuickDeliveryTheme {

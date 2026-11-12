@@ -23,6 +23,7 @@ import {
   Check
 } from 'lucide-react';
 import { DeliveryMapComponent } from './DeliveryMapComponent';
+import { PickupProofHistoryCard, DeliveryProofHistoryCard } from './ProofOfDeliverySignatureModal';
 
 export interface RiderTrip {
   id: string;
@@ -53,8 +54,14 @@ export interface RiderTrip {
   assignedRiderRating?: string;
   pickupPhotoCaptured?: boolean;
   pickupPhotoUrl?: string;
+  pickupPhotoSummary?: string;
+  senderName?: string;
+  senderSignatureSvg?: string;
   deliveryProofNote?: string;
   deliveryPhotoUrl?: string;
+  deliveryPhotoSummary?: string;
+  recipientName?: string;
+  recipientSignatureSvg?: string;
   createdAt: string;
   cancellationReason?: string;
 }
@@ -401,24 +408,30 @@ export const RiderTripHistoryView: React.FC<RiderTripHistoryViewProps> = ({
                   </div>
                 </div>
 
-                {/* Delivery Proof Photo if Captured */}
-                {trip.deliveryPhotoUrl && (
-                  <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 flex items-center gap-3">
-                    <img
-                      src={trip.deliveryPhotoUrl}
-                      alt="Delivery Proof"
-                      className="w-14 h-14 rounded-lg object-cover border border-emerald-300 shrink-0"
-                    />
-                    <div className="text-xs">
-                      <div className="font-extrabold text-emerald-950 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Delivery Proof Photo Verified</span>
-                      </div>
-                      <div className="text-[11px] text-emerald-800 font-medium mt-0.5">
-                        {trip.deliveryProofNote || 'Handover authenticated with photo & Drop OTP.'}
-                      </div>
-                    </div>
-                  </div>
+                {/* Pickup Proof & Digital Signature History Card */}
+                {(trip.senderName || trip.senderSignatureSvg || trip.pickupPhotoCaptured || trip.pickupPhotoUrl) && (
+                  <PickupProofHistoryCard
+                    orderCode={trip.orderCode}
+                    senderName={trip.senderName || trip.customerName}
+                    senderSignatureSvg={trip.senderSignatureSvg}
+                    packagePhotoUrl={trip.pickupPhotoUrl}
+                    packagePhotoSummary={trip.pickupPhotoSummary || 'Live Pickup Camera Photo Verified'}
+                    verifiedOtp={trip.pickupOtp}
+                    capturedAt={trip.createdAt}
+                  />
+                )}
+
+                {/* Delivery Proof & Digital Signature History Card */}
+                {(trip.recipientName || trip.recipientSignatureSvg || trip.deliveryPhotoUrl || trip.deliveryProofNote || isDelivered) && (
+                  <DeliveryProofHistoryCard
+                    orderCode={trip.orderCode}
+                    recipientName={trip.recipientName || trip.receiverName || trip.customerName}
+                    recipientSignatureSvg={trip.recipientSignatureSvg}
+                    deliveryPhotoUrl={trip.deliveryPhotoUrl}
+                    deliveryPhotoSummary={trip.deliveryPhotoSummary || trip.deliveryProofNote || 'Live Drop-off Camera Photo Verified'}
+                    verifiedOtp={trip.deliveryOtp}
+                    capturedAt={trip.createdAt}
+                  />
                 )}
 
                 {/* Expanded GPS Route */}

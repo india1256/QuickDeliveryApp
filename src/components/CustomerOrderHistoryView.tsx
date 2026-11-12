@@ -27,6 +27,7 @@ import {
   ChevronUp
 } from 'lucide-react';
 import { DeliveryMapComponent } from './DeliveryMapComponent';
+import { PickupProofHistoryCard, DeliveryProofHistoryCard } from './ProofOfDeliverySignatureModal';
 
 export interface CustomerOrder {
   id: string;
@@ -63,8 +64,14 @@ export interface CustomerOrder {
   assignedRiderPlate?: string;
   pickupPhotoCaptured?: boolean;
   pickupPhotoUrl?: string;
+  pickupPhotoSummary?: string;
+  senderName?: string;
+  senderSignatureSvg?: string;
   deliveryProofNote?: string;
   deliveryPhotoUrl?: string;
+  deliveryPhotoSummary?: string;
+  recipientName?: string;
+  recipientSignatureSvg?: string;
   createdAt: string;
   cancellationReason?: string;
   scheduledMinutes?: number;
@@ -555,24 +562,30 @@ export const CustomerOrderHistoryView: React.FC<CustomerOrderHistoryViewProps> =
                   </div>
                 </div>
 
-                {/* Delivery Proof Photo if Available */}
-                {order.deliveryPhotoUrl && (
-                  <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 flex items-center gap-3">
-                    <img
-                      src={order.deliveryPhotoUrl}
-                      alt="Delivery Handover Proof"
-                      className="w-14 h-14 rounded-lg object-cover border border-emerald-300 shrink-0"
-                    />
-                    <div className="text-xs">
-                      <div className="font-extrabold text-emerald-950 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Verified Delivery Handover Proof</span>
-                      </div>
-                      <div className="text-[11px] text-emerald-800 font-medium mt-0.5">
-                        {order.deliveryProofNote || 'Handover photo confirmed by rider partner.'}
-                      </div>
-                    </div>
-                  </div>
+                {/* Pickup Proof & Digital Signature History Card */}
+                {(order.senderName || order.senderSignatureSvg || order.pickupPhotoCaptured || order.pickupPhotoUrl) && (
+                  <PickupProofHistoryCard
+                    orderCode={order.orderCode}
+                    senderName={order.senderName || order.customerName}
+                    senderSignatureSvg={order.senderSignatureSvg}
+                    packagePhotoUrl={order.pickupPhotoUrl}
+                    packagePhotoSummary={order.pickupPhotoSummary || 'Live Pickup Camera Photo Verified'}
+                    verifiedOtp={order.pickupOtp}
+                    capturedAt={order.createdAt}
+                  />
+                )}
+
+                {/* Delivery Proof & Digital Signature History Card */}
+                {(order.recipientName || order.recipientSignatureSvg || order.deliveryPhotoUrl || order.deliveryProofNote) && (
+                  <DeliveryProofHistoryCard
+                    orderCode={order.orderCode}
+                    recipientName={order.recipientName || order.receiverName || order.customerName}
+                    recipientSignatureSvg={order.recipientSignatureSvg}
+                    deliveryPhotoUrl={order.deliveryPhotoUrl}
+                    deliveryPhotoSummary={order.deliveryPhotoSummary || order.deliveryProofNote || 'Live Drop-off Camera Photo Verified'}
+                    verifiedOtp={order.deliveryOtp}
+                    capturedAt={order.createdAt}
+                  />
                 )}
 
                 {/* Expanded Step-by-Step Timeline */}

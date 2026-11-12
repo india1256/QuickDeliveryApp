@@ -633,6 +633,7 @@ object AutomatedFairRiderAssignmentEngine {
                     r.copy(
                         walletBalanceInr = 0.0,
                         commissionDebtInr = 0.0,
+                        totalDeliveries = 0,
                         completedOrdersToday = 0
                     )
                 }

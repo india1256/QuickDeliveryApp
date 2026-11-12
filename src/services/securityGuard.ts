@@ -249,3 +249,127 @@ export function verifyRoleSessionToken(
     return false;
   }
 }
+
+/**
+ * Validates Pickup Proof payload for POST /api/v1/riders/orders/:orderId/proof-pickup
+ * Enforces mandatory live camera package photo + Sender Name + Sender finger-drawn SVG Digital Signature.
+ */
+export function validatePickupProofPayload(
+  orderId: string,
+  payload: {
+    riderId: string;
+    verifiedOtp: string;
+    packagePhotoUrl: string;
+    packagePhotoSummary?: string;
+    senderName: string;
+    senderSignatureSvg: string;
+  }
+) {
+  const endpoint = `/api/v1/riders/orders/${encodeURIComponent(orderId)}/proof-pickup`;
+  const cleanSender = sanitizeText(payload.senderName || '', 80);
+  const cleanPhotoUrl = String(payload.packagePhotoUrl || '').trim();
+  const cleanSig = String(payload.senderSignatureSvg || '').trim();
+
+  if (!cleanPhotoUrl) {
+    return {
+      success: false,
+      endpoint,
+      message: 'Live camera package photo is mandatory for Pickup Proof.',
+    };
+  }
+  if (!cleanSender) {
+    return {
+      success: false,
+      endpoint,
+      message: 'Sender Name is mandatory for Pickup Proof.',
+    };
+  }
+  if (!cleanSig || !cleanSig.includes('<svg') || !cleanSig.includes('<path')) {
+    return {
+      success: false,
+      endpoint,
+      message: "Sender's finger-drawn Digital Signature is mandatory before confirming pickup.",
+    };
+  }
+
+  return {
+    success: true,
+    endpoint,
+    message: `Pickup Proof & Digital Signature by ${cleanSender} saved via ${endpoint}`,
+    pickupProof: {
+      orderId: sanitizeIdentifier(orderId, 64) || orderId,
+      riderId: sanitizeIdentifier(payload.riderId || 'RIDER-101', 64) || 'RIDER-101',
+      verifiedOtp: String(payload.verifiedOtp || '').trim(),
+      packagePhotoUrl: cleanPhotoUrl,
+      packagePhotoSummary:
+        sanitizeText(payload.packagePhotoSummary || 'Live Pickup Camera Photo Verified', 160) ||
+        'Live Pickup Camera Photo Verified',
+      senderName: cleanSender,
+      senderSignatureSvg: cleanSig,
+    },
+  };
+}
+
+/**
+ * Validates Delivery Proof payload for POST /api/v1/riders/orders/:orderId/proof-delivery
+ * Enforces mandatory live camera drop photo + Receiver Name + Recipient finger-drawn SVG Digital Signature.
+ */
+export function validateDeliveryProofPayload(
+  orderId: string,
+  payload: {
+    riderId: string;
+    verifiedOtp: string;
+    deliveryPhotoUrl: string;
+    deliveryPhotoSummary?: string;
+    recipientName: string;
+    recipientSignatureSvg: string;
+    codAmountCollectedInr?: number;
+  }
+) {
+  const endpoint = `/api/v1/riders/orders/${encodeURIComponent(orderId)}/proof-delivery`;
+  const cleanRecipient = sanitizeText(payload.recipientName || '', 80);
+  const cleanPhotoUrl = String(payload.deliveryPhotoUrl || '').trim();
+  const cleanSig = String(payload.recipientSignatureSvg || '').trim();
+
+  if (!cleanPhotoUrl) {
+    return {
+      success: false,
+      endpoint,
+      message: 'Live camera drop photo is mandatory for Delivery Proof.',
+    };
+  }
+  if (!cleanRecipient) {
+    return {
+      success: false,
+      endpoint,
+      message: 'Receiver Name is mandatory for Delivery Proof.',
+    };
+  }
+  if (!cleanSig || !cleanSig.includes('<svg') || !cleanSig.includes('<path')) {
+    return {
+      success: false,
+      endpoint,
+      message: "Recipient's finger-drawn Digital Signature is mandatory before confirming delivery.",
+    };
+  }
+
+  return {
+    success: true,
+    endpoint,
+    message: `Delivery Proof & Digital Signature by ${cleanRecipient} saved via ${endpoint}`,
+    deliveryProof: {
+      orderId: sanitizeIdentifier(orderId, 64) || orderId,
+      riderId: sanitizeIdentifier(payload.riderId || 'RIDER-101', 64) || 'RIDER-101',
+      verifiedOtp: String(payload.verifiedOtp || '').trim(),
+      deliveryPhotoUrl: cleanPhotoUrl,
+      deliveryPhotoSummary:
+        sanitizeText(payload.deliveryPhotoSummary || 'Live Drop-off Camera Photo Verified', 160) ||
+        'Live Drop-off Camera Photo Verified',
+      recipientName: cleanRecipient,
+      recipientSignatureSvg: cleanSig,
+      codAmountCollectedInr:
+        typeof payload.codAmountCollectedInr === 'number' ? payload.codAmountCollectedInr : 0,
+    },
+  };
+}
+

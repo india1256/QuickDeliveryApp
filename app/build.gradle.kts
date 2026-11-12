@@ -33,6 +33,7 @@ android {
     }
 
     val roleLauncherLabel = when (targetAppRole) {
+      "CUSTOMER" -> "QD Customer"
       "RIDER" -> "QD Rider Partner"
       "ADMIN" -> "QD Admin Console"
       else -> "@string/app_name"

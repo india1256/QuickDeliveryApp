@@ -28,6 +28,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { DeliveryMapComponent } from './DeliveryMapComponent';
+import { PickupProofHistoryCard, DeliveryProofHistoryCard } from './ProofOfDeliverySignatureModal';
 
 export type OrderStatusKey =
   | 'PENDING_ASSIGNMENT'
@@ -67,7 +68,15 @@ export interface ManagedOrder {
   assignedRiderRating?: string;
   assignedRiderPlate?: string;
   pickupPhotoCaptured?: boolean;
+  pickupPhotoUrl?: string;
+  pickupPhotoSummary?: string;
+  senderName?: string;
+  senderSignatureSvg?: string;
   deliveryProofNote?: string;
+  deliveryPhotoUrl?: string;
+  deliveryPhotoSummary?: string;
+  recipientName?: string;
+  recipientSignatureSvg?: string;
   createdAt: string;
   cancellationReason?: string;
   scheduledMinutes?: number;
@@ -878,6 +887,30 @@ export const AdminOrderStatusManager: React.FC<AdminOrderStatusManagerProps> = (
                         </button>
                       </div>
                     </div>
+
+                    {/* Pickup & Delivery Digital Signature Proof History Cards */}
+                    {(order.senderName || order.senderSignatureSvg || order.pickupPhotoCaptured || order.pickupPhotoUrl) && (
+                      <PickupProofHistoryCard
+                        orderCode={order.orderCode}
+                        senderName={order.senderName || order.customerName}
+                        senderSignatureSvg={order.senderSignatureSvg}
+                        packagePhotoUrl={order.pickupPhotoUrl}
+                        packagePhotoSummary={order.pickupPhotoSummary || 'Live Pickup Camera Photo Verified'}
+                        verifiedOtp={order.pickupOtp}
+                        capturedAt={order.createdAt}
+                      />
+                    )}
+                    {(order.recipientName || order.recipientSignatureSvg || order.deliveryPhotoUrl || order.deliveryProofNote || order.status === 'DELIVERED') && (
+                      <DeliveryProofHistoryCard
+                        orderCode={order.orderCode}
+                        recipientName={order.recipientName || order.receiverName || order.customerName}
+                        recipientSignatureSvg={order.recipientSignatureSvg}
+                        deliveryPhotoUrl={order.deliveryPhotoUrl}
+                        deliveryPhotoSummary={order.deliveryPhotoSummary || order.deliveryProofNote || 'Live Drop-off Camera Photo Verified'}
+                        verifiedOtp={order.deliveryOtp}
+                        capturedAt={order.createdAt}
+                      />
+                    )}
 
                     {/* Expandable Embedded GPS Radar Map */}
                     {isMapExpanded && (

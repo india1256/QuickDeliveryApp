@@ -4,18 +4,9 @@
   "version": "5.3.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "vite build",
-    "build:customer": "node scripts/build-capacitor-apk.mjs customer",
-    "build:rider": "node scripts/build-capacitor-apk.mjs rider",
-    "build:admin": "node scripts/build-capacitor-apk.mjs admin",
-    "build:all-apks": "node scripts/build-capacitor-apk.mjs all",
-    "cap:customer": "node scripts/build-capacitor-apk.mjs customer --sync",
-    "cap:rider": "node scripts/build-capacitor-apk.mjs rider --sync",
-    "cap:admin": "node scripts/build-capacitor-apk.mjs admin --sync",
-    "apk:customer": "node scripts/build-capacitor-apk.mjs customer --apk",
-    "apk:rider": "node scripts/build-capacitor-apk.mjs rider --apk",
-    "apk:admin": "node scripts/build-capacitor-apk.mjs admin --apk",
+    "dev": "python3 scripts/build-standalone-role-apks.py && node scripts/apk-download-server.mjs",
+    "dev:vite": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build && python3 scripts/build-standalone-role-apks.py && node scripts/apk-download-server.mjs --configure-nginx",
     "preview": "vite preview"
   },
   "dependencies": {

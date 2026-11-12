@@ -156,7 +156,7 @@ class SecurityAndPricingIntegrationTest {
         assertEquals(148000L, walletVm.uiState.value.balancePaise)
         assertEquals(15000L, walletVm.uiState.value.maxCommissionDebtPaise)
 
-        // Simulate 15% critical battery state during active delivery
+        // Simulate 15% critical battery state (< 20%) during active delivery: GPS update frequency throttles to 15s / 20m
         val criticalState = RiderBatteryPowerMonitor.simulateBatteryState(
             levelPercent = 15,
             isCharging = false,
@@ -164,13 +164,47 @@ class SecurityAndPricingIntegrationTest {
         )
         assertTrue(criticalState.isCriticalPower)
         assertEquals(15, criticalState.levelPercent)
+        assertTrue("GPS must be throttled when battery is below 20%", criticalState.isGpsThrottled)
+        assertEquals(15000L, criticalState.gpsUpdateIntervalMs)
+        assertEquals(20.0f, criticalState.gpsMinDistanceMeters, 0.01f)
+        assertTrue(criticalState.isBatterySaverGpsActive)
 
+        // Healthy battery (80%, charging): Standard 2s / 1m GPS update frequency
         val healthyState = RiderBatteryPowerMonitor.simulateBatteryState(
             levelPercent = 80,
             isCharging = true,
             isPowerSaveMode = false
         )
         assertFalse(healthyState.isCriticalPower)
+        assertFalse(healthyState.isGpsThrottled)
+        assertEquals(2000L, healthyState.gpsUpdateIntervalMs)
+        assertEquals(1.0f, healthyState.gpsMinDistanceMeters, 0.01f)
+
+        // Low battery but plugged into charger (15%, charging): GPS is NOT throttled
+        val chargingLowState = RiderBatteryPowerMonitor.simulateBatteryState(
+            levelPercent = 15,
+            isCharging = true,
+            isPowerSaveMode = false
+        )
+        assertFalse("Charging battery must not throttle GPS updates", chargingLowState.isGpsThrottled)
+        assertEquals(2000L, chargingLowState.gpsUpdateIntervalMs)
+
+        // Boundary test: exactly 20% is normal, 19% (< 20%) is throttled
+        val at20State = RiderBatteryPowerMonitor.simulateBatteryState(
+            levelPercent = 20,
+            isCharging = false,
+            isPowerSaveMode = false
+        )
+        assertFalse(at20State.isGpsThrottled)
+        assertEquals(2000L, at20State.gpsUpdateIntervalMs)
+
+        val below20State = RiderBatteryPowerMonitor.simulateBatteryState(
+            levelPercent = 19,
+            isCharging = false,
+            isPowerSaveMode = false
+        )
+        assertTrue("Battery below 20% (19%) must throttle GPS updates", below20State.isGpsThrottled)
+        assertEquals(15000L, below20State.gpsUpdateIntervalMs)
     }
 
     @Test
@@ -260,6 +294,34 @@ class SecurityAndPricingIntegrationTest {
         assertTrue(sixthRapidOrder.isFailure)
 
         com.example.security.QuickDeliverySecurityGuard.resetRateLimitsForTesting()
+    }
+
+    @Test
+    fun testMobileApkDownloadHelperAndLocalBrowserServer() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val outcome = com.example.security.MobileApkDownloadHelper.triggerApkDownload(
+            context = context,
+            variant = com.example.security.MobileApkVariant.CUSTOMER,
+            openMobileBrowser = false
+        )
+        assertEquals("QuickDelivery-Customer.apk", outcome.fileName)
+        assertTrue(outcome.fileSizeBytes > 0L)
+        assertTrue(outcome.browserDownloadUrl.startsWith("http://127.0.0.1:"))
+
+        val port = com.example.security.MobileApkDownloadHelper.ensureLocalBrowserServerRunning(context)
+        assertTrue(port > 0)
+
+        val connection = java.net.URL("http://127.0.0.1:$port/apks/QuickDelivery-Customer.apk")
+            .openConnection() as java.net.HttpURLConnection
+        connection.requestMethod = "GET"
+        assertEquals(200, connection.responseCode)
+        assertEquals("application/vnd.android.package-archive", connection.contentType)
+        val disposition = connection.getHeaderField("Content-Disposition").orEmpty()
+        assertTrue(disposition.contains("attachment"))
+        assertTrue(disposition.contains("QuickDelivery-Customer.apk"))
+        val downloadedBytes = connection.inputStream.use { it.readBytes() }
+        assertTrue(downloadedBytes.isNotEmpty())
+        connection.disconnect()
     }
 }
 

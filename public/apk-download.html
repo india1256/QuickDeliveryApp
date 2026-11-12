@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>📲 Quick Delivery — 3 Alag-Alag Standalone Apps (1 Link = 1 App)</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #022C22;
+      color: #F8FAFC;
+    }
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .header-box {
+      background: linear-gradient(135deg, #065F46, #042F2E);
+      border: 2px solid #34D399;
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+    }
+    .badge {
+      display: inline-block;
+      background: #10B981;
+      color: #022C22;
+      font-weight: 900;
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    h1 {
+      margin: 8px 0 6px 0;
+      font-size: 19px;
+      color: #ECFDF5;
+    }
+    p {
+      margin: 0;
+      font-size: 13px;
+      color: #A7F3D0;
+      line-height: 1.45;
+    }
+    #progress-panel {
+      display: none;
+      background: #0F172A;
+      border: 2px solid #38BDF8;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .prog-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: #38BDF8;
+      margin-bottom: 8px;
+    }
+    .prog-bar-bg {
+      width: 100%;
+      height: 18px;
+      background: #1E293B;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 8px;
+      border: 1px solid #334155;
+    }
+    .prog-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #10B981, #38BDF8);
+      transition: width 0.15s ease;
+    }
+    .prog-stats {
+      font-size: 12px;
+      color: #E2E8F0;
+      font-weight: 700;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .apk-card {
+      background: #0F172A;
+      border: 1.5px solid #1E293B;
+      border-radius: 16px;
+      padding: 15px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .apk-title {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+    .apk-desc {
+      font-size: 12px;
+      color: #94A3B8;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .dl-btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 13px 14px;
+      border-radius: 12px;
+      font-weight: 900;
+      font-size: 14px;
+      text-decoration: none;
+      color: #FFFFFF;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      margin-bottom: 8px;
+    }
+    .direct-link {
+      display: block;
+      text-align: center;
+      font-size: 11px;
+      color: #93C5FD;
+      text-decoration: underline;
+    }
+    .guide-box {
+      background: #0F172A;
+      border: 1.5px solid #34D399;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .guide-box h2 {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+      color: #6EE7B7;
+    }
+    .step-list {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 13px;
+      color: #E2E8F0;
+      line-height: 1.55;
+    }
+    .live-box {
+      background: #042F2E;
+      border: 1.5px solid #10B981;
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .live-box h2 {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+      color: #A7F3D0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-box">
+      <span class="badge">1 Link = 1 Single Application • Separate Package IDs</span>
+      <h1>📲 Quick Delivery — 3 Alag-Alag Standalone Apps (1 Link = 1 App)</h1>
+      <p>Ab har application ka apna <b>alag package ID</b> aur <b>alag link</b> hai. Ek APK install karne par phone me <b>sirf wahi 1 application</b> install hoga (4 apps nahi)!</p>
+    </div>
+
+    <div id="progress-panel">
+      <div class="prog-title" id="prog-title">🚀 Downloading APK...</div>
+      <div class="prog-bar-bg">
+        <div class="prog-bar-fill" id="prog-fill"></div>
+      </div>
+      <div class="prog-stats" id="prog-stats">Starting download (0% — 0.0 MB / 32.3 MB)...</div>
+    </div>
+
+    <div class="grid">
+      
+      <div class="apk-card" style="border-color: #10B981;">
+        <div class="apk-title" style="color: #6EE7B7;">🛍️ App 1 (Customer Only): QuickDelivery-Customer.apk (32.3 MB)</div>
+        <div class="apk-desc">Is link se <b>sirf 1 App (QD Customer)</b> download aur install hoga. Customer Parcel Booking, Live GPS Tracking &amp; OTP.</div>
+        <button class="dl-btn" style="background: #059669;" onclick="startChunkedApkDownload('QuickDelivery-Customer.apk')">
+          📥 Download ONLY Customer App (32.3 MB)
+        </button>
+        <a class="direct-link" href="/dl/QuickDelivery-Customer.apk" download="QuickDelivery-Customer.apk">
+          Direct Single-App Link: /dl/QuickDelivery-Customer.apk
+        </a>
+      </div>
+      
+      <div class="apk-card" style="border-color: #F59E0B;">
+        <div class="apk-title" style="color: #FCD34D;">🛵 App 2 (Rider Only): QuickDelivery-Rider-Partner.apk (32.3 MB)</div>
+        <div class="apk-desc">Is link se <b>sirf 1 App (QD Rider Partner)</b> download aur install hoga. Order Accept, Pickup/Drop OTP &amp; Partner Wallet.</div>
+        <button class="dl-btn" style="background: #D97706;" onclick="startChunkedApkDownload('QuickDelivery-Rider-Partner.apk')">
+          📥 Download ONLY Rider Partner App (32.3 MB)
+        </button>
+        <a class="direct-link" href="/dl/QuickDelivery-Rider-Partner.apk" download="QuickDelivery-Rider-Partner.apk">
+          Direct Single-App Link: /dl/QuickDelivery-Rider-Partner.apk
+        </a>
+      </div>
+      
+      <div class="apk-card" style="border-color: #14B8A6;">
+        <div class="apk-title" style="color: #5EEAD4;">🛡️ App 3 (Admin Only): QuickDelivery-Admin-Enterprise.apk (32.3 MB)</div>
+        <div class="apk-desc">Is link se <b>sirf 1 App (QD Admin Console)</b> download aur install hoga. Live Fleet GPS Tracking, Permissions &amp; Order Control.</div>
+        <button class="dl-btn" style="background: #0D9488;" onclick="startChunkedApkDownload('QuickDelivery-Admin-Enterprise.apk')">
+          📥 Download ONLY Admin Console App (32.3 MB)
+        </button>
+        <a class="direct-link" href="/dl/QuickDelivery-Admin-Enterprise.apk" download="QuickDelivery-Admin-Enterprise.apk">
+          Direct Single-App Link: /dl/QuickDelivery-Admin-Enterprise.apk
+        </a>
+      </div>
+    </div>
+
+    <div class="guide-box">
+      <h2>⚠️ Pehle 4 Apps Kyu Dikhe The? (Important Note)</h2>
+      <ol class="step-list">
+        <li>Agar aapke phone me purana <b>Quick Delivery</b> app pehle se installed hai (jisme 4 icons aaye the), toh us purane app ko ek baar <b>Uninstall</b> kar dein.</li>
+        <li>Ab upar diye gaye 3 alag-alag APK me se:
+          <br>• <b>Phone 1</b> me sirf <b>Customer App</b> install karein (Sirf <b>QD Customer</b> icon aayega).
+          <br>• <b>Phone 2</b> me sirf <b>Rider Partner App</b> install karein (Sirf <b>QD Rider Partner</b> icon aayega).
+          <br>• <b>Phone 3</b> me sirf <b>Admin Console App</b> install karein (Sirf <b>QD Admin Console</b> icon aayega).
+        </li>
+      </ol>
+    </div>
+
+    <div class="live-box">
+      <h2>🟢 Live Multi-Phone Cloud Sync Monitor (Auto-Updates Every 2s)</h2>
+      <div id="live-sync-summary" style="font-size: 13px; color: #ECFDF5;">
+        Waiting for phones to connect...
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const EXPECTED_TOTAL_BYTES = 33842368;
+    const AUTO_DOWNLOAD_FILE = "";
+    let isDownloading = false;
+
+    async function fetchChunkWithRetry(url, start, end, maxRetries = 12) {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const res = await fetch(url, {
+            method: 'GET',
+            headers: {
+              'Range': 'bytes=' + start + '-' + end,
+              'Cache-Control': 'no-transform'
+            }
+          });
+          if (res.status === 206 || res.status === 200) {
+            const buf = await res.arrayBuffer();
+            if (buf && buf.byteLength > 0) {
+              return { buffer: buf, status: res.status };
+            }
+          }
+        } catch (err) {}
+        await new Promise(r => setTimeout(r, Math.min(1000 * attempt, 3000)));
+      }
+      throw new Error('Network connection interrupted while fetching chunk.');
+    }
+
+    async function startChunkedApkDownload(fileName) {
+      if (isDownloading) return;
+      isDownloading = true;
+
+      const panel = document.getElementById('progress-panel');
+      const titleEl = document.getElementById('prog-title');
+      const fillEl = document.getElementById('prog-fill');
+      const statsEl = document.getElementById('prog-stats');
+
+      panel.style.display = 'block';
+      panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      titleEl.textContent = '🚀 Downloading ' + fileName + ' (Single App APK)...';
+      fillEl.style.width = '2%';
+      statsEl.textContent = 'Connecting to server... Do not close this tab.';
+
+      const url = '/dl/' + fileName;
+      const CHUNK_SIZE = 2 * 1024 * 1024;
+      let totalSize = EXPECTED_TOTAL_BYTES;
+
+      try {
+        try {
+          const headRes = await fetch(url, { method: 'HEAD' });
+          const len = Number(headRes.headers.get('content-length') || 0);
+          if (len > 1000000) totalSize = len;
+        } catch (e) {}
+
+        const chunks = [];
+        let downloaded = 0;
+
+        while (downloaded < totalSize) {
+          const end = Math.min(downloaded + CHUNK_SIZE - 1, totalSize - 1);
+          const result = await fetchChunkWithRetry(url, downloaded, end, 12);
+
+          if (downloaded === 0) {
+            const view = new Uint8Array(result.buffer);
+            if (view.length < 4 || view[0] !== 0x50 || view[1] !== 0x4B) {
+              throw new Error('Server warming up, retrying direct APK stream...');
+            }
+          }
+
+          chunks.push(result.buffer);
+          downloaded += result.buffer.byteLength;
+
+          const pct = Math.min(100, Math.round((downloaded / totalSize) * 100));
+          const dlMb = (downloaded / (1024 * 1024)).toFixed(1);
+          const totMb = (totalSize / (1024 * 1024)).toFixed(1);
+          fillEl.style.width = pct + '%';
+          statsEl.textContent = 'Downloaded: ' + pct + '% (' + dlMb + ' MB / ' + totMb + ' MB) — Auto-Resume Active';
+
+          if (result.status === 200 && result.buffer.byteLength >= totalSize) {
+            break;
+          }
+        }
+
+        titleEl.textContent = '✅ 100% Complete! Saving ' + fileName + ' to your phone...';
+        fillEl.style.width = '100%';
+        statsEl.textContent = 'APK verified (' + (totalSize / (1024 * 1024)).toFixed(1) + ' MB). Check your browser Downloads to install!';
+
+        const blob = new Blob(chunks, { type: 'application/vnd.android.package-archive' });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+        }, 60000);
+      } catch (err) {
+        titleEl.textContent = '⚠️ Switching to Direct Stream Download...';
+        statsEl.textContent = 'Starting direct download for ' + fileName + '...';
+        window.location.href = '/dl/' + fileName;
+      } finally {
+        isDownloading = false;
+      }
+    }
+
+    if (AUTO_DOWNLOAD_FILE) {
+      window.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => startChunkedApkDownload(AUTO_DOWNLOAD_FILE), 400);
+      });
+    }
+
+    async function refreshLiveSync() {
+      try {
+        const res = await fetch('/api/live-sync');
+        if (!res.ok) return;
+        const data = await res.json();
+        const devices = data.connectedDevices || [];
+        const orders = data.orders || [];
+        const el = document.getElementById('live-sync-summary');
+        if (!el) return;
+        const devHtml = devices.length
+          ? devices.map(d => '📱 <b>' + d.role + '</b> (' + d.deviceModel + ')').join(' &nbsp;|&nbsp; ')
+          : 'Ready — Open the installed APK on Phone 1, Phone 2, and Phone 3 to see them live here!';
+        const ordHtml = orders.length
+          ? '<ul style="margin:8px 0 0 0;padding-left:18px;">' + orders.map(o =>
+              '<li><b>' + o.orderId + '</b> — Status: <b>' + o.orderStatus + '</b> | Pickup OTP: <b>' + o.pickupOtp + '</b> | Delivery OTP: <b>' + o.deliveryOtp + '</b> | Fare: ' + o.totalAmount + '</li>'
+            ).join('') + '</ul>'
+          : '<div style="margin-top:6px;color:#A7F3D0;">No active live orders yet — book an order on Phone 1 (Customer App) to watch it sync live!</div>';
+        el.innerHTML = '<div><b>Connected Phones (' + devices.length + '):</b> ' + devHtml + '</div>' + ordHtml;
+      } catch (e) {}
+    }
+    setInterval(refreshLiveSync, 2000);
+    refreshLiveSync();
+  </script>
+</body>
+</html>

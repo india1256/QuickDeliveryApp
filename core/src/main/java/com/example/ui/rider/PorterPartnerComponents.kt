@@ -233,24 +233,20 @@ fun PorterRiderDrawerContent(
 ) {
     val effectiveBalance = walletBalance + totalTipsInr
 
-    // Live daily earnings metrics from actual orders & partner milestones
+    // Live daily earnings metrics strictly from actual delivered orders
     val deliveredOrders = orders.filter { it.orderStatus == OrderStatus.DELIVERED }
     val deliveredTripEarnings = deliveredOrders.sumOf {
-        it.riderEarning.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 60.0
+        it.riderEarning.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
     }
-    val baseTripEarnings = if (deliveredTripEarnings > 0) 340.0 + deliveredTripEarnings else 340.0
-    val customerTips = if (totalTipsInr > 0) totalTipsInr.toDouble() else 40.0
-    val completedTripsCount = deliveredOrders.size + 4
-    val dailyIncentives = if (completedTripsCount >= 6) 150.0 else if (completedTripsCount >= 4) 80.0 else 40.0
-    val platformDeduction = (baseTripEarnings * 0.15).toInt().toDouble()
-    val netDailyTakeHome = baseTripEarnings + customerTips + dailyIncentives - platformDeduction
+    val baseTripEarnings = deliveredTripEarnings
+    val customerTips = totalTipsInr.toDouble().coerceAtLeast(0.0)
+    val completedTripsCount = deliveredOrders.size
+    val dailyIncentives = if (completedTripsCount >= 6) 150.0 else if (completedTripsCount >= 4) 80.0 else 0.0
+    val platformDeduction = 0.0
+    val netDailyTakeHome = baseTripEarnings + customerTips + dailyIncentives
 
-    // Live pending payout scheduled for bi-weekly disbursement
-    val pendingPayoutAmount = if (effectiveBalance > 0) {
-        (effectiveBalance * 1.25 + 640.0).coerceAtLeast(640.0)
-    } else {
-        1240.0
-    }
+    // Live pending payout scheduled for disbursement
+    val pendingPayoutAmount = effectiveBalance.coerceAtLeast(0.0)
 
     val context = LocalContext.current
     remember(context) {

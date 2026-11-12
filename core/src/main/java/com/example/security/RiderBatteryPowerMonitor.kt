@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.PowerManager
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -64,18 +65,59 @@ data class RiderBatteryPowerState(
 ) {
     val isCriticalPower: Boolean
         get() = !isCharging && (levelPercent <= criticalThresholdPercent || isPowerSaveMode)
+
+    val isGpsThrottled: Boolean
+        get() = !isCharging && (levelPercent < criticalThresholdPercent || isPowerSaveMode)
+
+    val gpsUpdateIntervalMs: Long
+        get() = if (isGpsThrottled) RiderBatteryPowerMonitor.LOW_BATTERY_GPS_INTERVAL_MS else RiderBatteryPowerMonitor.NORMAL_GPS_INTERVAL_MS
+
+    val gpsMinDistanceMeters: Float
+        get() = if (isGpsThrottled) RiderBatteryPowerMonitor.LOW_BATTERY_GPS_MIN_DISTANCE_METERS else RiderBatteryPowerMonitor.NORMAL_GPS_MIN_DISTANCE_METERS
+
+    val gpsFrequencyLabel: String
+        get() = if (isGpsThrottled) "15s / 25m (Battery Saver)" else "2s / 3m (High Precision)"
 }
 
 /**
  * Monitors device battery level and Android [PowerManager] power-save states during active Rider deliveries.
  * Triggers a high-priority modal alert when battery drops to or below 20% (or Power Save Mode activates)
- * while the rider has an active assigned delivery, offering one-tap emergency order reassignment.
+ * while the rider has an active assigned delivery, offering one-tap emergency order reassignment
+ * and automatically throttling GPS update frequency from 2s to 15s when battery drops below 20%.
  */
 object RiderBatteryPowerMonitor {
     const val DEFAULT_CRITICAL_THRESHOLD_PERCENT = 20
+    const val NORMAL_GPS_INTERVAL_MS = 2000L
+    const val LOW_BATTERY_GPS_INTERVAL_MS = 15000L
+    const val NORMAL_GPS_MIN_DISTANCE_METERS = 3f
+    const val LOW_BATTERY_GPS_MIN_DISTANCE_METERS = 25f
 
     private val _powerState = MutableStateFlow(RiderBatteryPowerState())
     val powerState: StateFlow<RiderBatteryPowerState> = _powerState.asStateFlow()
+
+    private val gpsListeners = java.util.concurrent.CopyOnWriteArrayList<(Boolean, Long, Float) -> Unit>()
+
+    fun addGpsReconfigurationListener(listener: (Boolean, Long, Float) -> Unit) {
+        if (!gpsListeners.contains(listener)) {
+            gpsListeners.add(listener)
+        }
+    }
+
+    fun removeGpsReconfigurationListener(listener: (Boolean, Long, Float) -> Unit) {
+        gpsListeners.remove(listener)
+    }
+
+    private fun notifyListenersIfNeeded(previous: RiderBatteryPowerState, current: RiderBatteryPowerState) {
+        if (previous.isGpsThrottled != current.isGpsThrottled ||
+            previous.gpsUpdateIntervalMs != current.gpsUpdateIntervalMs
+        ) {
+            gpsListeners.forEach { listener ->
+                runCatching {
+                    listener(current.isGpsThrottled, current.gpsUpdateIntervalMs, current.gpsMinDistanceMeters)
+                }
+            }
+        }
+    }
 
     fun refreshFromSystem(context: Context): RiderBatteryPowerState {
         if (_powerState.value.isSimulatedOverride) {
@@ -103,6 +145,7 @@ object RiderBatteryPowerMonitor {
         val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
             status == BatteryManager.BATTERY_STATUS_FULL
 
+        val previous = _powerState.value
         val updated = RiderBatteryPowerState(
             levelPercent = computedPercent,
             isCharging = isCharging,
@@ -112,14 +155,16 @@ object RiderBatteryPowerMonitor {
             isSimulatedOverride = false
         )
         _powerState.value = updated
+        notifyListenersIfNeeded(previous, updated)
         return updated
     }
 
     fun simulateBatteryState(
         levelPercent: Int,
         isCharging: Boolean = false,
-        isPowerSaveMode: Boolean = levelPercent <= DEFAULT_CRITICAL_THRESHOLD_PERCENT
+        isPowerSaveMode: Boolean = levelPercent < DEFAULT_CRITICAL_THRESHOLD_PERCENT
     ): RiderBatteryPowerState {
+        val previous = _powerState.value
         val simulated = RiderBatteryPowerState(
             levelPercent = levelPercent.coerceIn(1, 100),
             isCharging = isCharging,
@@ -129,16 +174,19 @@ object RiderBatteryPowerMonitor {
             isSimulatedOverride = true
         )
         _powerState.value = simulated
+        notifyListenersIfNeeded(previous, simulated)
         return simulated
     }
 
     fun clearSimulation(context: Context? = null): RiderBatteryPowerState {
+        val previous = _powerState.value
         _powerState.value = _powerState.value.copy(isSimulatedOverride = false)
         return if (context != null) {
             refreshFromSystem(context)
         } else {
             val reset = RiderBatteryPowerState()
             _powerState.value = reset
+            notifyListenersIfNeeded(previous, reset)
             reset
         }
     }
@@ -324,6 +372,31 @@ fun RiderBatteryPowerMonitorCard(
             )
 
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        if (powerState.isGpsThrottled) Color(0xFFFEF3C7) else Color(0xFFF0FDF4),
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (powerState.isGpsThrottled) "GPS Throttled (<20%): ${powerState.gpsFrequencyLabel}" else "GPS Standard: ${powerState.gpsFrequencyLabel}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (powerState.isGpsThrottled) Color(0xFF92400E) else Color(0xFF166534)
+                )
+                Text(
+                    text = if (powerState.isGpsThrottled) "🔋 Eco Saver" else "⚡ High Precision",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (powerState.isGpsThrottled) Color(0xFFB45309) else Color(0xFF15803D)
+                )
+            }
+
+            Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -336,17 +409,33 @@ fun RiderBatteryPowerMonitorCard(
                             isCharging = false,
                             isPowerSaveMode = true
                         )
+                        statusFeedback = "Battery Saver Active: GPS update frequency reduced to 15s."
                     },
-                    label = { Text("Simulate 15% Critical", style = MaterialTheme.typography.labelSmall) },
+                    label = { Text("15% (<20% Throttle)", style = MaterialTheme.typography.labelSmall) },
                     modifier = Modifier.testTag("simulate_critical_battery_chip")
+                )
+                FilterChip(
+                    selected = powerState.isSimulatedOverride && powerState.levelPercent == 85,
+                    onClick = {
+                        dismissedForOrderId = null
+                        RiderBatteryPowerMonitor.simulateBatteryState(
+                            levelPercent = 85,
+                            isCharging = false,
+                            isPowerSaveMode = false
+                        )
+                        statusFeedback = "Normal Battery: High-precision 2s GPS active."
+                    },
+                    label = { Text("85% (Normal 2s)", style = MaterialTheme.typography.labelSmall) },
+                    modifier = Modifier.testTag("simulate_normal_battery_chip")
                 )
                 FilterChip(
                     selected = !powerState.isSimulatedOverride,
                     onClick = {
                         dismissedForOrderId = null
                         RiderBatteryPowerMonitor.clearSimulation(context)
+                        statusFeedback = "Live device battery sync restored."
                     },
-                    label = { Text("Live Device Power", style = MaterialTheme.typography.labelSmall) },
+                    label = { Text("Live Power", style = MaterialTheme.typography.labelSmall) },
                     modifier = Modifier.testTag("live_device_battery_chip")
                 )
             }

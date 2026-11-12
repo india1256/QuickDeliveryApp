@@ -60,7 +60,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.model.CustomerOrder
+import com.example.data.model.OrderProofRegistry
 import com.example.data.model.OrderStatus
+import com.example.ui.components.DeliveryProofHistoryCard
+import com.example.ui.components.PickupProofHistoryCard
 import com.example.ui.components.PostDeliveryRiderFeedbackSection
 import com.example.ui.components.RiderFeedbackManager
 import java.util.Locale
@@ -651,11 +654,20 @@ private fun CustomerOrderHistoryItemCard(
                 }
             }
 
+            val pickupProofsByOrder by OrderProofRegistry.pickupProofsByOrder.collectAsState()
+            val deliveryProofsByOrder by OrderProofRegistry.deliveryProofsByOrder.collectAsState()
+            pickupProofsByOrder[order.orderId]?.let { proof ->
+                PickupProofHistoryCard(proof = proof)
+            }
+            deliveryProofsByOrder[order.orderId]?.let { proof ->
+                DeliveryProofHistoryCard(proof = proof)
+            }
+
             if (order.orderStatus == OrderStatus.DELIVERED) {
                 PostDeliveryRiderFeedbackSection(
                     orderId = order.orderId,
                     riderId = order.assignedRiderId ?: "RIDER-101",
-                    riderName = order.assignedRiderName ?: "Vikram Singh",
+                    riderName = order.assignedRiderName ?: "Rider Partner",
                     customerName = order.customerName
                 )
             }
@@ -896,6 +908,34 @@ fun CustomerDeliveryHistoryTabSection(
 
         // Live Session Orders (Filtered by Completed or All)
         val visibleLiveOrders = if (showOnlyCompleted) completedLiveOrders else orders
+        if (visibleLiveOrders.isEmpty() && archivedCompletedDeliveries.isEmpty()) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "No Past Deliveries Yet",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = HistoryNavy
+                    )
+                    Text(
+                        text = "Your app is 100% fresh. Book a parcel delivery in Step 1 to see your live & completed orders here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF64748B)
+                    )
+                }
+            }
+        }
         visibleLiveOrders.forEach { liveOrder ->
             CustomerOrderHistoryItemCard(
                 order = liveOrder,

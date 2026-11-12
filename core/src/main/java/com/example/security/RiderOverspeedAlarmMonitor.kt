@@ -145,19 +145,23 @@ object RiderOverspeedAlarmManager {
         }
 
         activeLocationListener = listener
+        val currentPower = RiderBatteryPowerMonitor.powerState.value
+        val intervalMs = currentPower.gpsUpdateIntervalMs
+        val minDistance = currentPower.gpsMinDistanceMeters
+
         runCatching {
             if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    1000L,
-                    1f,
+                    intervalMs,
+                    minDistance,
                     listener
                 )
             } else if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
-                    1000L,
-                    1f,
+                    intervalMs,
+                    minDistance,
                     listener
                 )
             }
@@ -165,6 +169,32 @@ object RiderOverspeedAlarmManager {
                 isLiveGpsListening = true,
                 isSafetySimulationMode = false
             )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun reconfigureGpsInterval(context: Context, intervalMs: Long, minDistanceM: Float) {
+        if (!hasLocationPermission(context)) return
+        val appCtx = context.applicationContext
+        val locationManager = appCtx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+        val listener = activeLocationListener ?: return
+        runCatching {
+            locationManager.removeUpdates(listener)
+            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    intervalMs,
+                    minDistanceM,
+                    listener
+                )
+            } else if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    intervalMs,
+                    minDistanceM,
+                    listener
+                )
+            }
         }
     }
 
@@ -308,7 +338,13 @@ fun RiderOverspeedSafetyCard(
         if (RiderOverspeedAlarmManager.hasLocationPermission(context)) {
             RiderOverspeedAlarmManager.startLiveGpsSpeedMonitoring(context)
         }
+        val batteryListener: (Boolean, Long, Float) -> Unit = { _, intervalMs, minDistance ->
+            RiderOverspeedAlarmManager.reconfigureGpsInterval(context, intervalMs, minDistance)
+        }
+        RiderBatteryPowerMonitor.addGpsReconfigurationListener(batteryListener)
+
         onDispose {
+            RiderBatteryPowerMonitor.removeGpsReconfigurationListener(batteryListener)
             RiderOverspeedAlarmManager.stopLiveGpsSpeedMonitoring(context)
             RiderOverspeedAlarmManager.stopPhoneOverspeedAlarm()
         }

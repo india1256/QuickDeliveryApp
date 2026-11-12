@@ -20,6 +20,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { DeliveryMapComponent } from './DeliveryMapComponent';
+import { PickupProofHistoryCard, DeliveryProofHistoryCard } from './ProofOfDeliverySignatureModal';
 
 interface DeliveryOrder {
   id: string;
@@ -53,6 +54,16 @@ interface DeliveryOrder {
   delayMinutes?: number;
   isDelayed?: boolean;
   statusLabel?: string;
+  pickupPhotoCaptured?: boolean;
+  pickupPhotoUrl?: string;
+  pickupPhotoSummary?: string;
+  senderName?: string;
+  senderSignatureSvg?: string;
+  deliveryProofNote?: string;
+  deliveryPhotoUrl?: string;
+  deliveryPhotoSummary?: string;
+  recipientName?: string;
+  recipientSignatureSvg?: string;
 }
 
 interface LiveOrderTrackingModalProps {
@@ -376,6 +387,30 @@ export const LiveOrderTrackingModal: React.FC<LiveOrderTrackingModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Pickup & Delivery Camera Photo + Digital Signature Proof Cards */}
+          {(order.senderName || order.senderSignatureSvg || order.pickupPhotoCaptured || order.pickupPhotoUrl) && (
+            <PickupProofHistoryCard
+              orderCode={order.orderCode}
+              senderName={order.senderName || order.customerName}
+              senderSignatureSvg={order.senderSignatureSvg}
+              packagePhotoUrl={order.pickupPhotoUrl}
+              packagePhotoSummary={order.pickupPhotoSummary || 'Live Pickup Camera Photo Verified'}
+              verifiedOtp={order.pickupOtp}
+              capturedAt={order.createdAt}
+            />
+          )}
+          {(order.recipientName || order.recipientSignatureSvg || order.deliveryPhotoUrl || order.deliveryProofNote) && (
+            <DeliveryProofHistoryCard
+              orderCode={order.orderCode}
+              recipientName={order.recipientName || order.receiverName || order.customerName}
+              recipientSignatureSvg={order.recipientSignatureSvg}
+              deliveryPhotoUrl={order.deliveryPhotoUrl}
+              deliveryPhotoSummary={order.deliveryPhotoSummary || order.deliveryProofNote || 'Live Drop-off Camera Photo Verified'}
+              verifiedOtp={order.deliveryOtp}
+              capturedAt={order.createdAt}
+            />
+          )}
 
         </div>
 

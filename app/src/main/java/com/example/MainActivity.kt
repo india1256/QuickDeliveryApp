@@ -6,9 +6,14 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import com.example.security.ApkDownloadOutcome
+import com.example.security.MobileApkDownloadHelper
+import com.example.security.MobileApkVariant
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -89,12 +94,17 @@ class MainActivity : ComponentActivity() {
         AppPermissionManager.installCrashPreventionGuard()
         OrderAlertSoundManager.ensureChannels(this)
         AppPermissionManager.inspectPermissions(this)
+        com.example.data.cloud.MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, BuildConfig.APP_ROLE)
+        com.example.data.cloud.MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(this, BuildConfig.APP_ROLE)
         enableEdgeToEdge()
 
         setContent {
             QuickDeliveryTheme {
                 LocalizedContextProvider {
-                    when (BuildConfig.APP_ROLE) {
+                    val activeRole by com.example.data.cloud.MultiPhoneLiveSyncManager.lockedPhoneRole.collectAsState()
+                    val effectiveRole = if (BuildConfig.APP_ROLE != "UNIFIED") BuildConfig.APP_ROLE else activeRole
+
+                    when (effectiveRole) {
                         "CUSTOMER" -> {
                             BackHandler(enabled = true) {
                                 OrderAlertSoundManager.stopOrderAlert()
@@ -134,21 +144,267 @@ class MainActivity : ComponentActivity() {
                                 OrderAlertSoundManager.stopOrderAlert()
                             }
                             QuickDeliveryCloudSyncBar(showCardUi = false)
-                            Box(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .windowInsetsPadding(WindowInsets.statusBars)
                                     .windowInsetsPadding(WindowInsets.navigationBars)
                             ) {
-                                AdminEnterpriseControlCenter(
-                                    repository = repository,
-                                    orders = orders,
-                                    onResetOrders = { repository.resetOrdersAndStateForTesting() },
-                                    onExitToCustomer = {}
+                                AdminLivePermissionsAndTrackingBar(
+                                    onClearAllOrders = {
+                                        repository.resetOrdersAndStateForTesting()
+                                        com.example.data.cloud.MultiPhoneLiveSyncManager.notifyOrdersReset(this@MainActivity)
+                                    }
                                 )
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    AdminEnterpriseControlCenter(
+                                        repository = repository,
+                                        orders = orders,
+                                        onResetOrders = {
+                                            repository.resetOrdersAndStateForTesting()
+                                            com.example.data.cloud.MultiPhoneLiveSyncManager.notifyOrdersReset(this@MainActivity)
+                                        },
+                                        onExitToCustomer = {}
+                                    )
+                                }
                             }
                         }
                         else -> QuickDeliveryUnifiedHub()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminLivePermissionsAndTrackingBar(
+    onClearAllOrders: () -> Unit
+) {
+    val context = LocalContext.current
+    val syncStatus by com.example.data.cloud.MultiPhoneLiveSyncManager.syncStatus.collectAsState()
+    var permissionRefreshTick by remember { mutableIntStateOf(0) }
+    val permissionStatus = remember(permissionRefreshTick) {
+        AppPermissionManager.inspectPermissions(context)
+    }
+    val hasCallPerm = remember(permissionRefreshTick) {
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.CALL_PHONE
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    val allAdminPermsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        permissionRefreshTick++
+    }
+
+    val allGranted = permissionStatus.hasLocationPermission &&
+        permissionStatus.hasCameraPermission &&
+        permissionStatus.hasNotificationPermission &&
+        hasCallPerm
+
+    Surface(
+        color = Color(0xFF0F172A),
+        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("admin_live_permissions_tracking_bar")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "📡 Admin Live Tracking (${syncStatus.connectedPhonesCount} Phones • ${syncStatus.syncedOrdersCount} Orders)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF38BDF8)
+                    )
+                    Text(
+                        text = "GPS: ${if (permissionStatus.hasLocationPermission) "✅" else "⚠️"} • Alerts: ${if (permissionStatus.hasNotificationPermission) "✅" else "⚠️"} • Cam: ${if (permissionStatus.hasCameraPermission) "✅" else "⚠️"} • Call: ${if (hasCallPerm) "✅" else "⚠️"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.85f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (!allGranted) {
+                        OutlinedButton(
+                            onClick = {
+                                val perms = mutableListOf(
+                                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                                    android.Manifest.permission.CAMERA,
+                                    android.Manifest.permission.CALL_PHONE
+                                )
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                    perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                allAdminPermsLauncher.launch(perms.toTypedArray())
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color(0xFF0284C7),
+                                contentColor = Color.White
+                            ),
+                            border = BorderStroke(1.dp, Color(0xFF7DD3FC)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("admin_grant_all_permissions_btn")
+                        ) {
+                            Text(
+                                "✅ Allow Permissions",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = onClearAllOrders,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color(0xFF7F1D1D),
+                            contentColor = Color(0xFFFECACA)
+                        ),
+                        border = BorderStroke(1.dp, Color(0xFFF87171)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("admin_fresh_clear_all_orders_btn")
+                    ) {
+                        Text(
+                            "🧹 Fresh Reset",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MultiPhoneLiveSyncTopRibbon(currentRole: String) {
+    val context = LocalContext.current
+    val syncStatus by com.example.data.cloud.MultiPhoneLiveSyncManager.syncStatus.collectAsState()
+    var showRoleSwitcher by rememberSaveable { mutableStateOf(false) }
+
+    val roleBadgeText = when (currentRole) {
+        "CUSTOMER" -> "🛍️ Customer App"
+        "RIDER" -> "🛵 Rider Partner App"
+        "ADMIN" -> "🛡️ Admin Live Console"
+        else -> "⚡ All-In-One Hub"
+    }
+
+    Surface(
+        color = Color(0xFF022C22),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "$roleBadgeText • ${if (syncStatus.isConnected) "🟢 Live (${syncStatus.connectedPhonesCount} Phones)" else "🟡 Connecting..."}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF6EE7B7)
+                    )
+                    Text(
+                        text = "Active Orders: ${syncStatus.syncedOrdersCount} • Sync: ${syncStatus.lastSyncTimeLabel}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.8f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(
+                        onClick = { com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context) },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFA7F3D0)),
+                        border = BorderStroke(1.dp, Color(0xFF34D399)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("live_sync_now_btn")
+                    ) {
+                        Text("🔄 Sync", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                    if (BuildConfig.APP_ROLE == "UNIFIED") {
+                        OutlinedButton(
+                            onClick = { showRoleSwitcher = !showRoleSwitcher },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFDE68A)),
+                            border = BorderStroke(1.dp, Color(0xFFFDE68A)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("change_locked_phone_role_btn")
+                        ) {
+                            Text("📱 Role", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = showRoleSwitcher) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            com.example.data.cloud.MultiPhoneLiveSyncManager.setLockedPhoneRole(context, "CUSTOMER")
+                            showRoleSwitcher = false
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFA7F3D0)),
+                        border = BorderStroke(1.dp, Color(0xFFA7F3D0)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("🛍️ Customer", style = MaterialTheme.typography.labelSmall)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            com.example.data.cloud.MultiPhoneLiveSyncManager.setLockedPhoneRole(context, "RIDER")
+                            showRoleSwitcher = false
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFDE68A)),
+                        border = BorderStroke(1.dp, Color(0xFFFDE68A)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("🛵 Rider", style = MaterialTheme.typography.labelSmall)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            com.example.data.cloud.MultiPhoneLiveSyncManager.setLockedPhoneRole(context, "ADMIN")
+                            showRoleSwitcher = false
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF99F6E4)),
+                        border = BorderStroke(1.dp, Color(0xFF99F6E4)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("🛡️ Admin", style = MaterialTheme.typography.labelSmall)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            com.example.data.cloud.MultiPhoneLiveSyncManager.setLockedPhoneRole(context, "UNIFIED")
+                            showRoleSwitcher = false
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = BorderStroke(1.dp, Color.White),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("⚡ Hub", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -229,54 +485,286 @@ fun QuickDeliveryUnifiedHub() {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Live Web App URL & One-Tap Chrome Launcher Card
+            var showApkDownloadPanel by rememberSaveable { mutableStateOf(false) }
+            var selectedVariantForSaf by remember { mutableStateOf(MobileApkVariant.CUSTOMER) }
+            var lastDownloadOutcome by remember { mutableStateOf<ApkDownloadOutcome?>(null) }
+
+            val safCreateDocumentLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")
+            ) { destinationUri: Uri? ->
+                if (destinationUri != null) {
+                    val result = MobileApkDownloadHelper.writeApkToSafUri(context, destinationUri)
+                    if (result.isSuccess) {
+                        val mb = String.format("%.1f MB", (result.getOrDefault(0L)).toDouble() / (1024.0 * 1024.0))
+                        lastDownloadOutcome = ApkDownloadOutcome(
+                            fileName = selectedVariantForSaf.fileName,
+                            fileSizeBytes = result.getOrDefault(0L),
+                            savedDownloadsUri = destinationUri,
+                            browserDownloadUrl = "",
+                            statusMessage = "✅ ${selectedVariantForSaf.fileName} ($mb) saved to selected folder!"
+                        )
+                    }
+                }
+            }
+
+            // Direct 3 Separate APK Download & Standalone App Launcher Banner (collapsed by default to keep screen clean)
             Surface(
                 color = Color(0xFF042F2E),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "🌐 Web App Live Link",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFA7F3D0)
-                        )
-                        Text(
-                            text = "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White,
-                            maxLines = 1
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            runCatching {
-                                val intent = Intent(
-                                    Intent.ACTION_VIEW,
-                                    Uri.parse("https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app")
-                                ).apply {
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                context.startActivity(intent)
-                            }
-                        },
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = Color(0xFFA7F3D0)
-                        ),
-                        border = BorderStroke(1.dp, Color(0xFFA7F3D0)),
-                        shape = RoundedCornerShape(8.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Open Chrome", fontWeight = FontWeight.Bold)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "📲 Multi-Phone Live Sync & Role Selector",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFA7F3D0)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = { showApkDownloadPanel = !showApkDownloadPanel },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFFA7F3D0)
+                            ),
+                            border = BorderStroke(1.dp, Color(0xFFA7F3D0)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("toggle_direct_apk_download_panel_btn")
+                        ) {
+                            Text(
+                                if (showApkDownloadPanel) "Hide Options" else "📱 Phone Role / APKs",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    AnimatedVisibility(visible = showApkDownloadPanel) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        selectedVariantForSaf = MobileApkVariant.CUSTOMER
+                                        lastDownloadOutcome = MobileApkDownloadHelper.triggerApkDownload(
+                                            context = context,
+                                            variant = MobileApkVariant.CUSTOMER,
+                                            openMobileBrowser = true
+                                        )
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = Color(0xFF059669),
+                                        contentColor = Color.White
+                                    ),
+                                    border = BorderStroke(1.dp, Color(0xFFA7F3D0)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("download_customer_apk_btn")
+                                ) {
+                                    Text(
+                                        "📥 Customer.apk",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        selectedVariantForSaf = MobileApkVariant.RIDER
+                                        lastDownloadOutcome = MobileApkDownloadHelper.triggerApkDownload(
+                                            context = context,
+                                            variant = MobileApkVariant.RIDER,
+                                            openMobileBrowser = true
+                                        )
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = Color(0xFFD97706),
+                                        contentColor = Color.White
+                                    ),
+                                    border = BorderStroke(1.dp, Color(0xFFFDE68A)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("download_rider_apk_btn")
+                                ) {
+                                    Text(
+                                        "📥 Rider.apk",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        selectedVariantForSaf = MobileApkVariant.ADMIN
+                                        lastDownloadOutcome = MobileApkDownloadHelper.triggerApkDownload(
+                                            context = context,
+                                            variant = MobileApkVariant.ADMIN,
+                                            openMobileBrowser = true
+                                        )
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = Color(0xFF0D9488),
+                                        contentColor = Color.White
+                                    ),
+                                    border = BorderStroke(1.dp, Color(0xFF99F6E4)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("download_admin_apk_btn")
+                                ) {
+                                    Text(
+                                        "📥 Admin.apk",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            lastDownloadOutcome?.let { outcome ->
+                                Surface(
+                                    color = Color(0xFF065F46),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF34D399)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("apk_download_status_banner")
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = outcome.statusMessage,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color(0xFFECFDF5)
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    safCreateDocumentLauncher.launch(selectedVariantForSaf.fileName)
+                                                },
+                                                colors = ButtonDefaults.outlinedButtonColors(
+                                                    containerColor = Color(0xFF10B981),
+                                                    contentColor = Color(0xFF042F2E)
+                                                ),
+                                                border = BorderStroke(1.dp, Color.White),
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("save_apk_custom_folder_btn")
+                                            ) {
+                                                Text(
+                                                    "📂 Save As Folder",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                            OutlinedButton(
+                                                onClick = {
+                                                    MobileApkDownloadHelper.shareApkFile(context, selectedVariantForSaf)
+                                                },
+                                                colors = ButtonDefaults.outlinedButtonColors(
+                                                    containerColor = Color(0xFF0F172A),
+                                                    contentColor = Color(0xFFA7F3D0)
+                                                ),
+                                                border = BorderStroke(1.dp, Color(0xFFA7F3D0)),
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("share_apk_whatsapp_btn")
+                                            ) {
+                                                Text(
+                                                    "📤 Share / Send APK",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        com.example.data.cloud.MultiPhoneLiveSyncManager.setLockedPhoneRole(context, "CUSTOMER")
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFA7F3D0)),
+                                    border = BorderStroke(1.dp, Color(0xFFA7F3D0).copy(alpha = 0.5f)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("open_standalone_customer_activity_btn")
+                                ) {
+                                    Text("🛍️ Customer Only", style = MaterialTheme.typography.labelSmall)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        com.example.data.cloud.MultiPhoneLiveSyncManager.setLockedPhoneRole(context, "RIDER")
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFDE68A)),
+                                    border = BorderStroke(1.dp, Color(0xFFFDE68A).copy(alpha = 0.5f)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("open_standalone_rider_activity_btn")
+                                ) {
+                                    Text("🛵 Rider Only", style = MaterialTheme.typography.labelSmall)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        com.example.data.cloud.MultiPhoneLiveSyncManager.setLockedPhoneRole(context, "ADMIN")
+                                    },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF99F6E4)),
+                                    border = BorderStroke(1.dp, Color(0xFF99F6E4).copy(alpha = 0.5f)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("open_standalone_admin_activity_btn")
+                                ) {
+                                    Text("🛡️ Admin Only", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
                     }
                 }
+            }
+
+            if (selectedAppTab == 2) {
+                AdminLivePermissionsAndTrackingBar(
+                    onClearAllOrders = {
+                        repository.resetOrdersAndStateForTesting()
+                        com.example.data.cloud.MultiPhoneLiveSyncManager.notifyOrdersReset(context)
+                    }
+                )
             }
 
             Box(
@@ -292,7 +780,10 @@ fun QuickDeliveryUnifiedHub() {
                     else -> AdminEnterpriseControlCenter(
                         repository = repository,
                         orders = orders,
-                        onResetOrders = { repository.resetOrdersAndStateForTesting() },
+                        onResetOrders = {
+                            repository.resetOrdersAndStateForTesting()
+                            com.example.data.cloud.MultiPhoneLiveSyncManager.notifyOrdersReset(context)
+                        },
                         onExitToCustomer = {
                             if (tabHistoryStack.isNotEmpty()) {
                                 selectedAppTab = tabHistoryStack.removeAt(tabHistoryStack.lastIndex)

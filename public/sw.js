@@ -1,5 +1,5 @@
 // Quick Delivery PWA Service Worker
-const CACHE_NAME = 'quick-delivery-v1.1.0';
+const CACHE_NAME = 'quick-delivery-v5.4.0';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -52,6 +52,15 @@ self.addEventListener('fetch', (event) => {
 
   // Skip chrome-extension or external analytics
   if (!url.protocol.startsWith('http')) return;
+
+  // NEVER intercept APK or ZIP binary downloads so Mobile Browser DownloadManager streams them natively
+  if (
+    url.pathname.startsWith('/apks/') ||
+    url.pathname.endsWith('.apk') ||
+    url.pathname.endsWith('.zip')
+  ) {
+    return;
+  }
 
   // HTML / Navigation: Network first, fall back to cached /index.html
   if (request.mode === 'navigate') {

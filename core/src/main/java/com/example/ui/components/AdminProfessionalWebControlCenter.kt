@@ -1222,6 +1222,15 @@ private fun AdminLiveOrderMirrorCard(
                 }
             }
 
+            val pickupProofsByOrder by com.example.data.model.OrderProofRegistry.pickupProofsByOrder.collectAsState()
+            val deliveryProofsByOrder by com.example.data.model.OrderProofRegistry.deliveryProofsByOrder.collectAsState()
+            pickupProofsByOrder[order.orderId]?.let { proof ->
+                PickupProofHistoryCard(proof = proof)
+            }
+            deliveryProofsByOrder[order.orderId]?.let { proof ->
+                DeliveryProofHistoryCard(proof = proof)
+            }
+
             if (!isDelivered && order.orderStatus != OrderStatus.CANCELLED) {
                 Button(
                     onClick = onAdvanceOrderFromAdmin,

@@ -257,7 +257,17 @@ fun QuickDeliveryCloudSyncBar(
     val localRepo = remember(context) { SharedOrderRepository.getInstance(context) }
     val localOrders by localRepo.orders.collectAsState()
     val localRiders by localRepo.riders.collectAsState()
+    val pickupProofs by com.example.data.model.OrderProofRegistry.pickupProofsByOrder.collectAsState()
+    val deliveryProofs by com.example.data.model.OrderProofRegistry.deliveryProofsByOrder.collectAsState()
     val deliveryStateManager = remember { ParcelDeliveryStateManager.getInstance() }
+
+    LaunchedEffect(Unit) {
+        com.example.data.cloud.MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(context)
+    }
+
+    LaunchedEffect(localOrders.size, localOrders.map { "${it.orderId}:${it.orderStatus}:${it.assignedRiderId}" }, pickupProofs.size, deliveryProofs.size) {
+        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+    }
 
     var currentUser by remember {
         mutableStateOf(if (firebaseReady) runCatching { Firebase.auth.currentUser }.getOrNull() else null)
@@ -512,7 +522,7 @@ fun MobileCloudApkDownloadCard() {
             }
 
             Text(
-                text = "GitHub Actions CI/CD (.github/workflows/build-three-apks.yml) automatic cloud me 3 alag APKs banata hai:\n" +
+                text = "Teeno Android Apps (.APK) sidhe Phone ke Downloads folder ya Mobile Browser me save karein:\n" +
                     "• QuickDelivery-Customer.apk\n" +
                     "• QuickDelivery-Rider-Partner.apk\n" +
                     "• QuickDelivery-Admin-Enterprise.apk",
@@ -526,15 +536,11 @@ fun MobileCloudApkDownloadCard() {
             ) {
                 Button(
                     onClick = {
-                        runCatching {
-                            val intent = android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://github.com/india1256/QuickDelivery/releases")
-                            ).apply {
-                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        }
+                        com.example.security.MobileApkDownloadHelper.triggerApkDownload(
+                            context = context,
+                            variant = com.example.security.MobileApkVariant.ALL_IN_ONE,
+                            openMobileBrowser = true
+                        )
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF15803D)),
                     modifier = Modifier
@@ -551,22 +557,17 @@ fun MobileCloudApkDownloadCard() {
 
                 OutlinedButton(
                     onClick = {
-                        runCatching {
-                            val intent = android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://github.com/india1256/QuickDelivery/actions")
-                            ).apply {
-                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        }
+                        com.example.security.MobileApkDownloadHelper.shareApkFile(
+                            context = context,
+                            variant = com.example.security.MobileApkVariant.ALL_IN_ONE
+                        )
                     },
                     modifier = Modifier
                         .weight(1f)
                         .testTag("open_github_actions_cloud_btn")
                 ) {
                     Text(
-                        text = "⚙ Cloud Build Status",
+                        text = "📤 Share / Send APK",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF14532D)

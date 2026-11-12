@@ -332,16 +332,10 @@ fun CustomerAppScreen(
     var selectedTrackingOrderId by rememberSaveable { mutableStateOf<String?>(null) }
     var latestBookedOrder by remember { mutableStateOf<CustomerOrder?>(null) }
 
-    // Observe orders for automatic delivery motivation notifications, real-time FCM push updates & auto-assign any searching orders
+    // Observe orders for automatic delivery motivation notifications & real-time FCM push updates
     LaunchedEffect(orders) {
         MotivationAndPromoManager.observeOrdersForDeliveryMotivation(orders)
         FcmOrderNotificationManager.observeOrdersAndDispatchFcmNotifications(context, orders)
-        val hasSearching = orders.any { it.orderStatus == OrderStatus.SEARCHING_RIDER }
-        if (hasSearching) {
-            delay(1200L)
-            AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
-            AutomatedFairRiderAssignmentEngine.retryAllSearchingOrdersFairly(repository)
-        }
     }
 
     val activeOrder: CustomerOrder? = remember(orders, selectedTrackingOrderId, latestBookedOrder) {
@@ -644,21 +638,22 @@ fun CustomerAppScreen(
                             tipAmountInr = selectedRiderTipInr
                         )
                     }
-                    // Trigger Zero-Partiality Automated Fair Rider Discovery & Assignment
+                    // Offer order to Rider Partners while keeping status in SEARCHING_RIDER until Rider taps Accept
                     val fairDispatchOutcome = runCatching {
                         AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
                             repository = repository,
                             orderId = newOrder.orderId,
-                            offerOnlyWaitForRiderConsent = false
+                            offerOnlyWaitForRiderConsent = true
                         )
                     }.getOrNull()
+                    com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                     val refreshedOrder = repository.orders.value.firstOrNull { it.orderId == newOrder.orderId }
                     if (refreshedOrder != null) {
                         latestBookedOrder = refreshedOrder
                     }
                     isErrorBanner = false
                     val tipNote = if (selectedRiderTipInr > 0) " + ₹$selectedRiderTipInr Rider Tip" else ""
-                    statusBanner = "Order #${newOrder.orderId} Confirmed$tipNote! ${fairDispatchOutcome?.message ?: "Searching nearby rider partner..."}"
+                    statusBanner = "Order #${newOrder.orderId} Confirmed$tipNote! Sent to Rider Partner app for acceptance."
                     customerPromoNotification = MotivationAndPromoManager.nextCustomerOrderPromoNotification()
                     showBookingConfirmationScreen = false
                     currentStep = 3
@@ -1278,14 +1273,7 @@ fun CustomerAppScreen(
                 }
             }
 
-            // Real-Time FCM (Firebase Cloud Messaging) Order Status & Delivery Completion Notification Center
-            item(key = "customer_fcm_realtime_notification_center") {
-                FcmRealtimeNotificationCenterCard(
-                    appRole = FcmTargetAppRole.CUSTOMER,
-                    activeOrder = activeOrder,
-                    accentColor = PrimaryTeal
-                )
-            }
+            // Clean Customer App layout: no extra FCM diagnostic banner clutter on top
 
             // Customer Promo Notification Banner
             if (!customerPromoNotification.isNullOrBlank()) {
@@ -1402,7 +1390,11 @@ fun CustomerAppScreen(
                                         color = DeepNavy
                                     )
                                     Text(
-                                        text = "Rider: ${activeOrder.assignedRiderName ?: "Vikram Rathore"} (${activeOrder.assignedRiderPhone ?: "+91 98450 67890"})",
+                                        text = if (!activeOrder.assignedRiderName.isNullOrBlank()) {
+                                            "Rider: ${activeOrder.assignedRiderName} (${activeOrder.assignedRiderPhone.orEmpty()})"
+                                        } else {
+                                            "Waiting for nearby Rider Partner to accept..."
+                                        },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = SlateMuted
                                     )
@@ -1412,18 +1404,20 @@ fun CustomerAppScreen(
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier.testTag("customer_main_open_live_map_btn")
                                 ) {
-                                    Text("Live Map →", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                    Text("Live Track →", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            DirectDialPadCallButton(
-                                orderId = activeOrder.orderId,
-                                callerRole = "CUSTOMER",
-                                callerName = customerName,
-                                receiverRole = "Rider",
-                                receiverName = activeOrder.assignedRiderName ?: "Vikram Rathore",
-                                phoneNumber = activeOrder.assignedRiderPhone ?: "+91 98450 67890",
-                                buttonTestTag = "customer_home_call_rider_dial_btn"
-                            )
+                            if (!activeOrder.assignedRiderName.isNullOrBlank()) {
+                                DirectDialPadCallButton(
+                                    orderId = activeOrder.orderId,
+                                    callerRole = "CUSTOMER",
+                                    callerName = customerName,
+                                    receiverRole = "Rider",
+                                    receiverName = activeOrder.assignedRiderName.orEmpty(),
+                                    phoneNumber = activeOrder.assignedRiderPhone ?: "",
+                                    buttonTestTag = "customer_home_call_rider_dial_btn"
+                                )
+                            }
                         }
                     }
                 }
@@ -2895,13 +2889,17 @@ fun CustomerAppScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "Verified Rider: ${activeOrder.assignedRiderName ?: "Vikram Singh"} • 4.9★",
+                                            text = if (!activeOrder.assignedRiderName.isNullOrBlank()) {
+                                                "Assigned Rider: ${activeOrder.assignedRiderName} • ${activeOrder.assignedRiderRating ?: 4.9}★"
+                                            } else {
+                                                "Waiting for nearby Rider Partner to Accept..."
+                                            },
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.ExtraBold,
                                             color = Color.White
                                         )
                                         Text(
-                                            text = "Plate: KA-01-EQ-4821 • Pickup OTP: ${activeOrder.pickupOtp} • Drop OTP: ${activeOrder.deliveryOtp}",
+                                            text = "Pickup OTP: ${activeOrder.pickupOtp} • Drop OTP: ${activeOrder.deliveryOtp}",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = BrightTeal
                                         )

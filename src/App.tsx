@@ -65,6 +65,7 @@ import { LiveOrderTrackingModal } from './components/LiveOrderTrackingModal';
 import { AuthScreen, type AuthUser, type UserRole, DEMO_USERS } from './components/AuthScreen';
 import { AdminFleetGpsRadar } from './components/AdminFleetGpsRadar';
 import { gpsService, type RiderGpsLocation } from './services/gpsTrackingService';
+import { batteryMonitoringService, type BatteryStatus } from './services/batteryMonitoringService';
 import { notificationService, type NotificationItem, type ToastItem } from './services/notificationService';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
 import { NotificationCenterModal } from './components/NotificationCenterModal';
@@ -72,6 +73,12 @@ import { AdminOrderStatusManager } from './components/AdminOrderStatusManager';
 import { CustomerOrderHistoryView } from './components/CustomerOrderHistoryView';
 import { RiderTripHistoryView } from './components/RiderTripHistoryView';
 import { ImageUploadModal } from './components/ImageUploadModal';
+import {
+  ProofOfHandoverSignatureModal,
+  TouchDigitalSignaturePad,
+  PickupProofHistoryCard,
+  DeliveryProofHistoryCard,
+} from './components/ProofOfDeliverySignatureModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   checkOrderPlacementRateLimit,
@@ -147,9 +154,17 @@ interface DeliveryOrder {
   assignedRiderRating?: string;
   assignedRiderPlate?: string;
   pickupPhotoCaptured?: boolean;
+  pickupPhotoUrl?: string;
+  pickupPhotoSummary?: string;
+  senderName?: string;
+  senderSignatureSvg?: string;
   codCashCollected?: boolean;
   pickupProofNote?: string;
   deliveryProofNote?: string;
+  deliveryPhotoUrl?: string;
+  deliveryPhotoSummary?: string;
+  recipientName?: string;
+  recipientSignatureSvg?: string;
   riderLat?: number;
   riderLng?: number;
   createdAt: string;
@@ -461,10 +476,33 @@ export default function App() {
   const [deliveryPhotoByOrder, setDeliveryPhotoByOrder] = useState<
     Record<string, { url: string; note?: string }>
   >({});
+  const [senderNameByOrder, setSenderNameByOrder] = useState<Record<string, string>>({});
+  const [senderSignatureByOrder, setSenderSignatureByOrder] = useState<Record<string, string>>({});
+  const [recipientNameByOrder, setRecipientNameByOrder] = useState<Record<string, string>>({});
+  const [recipientSignatureByOrder, setRecipientSignatureByOrder] = useState<Record<string, string>>({});
+  const [handoverProofModalState, setHandoverProofModalState] = useState<{
+    isOpen: boolean;
+    mode: 'PICKUP' | 'DELIVERY';
+    order: DeliveryOrder;
+  } | null>(null);
 
   // Real-time GPS Location Broadcasting state
   const [isRiderGpsBroadcasting, setIsRiderGpsBroadcasting] = useState<boolean>(true);
   const [riderCurrentGps, setRiderCurrentGps] = useState<RiderGpsLocation>(() => gpsService.getCurrentLocation());
+
+  // Real-time Battery Monitoring Service State (adapts GPS update frequency when battery < 20%)
+  const [batteryStatus, setBatteryStatus] = useState<BatteryStatus>(() => batteryMonitoringService.getStatus());
+
+  useEffect(() => {
+    const unsub = batteryMonitoringService.subscribe((status) => {
+      setBatteryStatus(status);
+      setRiderWallet((prev) => ({
+        ...prev,
+        batteryPercent: status.levelPercent,
+      }));
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (isRiderGpsBroadcasting) {
@@ -1478,42 +1516,52 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
     setRiderNotice(`Instant UPI Payout of ₹${payoutInr} credited to your linked bank account!`);
   };
 
-  const handleClaimOrder = (order: DeliveryOrder) => {
-    if (riderWallet.shiftStatus !== 'ONLINE_ACTIVE') {
-      setRiderNotice('Switch the top header toggle to ON DUTY before accepting orders.');
-      return;
-    }
+  const handleAcceptOrder = (orderOrId: DeliveryOrder | string) => {
+    const order =
+      typeof orderOrId === 'string'
+        ? orders.find((o) => o.id === orderOrId || o.orderCode === orderOrId)
+        : orderOrId;
+    if (!order) return;
+
     if (riderWallet.commissionDebtPaise > MAX_COMMISSION_DEBT_PAISE) {
       setRiderNotice(
         'Order assignment blocked: Cash-in-Hand COD limit exceeds ₹150.00. Please settle COD dues first.'
       );
       return;
     }
+
+    if (riderWallet.shiftStatus !== 'ONLINE_ACTIVE') {
+      setRiderWallet((prev) => ({ ...prev, shiftStatus: 'ONLINE_ACTIVE' }));
+    }
+
+    const updatedOrder: DeliveryOrder = {
+      ...order,
+      status: 'ASSIGNED',
+      assignedRiderId: riderWallet.riderId || 'RIDER-101',
+      assignedRiderName: riderWallet.riderName || 'Rider Partner',
+      assignedRiderRating: '4.9★',
+      assignedRiderPlate: 'KA-01-EQ-4821',
+      riderLat: riderCurrentGps?.lat || 12.9784,
+      riderLng: riderCurrentGps?.lng || 77.6408,
+    };
+
     setOrders((prev) =>
-      prev.map((o) =>
-        o.id === order.id
-          ? {
-              ...o,
-              status: 'ARRIVED_AT_PICKUP',
-              assignedRiderId: riderWallet.riderId,
-              assignedRiderName: riderWallet.riderName,
-              assignedRiderRating: '4.9★',
-              assignedRiderPlate: 'KA-01-EQ-4821',
-              riderLat: 12.9784,
-              riderLng: 77.6408,
-            }
-          : o
-      )
+      prev.map((o) => (o.id === order.id ? updatedOrder : o))
     );
+
+    Promise.resolve(dbService.saveOrder(updatedOrder)).catch((err) => {
+      console.warn('[OrderAccept] Failed to persist accepted order:', err);
+    });
+
     setRiderSubTab('ACTIVE_TRIP');
     setRiderNotice(
-      `Order ${order.orderCode} accepted! Switched to Active Trip • Step 1 (At Pickup): Enter Customer's 4-digit Pickup OTP (${order.pickupOtp}) & Capture Parcel Photo.`
+      `✅ Order #${order.orderCode} accepted successfully! Status updated to ASSIGNED. Proceed to pickup at ${order.pickupAddress} (Customer Pickup OTP: ${order.pickupOtp}).`
     );
 
     // Customer Alert: Rider Assigned
     notificationService.sendNotification({
       title: '🛵 Rider Assigned!',
-      message: `${riderWallet.riderName} (KA-01-EQ-4821) accepted #${order.orderCode}. Share 4-digit Pickup OTP ${order.pickupOtp} at doorstep.`,
+      message: `${updatedOrder.assignedRiderName} (KA-01-EQ-4821) accepted #${order.orderCode}. Share 4-digit Pickup OTP ${order.pickupOtp} at doorstep.`,
       role: 'CUSTOMER',
       type: 'ORDER_ASSIGNED',
       orderCode: order.orderCode,
@@ -1523,14 +1571,18 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
 
     // Rider Alert: Trip Assigned
     notificationService.sendNotification({
-      title: '🏍️ Trip Accepted!',
-      message: `Navigating to pickup for #${order.orderCode} (${order.pickupAddress}). Request OTP ${order.pickupOtp}.`,
+      title: '🏍️ Order Accepted (ASSIGNED)!',
+      message: `Order #${order.orderCode} is now ASSIGNED to you. Navigate to pickup at ${order.pickupAddress}. Request OTP ${order.pickupOtp}.`,
       role: 'RIDER',
       type: 'ORDER_ASSIGNED',
       orderCode: order.orderCode,
       soundType: 'ORDER_DISPATCH',
       actionLabel: 'Active Trip',
     });
+  };
+
+  const handleClaimOrder = (order: DeliveryOrder) => {
+    handleAcceptOrder(order);
   };
 
   const handleDeclineOrder = (order: DeliveryOrder) => {
@@ -1540,6 +1592,9 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
 
   const handleCaptureParcelPhoto = (order: DeliveryOrder) => {
     const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const pickupCameraUrl =
+      order.pickupPhotoUrl ||
+      'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=600&auto=format&fit=crop&q=80';
     setPhotoCapturedByOrder((prev) => ({ ...prev, [order.id]: true }));
     setOrders((prev) =>
       prev.map((o) =>
@@ -1547,27 +1602,29 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
           ? {
               ...o,
               pickupPhotoCaptured: true,
+              pickupPhotoUrl: pickupCameraUrl,
+              pickupPhotoSummary: `Live Camera Package Photo (${ts})`,
               pickupProofNote: `Parcel Photo Proof Captured (HD Seal Verified @ ${ts})`,
             }
           : o
       )
     );
-    setRiderNotice(`Parcel photo proof captured for ${order.orderCode}! Now verify Pickup OTP (${order.pickupOtp}) to start trip.`);
+    setRiderNotice(
+      `Parcel photo proof captured for ${order.orderCode}! Now draw Sender's Digital Signature & verify Pickup OTP (${order.pickupOtp}) to confirm pickup.`
+    );
   };
 
   const handleReleaseOrderBeforePickup = (order: DeliveryOrder) => {
+    const releasedOrder: DeliveryOrder = {
+      ...order,
+      status: 'PENDING_ASSIGNMENT',
+      assignedRiderId: undefined,
+      assignedRiderName: undefined,
+    };
     setOrders((prev) =>
-      prev.map((o) =>
-        o.id === order.id
-          ? {
-              ...o,
-              status: 'PENDING_ASSIGNMENT',
-              assignedRiderId: undefined,
-              assignedRiderName: undefined,
-            }
-          : o
-      )
+      prev.map((o) => (o.id === order.id ? releasedOrder : o))
     );
+    Promise.resolve(dbService.saveOrder(releasedOrder)).catch(() => {});
     setRiderSubTab('DUTY_RADAR');
     setRiderNotice(`Order ${order.orderCode} released back to the open pool for fair rotation.`);
   };
@@ -1581,12 +1638,22 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
       order.paymentMethod === 'CASH_AT_DROP' ||
       order.paymentMethod === 'DIRECT_RIDER_UPI';
 
-    if (order.status === 'ASSIGNED') {
+    const hasPickupInputs =
+      enteredOtp.length > 0 ||
+      isPhotoDone ||
+      Boolean((senderSignatureByOrder[order.id] ?? order.senderSignatureSvg ?? '').trim());
+
+    if (order.status === 'ASSIGNED' && !hasPickupInputs) {
+      const arrivedOrder: DeliveryOrder = {
+        ...order,
+        status: 'ARRIVED_AT_PICKUP',
+        riderLat: 12.9784,
+        riderLng: 77.6408,
+      };
       setOrders((prev) =>
-        prev.map((o) =>
-          o.id === order.id ? { ...o, status: 'ARRIVED_AT_PICKUP', riderLat: 12.9784, riderLng: 77.6408 } : o
-        )
+        prev.map((o) => (o.id === order.id ? arrivedOrder : o))
       );
+      Promise.resolve(dbService.saveOrder(arrivedOrder)).catch(() => {});
       setRiderNotice(
         `Arrived at pickup for ${order.orderCode}. Enter Pickup OTP (${order.pickupOtp}) & Capture Parcel Photo.`
       );
@@ -1602,40 +1669,68 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
       return;
     }
 
-    // Step 1 (At Pickup): Require Customer's 4-digit Pickup OTP + Capture Parcel Photo before starting trip (moves to Step 2: PICKED_UP)
-    if (order.status === 'ARRIVED_AT_PICKUP') {
+    // Step 1 (At Pickup): Require Customer's 4-digit Pickup OTP + Live Camera Parcel Photo + Sender's Digital Signature before starting trip (moves to Step 2: PICKED_UP)
+    if (order.status === 'ASSIGNED' || order.status === 'ARRIVED_AT_PICKUP') {
       if (enteredOtp !== order.pickupOtp) {
         setRiderNotice(`Invalid Pickup OTP for ${order.orderCode}. Customer's 4-digit Pickup OTP is ${order.pickupOtp}.`);
         return;
       }
       if (!isPhotoDone) {
-        setRiderNotice(`Please click 'Capture Parcel Photo' proof button before starting the trip for ${order.orderCode}.`);
+        setRiderNotice(`Please capture the mandatory live camera package photo before confirming pickup for ${order.orderCode}.`);
+        return;
+      }
+      const senderNameVal = (senderNameByOrder[order.id] ?? order.senderName ?? order.customerName ?? '').trim();
+      const senderSigSvg = (senderSignatureByOrder[order.id] ?? order.senderSignatureSvg ?? '').trim();
+      if (!senderNameVal || !senderSigSvg) {
+        setRiderNotice(
+          `Sender's finger-drawn Digital Signature and Sender Name are required alongside the camera photo before confirming pickup for ${order.orderCode}.`
+        );
+        setHandoverProofModalState({ isOpen: true, mode: 'PICKUP', order });
         return;
       }
       const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const pickupPhotoUrl =
+        order.pickupPhotoUrl ||
+        'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=600&auto=format&fit=crop&q=80';
+      const pickupPhotoSummary = `Live Camera Package Photo (${ts})`;
+
+      Promise.resolve(
+        dbService.uploadPickupProof(order.id, {
+          riderId: order.assignedRiderId || riderWallet.riderId || 'RIDER-101',
+          verifiedOtp: order.pickupOtp,
+          packagePhotoUrl: pickupPhotoUrl,
+          packagePhotoSummary,
+          senderName: senderNameVal,
+          senderSignatureSvg: senderSigSvg,
+        })
+      ).catch(() => {});
+
+      const pickedUpOrder: DeliveryOrder = {
+        ...order,
+        status: 'PICKED_UP',
+        pickupPhotoCaptured: true,
+        pickupPhotoUrl,
+        pickupPhotoSummary,
+        senderName: senderNameVal,
+        senderSignatureSvg: senderSigSvg,
+        pickupProofNote: `Pickup Camera Photo & Digital Signature by ${senderNameVal} Verified @ ${ts}`,
+        riderLat: 12.9562,
+        riderLng: 77.6315,
+      };
+
       setOrders((prev) =>
-        prev.map((o) =>
-          o.id === order.id
-            ? {
-                ...o,
-                status: 'PICKED_UP',
-                pickupPhotoCaptured: true,
-                pickupProofNote: o.pickupProofNote || `Pickup Parcel Photo Proof Verified (640x480px @ ${ts})`,
-                riderLat: 12.9562,
-                riderLng: 77.6315,
-              }
-            : o
-        )
+        prev.map((o) => (o.id === order.id ? pickedUpOrder : o))
       );
+      Promise.resolve(dbService.saveOrder(pickedUpOrder)).catch(() => {});
       setOtpInputByOrder((prev) => ({ ...prev, [order.id]: '' }));
       setRiderNotice(
-        `Step 1 Complete! Now in Step 2 (In Transit): Use Map Navigation & Call Receiver, then click 'Arrived at Drop Location' for Step 3.`
+        `Step 1 Complete! Pickup Camera Photo & Digital Signature by ${senderNameVal} saved to backend. Now in Step 2 (In Transit).`
       );
 
       // Customer Notification: Picked Up
       notificationService.sendNotification({
-        title: '📦 Parcel Picked Up & In Transit!',
-        message: `Handover verified with OTP. Your package is on the way to ${order.dropAddress}. Track live on GPS map!`,
+        title: '📦 Parcel Picked Up & Digitally Signed!',
+        message: `Handover verified with OTP, Camera Photo & Digital Signature by ${senderNameVal}. Your package is on the way to ${order.dropAddress}.`,
         role: 'CUSTOMER',
         type: 'ORDER_PICKED_UP',
         orderCode: order.orderCode,
@@ -1645,8 +1740,8 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
 
       // Rider Notification: Start delivery
       notificationService.sendNotification({
-        title: '✅ Pickup Complete!',
-        message: `Parcel collected for #${order.orderCode}. Drive safely to ${order.dropAddress}.`,
+        title: '✅ Pickup Proof & Signature Saved!',
+        message: `Parcel collected & signed by ${senderNameVal} for #${order.orderCode}. Drive safely to ${order.dropAddress}.`,
         role: 'RIDER',
         type: 'ORDER_PICKED_UP',
         orderCode: order.orderCode,
@@ -1658,16 +1753,21 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
 
     // Step 2 (In Transit): Move to Step 3 (At Drop - IN_TRANSIT)
     if (order.status === 'PICKED_UP') {
+      const inTransitOrder: DeliveryOrder = {
+        ...order,
+        status: 'IN_TRANSIT',
+        riderLat: 12.9352,
+        riderLng: 77.6245,
+      };
       setOrders((prev) =>
-        prev.map((o) =>
-          o.id === order.id ? { ...o, status: 'IN_TRANSIT', riderLat: 12.9352, riderLng: 77.6245 } : o
-        )
+        prev.map((o) => (o.id === order.id ? inTransitOrder : o))
       );
-      setRiderNotice(`Step 3 (At Drop): Enter 4-digit Drop OTP (${order.deliveryOtp}) at drop-off to complete delivery.`);
+      Promise.resolve(dbService.saveOrder(inTransitOrder)).catch(() => {});
+      setRiderNotice(`Step 3 (At Drop): Enter 4-digit Drop OTP (${order.deliveryOtp}), capture drop camera photo & Recipient's Digital Signature to complete delivery.`);
       return;
     }
 
-    // Step 3 (At Drop): Require 4-digit Drop OTP (+ Collect Cash confirmation if COD) to mark Delivered
+    // Step 3 (At Drop): Require 4-digit Drop OTP + Live Camera Drop Photo + Recipient's Digital Signature (+ Collect Cash confirmation if COD) to mark Delivered
     if (order.status === 'IN_TRANSIT') {
       if (enteredOtp !== order.deliveryOtp) {
         setRiderNotice(`Invalid Drop OTP for ${order.orderCode}. Customer's 4-digit Drop OTP is ${order.deliveryOtp}.`);
@@ -1679,15 +1779,52 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
         );
         return;
       }
-      const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const deliveryPhoto = deliveryPhotoByOrder[order.id]?.url || order.deliveryPhotoUrl;
-      const deliveryNote = deliveryPhotoByOrder[order.id]?.note || `Drop-off OTP (${order.deliveryOtp}) & Photo POD Verified @ ${ts}`;
+      const recipientNameVal = (
+        recipientNameByOrder[order.id] ??
+        order.recipientName ??
+        order.receiverName ??
+        order.customerName ??
+        ''
+      ).trim();
+      const recipientSigSvg = (recipientSignatureByOrder[order.id] ?? order.recipientSignatureSvg ?? '').trim();
+
+      if (!deliveryPhoto || !recipientNameVal || !recipientSigSvg) {
+        setRiderNotice(
+          `Mandatory Drop Camera Photo and Recipient's Digital Signature (${recipientNameVal || 'Receiver'}) are required before confirming delivery for ${order.orderCode}.`
+        );
+        setHandoverProofModalState({ isOpen: true, mode: 'DELIVERY', order });
+        return;
+      }
+
+      const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const deliveryNote =
+        deliveryPhotoByOrder[order.id]?.note ||
+        `Drop-off OTP (${order.deliveryOtp}), Camera Photo & Digital Signature by ${recipientNameVal} Verified @ ${ts}`;
+
+      Promise.resolve(
+        dbService.uploadDeliveryProof(order.id, {
+          riderId: order.assignedRiderId || riderWallet.riderId || 'RIDER-101',
+          verifiedOtp: order.deliveryOtp,
+          deliveryPhotoUrl: deliveryPhoto,
+          deliveryPhotoSummary: deliveryNote,
+          recipientName: recipientNameVal,
+          recipientSignatureSvg: recipientSigSvg,
+          codAmountCollectedInr: isCashOrder ? Math.round(order.totalAmountPaise / 100) : 0,
+        })
+      ).catch(() => {});
+
       const completedOrder: DeliveryOrder = {
         ...order,
         status: 'DELIVERED',
+        isDelayed: false,
+        statusLabel: 'Delivered',
         codCashCollected: true,
         deliveryPhotoUrl: deliveryPhoto,
+        deliveryPhotoSummary: deliveryNote,
         deliveryProofNote: deliveryNote,
+        recipientName: recipientNameVal,
+        recipientSignatureSvg: recipientSigSvg,
         paymentStatus: isCashOrder ? 'VERIFIED_PAID_TO_COMPANY' : order.paymentStatus,
       };
 
@@ -2949,6 +3086,30 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                     </div>
                   </div>
 
+                  {/* Customer Live Tracking View: Pickup & Delivery Camera Photo + Digital Signature Proof History Cards */}
+                  {(activeOrder.senderName || activeOrder.senderSignatureSvg || activeOrder.pickupPhotoCaptured || activeOrder.pickupPhotoUrl) && (
+                    <PickupProofHistoryCard
+                      orderCode={activeOrder.orderCode}
+                      senderName={activeOrder.senderName || activeOrder.customerName}
+                      senderSignatureSvg={activeOrder.senderSignatureSvg}
+                      packagePhotoUrl={activeOrder.pickupPhotoUrl}
+                      packagePhotoSummary={activeOrder.pickupPhotoSummary || 'Live Pickup Camera Photo Verified'}
+                      verifiedOtp={activeOrder.pickupOtp}
+                      capturedAt={activeOrder.createdAt}
+                    />
+                  )}
+                  {(activeOrder.recipientName || activeOrder.recipientSignatureSvg || activeOrder.deliveryPhotoUrl || activeOrder.deliveryProofNote) && (
+                    <DeliveryProofHistoryCard
+                      orderCode={activeOrder.orderCode}
+                      recipientName={activeOrder.recipientName || activeOrder.receiverName || activeOrder.customerName}
+                      recipientSignatureSvg={activeOrder.recipientSignatureSvg}
+                      deliveryPhotoUrl={activeOrder.deliveryPhotoUrl}
+                      deliveryPhotoSummary={activeOrder.deliveryPhotoSummary || activeOrder.deliveryProofNote || 'Live Drop-off Camera Photo Verified'}
+                      verifiedOtp={activeOrder.deliveryOtp}
+                      capturedAt={activeOrder.createdAt}
+                    />
+                  )}
+
                   {/* Collapsible Live Rider Chat Drawer/Modal */}
                   {customerChatModalOpen && (
                     <div className="p-3.5 rounded-xl bg-slate-900/95 border border-emerald-400/40 space-y-2.5">
@@ -3334,8 +3495,12 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-[#A7F3D0] border border-emerald-400/30 text-[10px] font-extrabold">
                   v{installedRiderVersion}
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-[#A7F3D0] border border-emerald-400/30 text-[10px] font-extrabold">
-                  GPS LIVE • 12.97°N
+                <span className={`px-2 py-0.5 rounded-full border text-[10px] font-extrabold ${
+                  batteryStatus.isGpsThrottled
+                    ? 'bg-amber-500/25 text-amber-200 border-amber-400/40 animate-pulse'
+                    : 'bg-emerald-500/20 text-[#A7F3D0] border border-emerald-400/30'
+                }`}>
+                  {batteryStatus.isGpsThrottled ? '🔋 GPS 10s (Eco Saver)' : '⚡ GPS 2s (Live)'}
                 </span>
                 {surgeMultiplier > 1 && (
                   <span className="px-2 py-0.5 rounded-full bg-amber-400/25 text-amber-200 border border-amber-300/40 text-[10px] font-extrabold">
@@ -3345,8 +3510,11 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
               </div>
               <p className="text-[11px] text-slate-300 mt-0.5">
                 {riderWallet.riderId} • KA-01-EQ-4821 • 4.9★ •{' '}
-                <BatteryCharging className="w-3.5 h-3.5 inline text-emerald-400" />{' '}
-                {riderWallet.batteryPercent}%
+                <BatteryCharging className={`w-3.5 h-3.5 inline ${batteryStatus.isGpsThrottled ? 'text-amber-400' : 'text-emerald-400'}`} />{' '}
+                {batteryStatus.levelPercent}% {batteryStatus.isCharging ? '(Charging)' : ''} •{' '}
+                <span className={batteryStatus.isGpsThrottled ? 'text-amber-300 font-bold' : 'text-emerald-300'}>
+                  {batteryStatus.gpsFrequencyLabel}
+                </span>
               </p>
             </div>
           </div>
@@ -3525,12 +3693,22 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
 
         <div className="p-4 sm:p-5 space-y-4 flex-1 overflow-y-auto">
           {riderNotice && (
-            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 font-bold flex items-center justify-between gap-2">
+            <div
+              role="status"
+              className={`p-3.5 rounded-xl border text-xs font-extrabold flex items-center justify-between gap-2 shadow-xs ${
+                riderNotice.includes('accepted') ||
+                riderNotice.includes('ASSIGNED') ||
+                riderNotice.includes('✅') ||
+                riderNotice.includes('Complete')
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                  : 'bg-amber-50 border-amber-200 text-amber-950'
+              }`}
+            >
               <span>{riderNotice}</span>
               <button
                 type="button"
                 onClick={() => setRiderNotice(null)}
-                className="text-amber-700 hover:text-amber-950 p-1"
+                className="text-slate-600 hover:text-slate-950 p-1 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -3542,6 +3720,133 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
              ========================================================= */}
           {riderSubTab === 'DUTY_RADAR' && (
             <div className="space-y-4">
+              {/* Battery Monitoring Service & GPS Update Frequency Controller */}
+              <div
+                id="rider-battery-power-card"
+                className={`p-4 rounded-2xl border transition-all ${
+                  batteryStatus.isGpsThrottled
+                    ? 'bg-amber-50/90 border-amber-300 shadow-sm'
+                    : 'bg-white border-slate-200 shadow-xs'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className={`p-2 rounded-xl ${
+                        batteryStatus.isGpsThrottled
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-emerald-50 text-emerald-700'
+                      }`}
+                    >
+                      <BatteryCharging className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-extrabold text-slate-900">
+                          Battery Monitoring &amp; GPS Saver
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${
+                            batteryStatus.isGpsThrottled
+                              ? 'bg-amber-100 text-amber-800 border-amber-300 animate-pulse'
+                              : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                          }`}
+                        >
+                          {batteryStatus.isGpsThrottled
+                            ? '🔋 BATTERY SAVER ACTIVE (<20%)'
+                            : '⚡ NORMAL GPS MODE'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {batteryStatus.isGpsThrottled
+                          ? 'Battery below 20%: GPS update frequency reduced to 10s to extend device usage and battery life.'
+                          : 'Standard real-time GPS updates (2s interval) active for pinpoint parcel routing.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-sm font-extrabold text-slate-900">
+                      {batteryStatus.levelPercent}% {batteryStatus.isCharging ? '⚡ Charging' : ''}
+                    </div>
+                    <div
+                      className={`text-[10px] font-bold ${
+                        batteryStatus.isGpsThrottled ? 'text-amber-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      GPS Interval: {batteryStatus.gpsFrequencyLabel}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Battery Level Progress Bar */}
+                <div className="mt-2.5 w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
+                  <div
+                    className={`h-full transition-all duration-500 ${
+                      batteryStatus.isGpsThrottled
+                        ? 'bg-amber-500'
+                        : batteryStatus.levelPercent <= 40
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(5, batteryStatus.levelPercent))}%` }}
+                  />
+                </div>
+
+                {/* Simulation & Hardware Sync Action Chips */}
+                <div className="mt-3 pt-2.5 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    Battery Telemetry Simulation:
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        batteryMonitoringService.simulateBatteryLevel(15, false);
+                        setRiderNotice(
+                          '🔋 Low Battery Simulated (15%): GPS update frequency reduced to 10s to extend device usage.'
+                        );
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${
+                        batteryStatus.isSimulated && batteryStatus.levelPercent === 15
+                          ? 'bg-amber-600 text-white border-amber-600'
+                          : 'bg-white text-amber-800 border-amber-200 hover:bg-amber-50'
+                      }`}
+                      title="Simulate battery drop below 20% to verify GPS frequency reduction"
+                    >
+                      Simulate 15% (&lt;20% Throttle)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        batteryMonitoringService.simulateBatteryLevel(85, false);
+                        setRiderNotice(
+                          '⚡ Healthy Battery Simulated (85%): Normal 2s GPS update frequency restored.'
+                        );
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer ${
+                        batteryStatus.isSimulated && batteryStatus.levelPercent === 85
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white text-emerald-800 border-emerald-200 hover:bg-emerald-50'
+                      }`}
+                      title="Simulate normal battery >= 20% to verify real-time 2s GPS frequency"
+                    >
+                      Simulate 85% (Normal 2s)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        batteryMonitoringService.resetToSystem();
+                        setRiderNotice('✅ Real hardware battery state restored.');
+                      }}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition cursor-pointer"
+                    >
+                      Device Sync
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Compact Duty Status & Live Radar Telemetry Strip */}
               <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2.5">
@@ -3648,11 +3953,11 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                       <div className="grid grid-cols-3 gap-2 pt-1">
                         <button
                           type="button"
-                          onClick={() => handleClaimOrder(order)}
+                          onClick={() => handleAcceptOrder(order)}
                           className="col-span-2 py-2.5 px-4 rounded-xl bg-[#10B981] hover:bg-emerald-400 text-[#022C22] font-extrabold text-xs sm:text-sm transition shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
                         >
                           <CheckCircle2 className="w-4 h-4" />
-                          Accept Order (Earn ₹{(order.riderEarningPaise / 100).toFixed(0)})
+                          Accept (Earn ₹{(order.riderEarningPaise / 100).toFixed(0)})
                         </button>
                         <button
                           type="button"
@@ -3908,17 +4213,74 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                               }`}
                             >
                               <Camera className="w-3.5 h-3.5" />
-                              {isPhotoCaptured ? '✓ Parcel Photo Captured' : 'Capture Parcel Photo'}
+                              {isPhotoCaptured ? '✓ Parcel Photo Captured' : '1. Capture Parcel Photo'}
                             </button>
+                          </div>
+
+                          {/* Mandatory Pickup Digital Signature Pad & Sender Name */}
+                          <div className="p-3 rounded-xl bg-white border border-amber-300 space-y-2.5">
+                            <div className="flex items-center justify-between flex-wrap gap-1.5">
+                              <span className="text-[11px] font-extrabold text-amber-950">
+                                2. Sender Name &amp; Finger-Drawn Digital Signature (Mandatory for Pickup)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setHandoverProofModalState({
+                                    isOpen: true,
+                                    mode: 'PICKUP',
+                                    order,
+                                  })
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 text-[10px] font-extrabold transition cursor-pointer"
+                              >
+                                📷✍️ Open Full Pickup Signature Modal
+                              </button>
+                            </div>
+
+                            <input
+                              type="text"
+                              value={senderNameByOrder[order.id] ?? order.senderName ?? order.customerName}
+                              onChange={(e) =>
+                                setSenderNameByOrder((prev) => ({
+                                  ...prev,
+                                  [order.id]: e.target.value,
+                                }))
+                              }
+                              placeholder="Sender Name (Required)"
+                              className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-[#059669]"
+                            />
+
+                            <TouchDigitalSignaturePad
+                              label="Sender Touch Digital Signature Pad (Draw with finger/mouse)"
+                              accentColor="#0F766E"
+                              onSignatureChange={(hasSig, svg) =>
+                                setSenderSignatureByOrder((prev) => ({
+                                  ...prev,
+                                  [order.id]: hasSig ? svg : '',
+                                }))
+                              }
+                            />
                           </div>
 
                           <div className="flex gap-2">
                             <button
                               type="button"
+                              disabled={
+                                !isPhotoCaptured ||
+                                !(senderNameByOrder[order.id] ?? order.senderName ?? order.customerName)?.trim() ||
+                                !(senderSignatureByOrder[order.id] ?? order.senderSignatureSvg)
+                              }
                               onClick={() => handleAdvanceRiderOrder(order)}
-                              className="flex-1 py-2.5 rounded-xl bg-[#059669] hover:bg-emerald-600 text-white font-extrabold text-xs transition shadow-xs cursor-pointer"
+                              className={`flex-1 py-2.5 rounded-xl font-extrabold text-xs transition shadow-xs ${
+                                isPhotoCaptured &&
+                                (senderNameByOrder[order.id] ?? order.senderName ?? order.customerName)?.trim() &&
+                                (senderSignatureByOrder[order.id] ?? order.senderSignatureSvg)
+                                  ? 'bg-[#059669] hover:bg-emerald-600 text-white cursor-pointer'
+                                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                              }`}
                             >
-                              Verify Pickup OTP & Start Trip (Step 2) →
+                              Confirm Pickup (Requires Photo + Sender Signature) →
                             </button>
                             <button
                               type="button"
@@ -4162,13 +4524,165 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                             />
                             <button
                               type="button"
-                              onClick={() => handleAdvanceRiderOrder(order)}
-                              className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-emerald-600 text-white font-extrabold text-xs transition shadow-xs cursor-pointer"
+                              onClick={() =>
+                                setHandoverProofModalState({
+                                  isOpen: true,
+                                  mode: 'DELIVERY',
+                                  order,
+                                })
+                              }
+                              className="px-3 py-2 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-950 font-extrabold text-xs transition cursor-pointer"
                             >
-                              Complete Delivery (Credit 80%)
+                              📷✍️ Review &amp; Sign Modal
                             </button>
                           </div>
+
+                          {/* Mandatory Recipient Digital Signature Pad & Receiver Name + Live Review Preview */}
+                          <div className="p-3 rounded-xl bg-white border border-emerald-300 space-y-2.5">
+                            <div className="flex items-center justify-between flex-wrap gap-1.5">
+                              <span className="text-[11px] font-extrabold text-emerald-950">
+                                2. Receiver Name &amp; Finger-Drawn Digital Signature (Mandatory for Delivery)
+                              </span>
+                              <span className="text-[10px] font-bold text-emerald-700">
+                                POST /api/v1/riders/orders/{order.orderCode}/proof-delivery
+                              </span>
+                            </div>
+
+                            <input
+                              type="text"
+                              value={
+                                recipientNameByOrder[order.id] ??
+                                order.recipientName ??
+                                order.receiverName ??
+                                order.customerName
+                              }
+                              onChange={(e) =>
+                                setRecipientNameByOrder((prev) => ({
+                                  ...prev,
+                                  [order.id]: e.target.value,
+                                }))
+                              }
+                              placeholder="Receiver Name (Required)"
+                              className="w-full px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-[#059669]"
+                            />
+
+                            <TouchDigitalSignaturePad
+                              label="Recipient Touch Digital Signature Pad (Draw with finger/mouse)"
+                              accentColor="#059669"
+                              onSignatureChange={(hasSig, svg) =>
+                                setRecipientSignatureByOrder((prev) => ({
+                                  ...prev,
+                                  [order.id]: hasSig ? svg : '',
+                                }))
+                              }
+                            />
+
+                            {/* Review Step Preview showing BOTH Captured Camera Photo AND Digital Signature before Confirm Delivery */}
+                            {Boolean(deliveryPhotoByOrder[order.id]?.url || order.deliveryPhotoUrl) &&
+                              Boolean(recipientSignatureByOrder[order.id] || order.recipientSignatureSvg) && (
+                                <div className="p-2.5 rounded-xl bg-emerald-50/90 border border-emerald-300 space-y-2">
+                                  <div className="text-[10px] font-black uppercase tracking-wider text-emerald-950">
+                                    ✓ Handover Review Preview (Camera Photo + Digital Signature Ready)
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <div className="p-2 rounded-lg bg-white border border-emerald-200 flex items-center gap-2">
+                                      <img
+                                        src={deliveryPhotoByOrder[order.id]?.url || order.deliveryPhotoUrl}
+                                        alt="Captured Drop Photo"
+                                        className="w-11 h-11 rounded object-cover border border-emerald-300 shrink-0"
+                                      />
+                                      <div className="text-[11px]">
+                                        <div className="font-extrabold text-emerald-950">📷 Camera Drop Photo</div>
+                                        <div className="text-[10px] text-emerald-700">Verified Live POD</div>
+                                      </div>
+                                    </div>
+                                    <div className="p-2 rounded-lg bg-white border border-emerald-200">
+                                      <div className="text-[10px] font-extrabold text-emerald-950 mb-1">
+                                        ✍️ Digitally Signed by:{' '}
+                                        {recipientNameByOrder[order.id] ||
+                                          order.recipientName ||
+                                          order.receiverName ||
+                                          order.customerName}
+                                      </div>
+                                      <div
+                                        className="h-10 w-full flex items-center justify-center overflow-hidden [&>svg]:max-h-9 [&>svg]:w-auto"
+                                        dangerouslySetInnerHTML={{
+                                          __html:
+                                            recipientSignatureByOrder[order.id] ||
+                                            order.recipientSignatureSvg ||
+                                            '',
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={
+                              !Boolean(deliveryPhotoByOrder[order.id]?.url || order.deliveryPhotoUrl) ||
+                              !(
+                                recipientNameByOrder[order.id] ??
+                                order.recipientName ??
+                                order.receiverName ??
+                                order.customerName
+                              )?.trim() ||
+                              !Boolean(recipientSignatureByOrder[order.id] || order.recipientSignatureSvg)
+                            }
+                            onClick={() => handleAdvanceRiderOrder(order)}
+                            className={`w-full py-2.5 rounded-xl font-extrabold text-xs transition shadow-xs ${
+                              Boolean(deliveryPhotoByOrder[order.id]?.url || order.deliveryPhotoUrl) &&
+                              (
+                                recipientNameByOrder[order.id] ??
+                                order.recipientName ??
+                                order.receiverName ??
+                                order.customerName
+                              )?.trim() &&
+                              Boolean(recipientSignatureByOrder[order.id] || order.recipientSignatureSvg)
+                                ? 'bg-[#059669] hover:bg-emerald-600 text-white cursor-pointer'
+                                : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                            }`}
+                          >
+                            Confirm Delivery (Requires Drop Photo + Recipient Signature • Credit 80%)
+                          </button>
                         </div>
+                      )}
+
+                      {/* Rider View: Pickup & Delivery Proof History Cards */}
+                      {(order.senderName || order.senderSignatureSvg || order.pickupPhotoCaptured) && (
+                        <PickupProofHistoryCard
+                          orderCode={order.orderCode}
+                          senderName={order.senderName || senderNameByOrder[order.id] || order.customerName}
+                          senderSignatureSvg={order.senderSignatureSvg || senderSignatureByOrder[order.id]}
+                          packagePhotoUrl={order.pickupPhotoUrl}
+                          packagePhotoSummary={order.pickupPhotoSummary || 'Live Pickup Camera Photo Verified'}
+                          verifiedOtp={order.pickupOtp}
+                          capturedAt={order.createdAt}
+                        />
+                      )}
+                      {(order.recipientName || order.recipientSignatureSvg || order.deliveryPhotoUrl) && (
+                        <DeliveryProofHistoryCard
+                          orderCode={order.orderCode}
+                          recipientName={
+                            order.recipientName ||
+                            recipientNameByOrder[order.id] ||
+                            order.receiverName ||
+                            order.customerName
+                          }
+                          recipientSignatureSvg={
+                            order.recipientSignatureSvg || recipientSignatureByOrder[order.id]
+                          }
+                          deliveryPhotoUrl={order.deliveryPhotoUrl}
+                          deliveryPhotoSummary={
+                            order.deliveryPhotoSummary ||
+                            order.deliveryProofNote ||
+                            'Live Drop-off Camera Photo Verified'
+                          }
+                          verifiedOtp={order.deliveryOtp}
+                          capturedAt={order.createdAt}
+                        />
                       )}
 
                       {/* Toggleable Customer Chat Modal/Drawer */}
@@ -6067,6 +6581,209 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
         </div>
       </header>
 
+      {/* 📲 3 SEPARATE APPS — DIRECT 1-TAP .APK DOWNLOAD & STANDALONE APP LAUNCHER BAR */}
+      <div className="bg-gradient-to-r from-[#022C22] via-[#042F2E] to-[#065F46] border-b border-emerald-500/40 px-3 sm:px-6 py-2.5 text-white">
+        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="px-2 py-0.5 rounded-full bg-emerald-400/20 border border-emerald-300/40 text-[#A7F3D0] text-[10px] font-black uppercase tracking-wider">
+              3 Separate Apps • Direct APK
+            </span>
+            <span className="text-xs font-extrabold text-white">
+              {dedicatedAppMode === 'customer'
+                ? '🛍️ Standalone Customer App Mode Active'
+                : dedicatedAppMode === 'rider'
+                ? '🛵 Standalone Rider Partner App Mode Active'
+                : dedicatedAppMode === 'admin'
+                ? '🛡️ Standalone Admin Console Mode Active'
+                : '📥 Download 3 Separate Android APKs Directly or Open Each App Separately:'}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* 1. Direct Customer APK Download + Open Standalone */}
+            <a
+              href="/apks/QuickDelivery-Customer.apk"
+              download="QuickDelivery-Customer.apk"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={async (e) => {
+                e.preventDefault();
+                const fileName = 'QuickDelivery-Customer.apk';
+                try {
+                  const resp = await fetch(`/apks/${fileName}`, { cache: 'no-store' });
+                  const ct = resp.headers.get('content-type') || '';
+                  if (resp.ok && !ct.includes('text/html')) {
+                    const blob = new Blob([await resp.arrayBuffer()], {
+                      type: 'application/vnd.android.package-archive',
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 15000);
+                    return;
+                  }
+                } catch {}
+                window.open(`/apks/${fileName}`, '_blank', 'noopener,noreferrer');
+              }}
+              className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-extrabold flex items-center gap-1 shadow-xs border border-emerald-300/40 transition cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>1. Customer.apk</span>
+            </a>
+
+            {/* 2. Direct Rider Partner APK Download */}
+            <a
+              href="/apks/QuickDelivery-Rider-Partner.apk"
+              download="QuickDelivery-Rider-Partner.apk"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={async (e) => {
+                e.preventDefault();
+                const fileName = 'QuickDelivery-Rider-Partner.apk';
+                try {
+                  const resp = await fetch(`/apks/${fileName}`, { cache: 'no-store' });
+                  const ct = resp.headers.get('content-type') || '';
+                  if (resp.ok && !ct.includes('text/html')) {
+                    const blob = new Blob([await resp.arrayBuffer()], {
+                      type: 'application/vnd.android.package-archive',
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 15000);
+                    return;
+                  }
+                } catch {}
+                window.open(`/apks/${fileName}`, '_blank', 'noopener,noreferrer');
+              }}
+              className="px-2.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-extrabold flex items-center gap-1 shadow-xs border border-amber-300/40 transition cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>2. Rider-Partner.apk</span>
+            </a>
+
+            {/* 3. Direct Admin Enterprise APK Download */}
+            <a
+              href="/apks/QuickDelivery-Admin-Enterprise.apk"
+              download="QuickDelivery-Admin-Enterprise.apk"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={async (e) => {
+                e.preventDefault();
+                const fileName = 'QuickDelivery-Admin-Enterprise.apk';
+                try {
+                  const resp = await fetch(`/apks/${fileName}`, { cache: 'no-store' });
+                  const ct = resp.headers.get('content-type') || '';
+                  if (resp.ok && !ct.includes('text/html')) {
+                    const blob = new Blob([await resp.arrayBuffer()], {
+                      type: 'application/vnd.android.package-archive',
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 15000);
+                    return;
+                  }
+                } catch {}
+                window.open(`/apks/${fileName}`, '_blank', 'noopener,noreferrer');
+              }}
+              className="px-2.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-[11px] font-extrabold flex items-center gap-1 shadow-xs border border-teal-300/40 transition cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>3. Admin-Console.apk</span>
+            </a>
+
+            {/* 4. All 4 APKs ZIP Bundle */}
+            <a
+              href="/apks/QuickDelivery-All-4-APKs.zip"
+              download="QuickDelivery-All-4-APKs.zip"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-[11px] font-black flex items-center gap-1 shadow-xs transition cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>All APKs (.ZIP)</span>
+            </a>
+
+            {/* Standalone Mode Switcher Buttons */}
+            <div className="flex items-center gap-1 pl-1 sm:border-l border-emerald-400/30">
+              <button
+                type="button"
+                onClick={() => {
+                  setDedicatedAppMode('customer');
+                  setViewMode('TABS');
+                  setActiveTab('CUSTOMER');
+                  window.history.pushState({ app: 'customer' }, '', '/?app=customer');
+                }}
+                className={`px-2 py-1 rounded-lg text-[10px] font-extrabold transition cursor-pointer ${
+                  dedicatedAppMode === 'customer'
+                    ? 'bg-white text-[#042F2E]'
+                    : 'bg-white/10 hover:bg-white/20 text-emerald-100'
+                }`}
+              >
+                🛍️ Customer Only
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDedicatedAppMode('rider');
+                  setViewMode('TABS');
+                  setActiveTab('RIDER');
+                  window.history.pushState({ app: 'rider' }, '', '/?app=rider');
+                }}
+                className={`px-2 py-1 rounded-lg text-[10px] font-extrabold transition cursor-pointer ${
+                  dedicatedAppMode === 'rider'
+                    ? 'bg-amber-300 text-slate-950'
+                    : 'bg-white/10 hover:bg-white/20 text-amber-100'
+                }`}
+              >
+                🛵 Rider Only
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDedicatedAppMode('admin');
+                  setViewMode('TABS');
+                  setActiveTab('ADMIN');
+                  window.history.pushState({ app: 'admin' }, '', '/?app=admin');
+                }}
+                className={`px-2 py-1 rounded-lg text-[10px] font-extrabold transition cursor-pointer ${
+                  dedicatedAppMode === 'admin'
+                    ? 'bg-teal-300 text-slate-950'
+                    : 'bg-white/10 hover:bg-white/20 text-teal-100'
+                }`}
+              >
+                🛡️ Admin Only
+              </button>
+              {dedicatedAppMode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDedicatedAppMode(null);
+                    window.history.pushState({}, '', '/');
+                  }}
+                  className="px-2 py-1 rounded-lg bg-rose-500/80 hover:bg-rose-500 text-white text-[10px] font-extrabold transition cursor-pointer"
+                >
+                  All 3 Hub
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Main Content Area - Role-Based Access Control Routing */}
       <main className="max-w-7xl w-full mx-auto p-3 sm:p-6 flex-1">
         {dedicatedAppMode === 'customer' ? (
@@ -6789,6 +7506,128 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
           title={imageUploadModalState.title}
           subtitle={imageUploadModalState.subtitle}
           initialImageUrl={imageUploadModalState.currentImageUrl}
+        />
+      )}
+
+      {/* 📷✍️ RIDER PICKUP & DELIVERY DIGITAL SIGNATURE HANDOVER MODAL */}
+      {handoverProofModalState?.isOpen && (
+        <ProofOfHandoverSignatureModal
+          isOpen={handoverProofModalState.isOpen}
+          mode={handoverProofModalState.mode}
+          orderId={handoverProofModalState.order.id}
+          orderCode={handoverProofModalState.order.orderCode}
+          expectedOtp={
+            handoverProofModalState.mode === 'PICKUP'
+              ? handoverProofModalState.order.pickupOtp
+              : handoverProofModalState.order.deliveryOtp
+          }
+          defaultSignerName={
+            handoverProofModalState.mode === 'PICKUP'
+              ? senderNameByOrder[handoverProofModalState.order.id] ||
+                handoverProofModalState.order.senderName ||
+                handoverProofModalState.order.customerName
+              : recipientNameByOrder[handoverProofModalState.order.id] ||
+                handoverProofModalState.order.recipientName ||
+                handoverProofModalState.order.receiverName ||
+                handoverProofModalState.order.customerName
+          }
+          isCodOrder={
+            handoverProofModalState.order.paymentMethod === 'CASH_ON_DELIVERY' ||
+            handoverProofModalState.order.paymentMethod === 'CASH_AT_PICKUP' ||
+            handoverProofModalState.order.paymentMethod === 'CASH_AT_DROP'
+          }
+          totalAmountFormatted={`₹${Math.round(handoverProofModalState.order.totalAmountPaise / 100)}`}
+          initialPhotoUrl={
+            handoverProofModalState.mode === 'PICKUP'
+              ? handoverProofModalState.order.pickupPhotoUrl
+              : deliveryPhotoByOrder[handoverProofModalState.order.id]?.url ||
+                handoverProofModalState.order.deliveryPhotoUrl
+          }
+          onClose={() => setHandoverProofModalState(null)}
+          onConfirmHandover={async ({
+            verifiedOtp,
+            photoUrl,
+            photoSummary,
+            signerName,
+            signatureSvg,
+          }) => {
+            const targetOrder = handoverProofModalState.order;
+            if (handoverProofModalState.mode === 'PICKUP') {
+              setPhotoCapturedByOrder((prev) => ({ ...prev, [targetOrder.id]: true }));
+              setSenderNameByOrder((prev) => ({ ...prev, [targetOrder.id]: signerName }));
+              setSenderSignatureByOrder((prev) => ({ ...prev, [targetOrder.id]: signatureSvg }));
+              setOtpInputByOrder((prev) => ({ ...prev, [targetOrder.id]: verifiedOtp }));
+
+              await dbService.uploadPickupProof(targetOrder.id, {
+                riderId: targetOrder.assignedRiderId || riderWallet.riderId || 'RIDER-101',
+                verifiedOtp,
+                packagePhotoUrl: photoUrl,
+                packagePhotoSummary: photoSummary,
+                senderName: signerName,
+                senderSignatureSvg: signatureSvg,
+              });
+
+              const updatedPickupOrder: DeliveryOrder = {
+                ...targetOrder,
+                status: 'PICKED_UP',
+                pickupPhotoCaptured: true,
+                pickupPhotoUrl: photoUrl,
+                pickupPhotoSummary: photoSummary,
+                senderName: signerName,
+                senderSignatureSvg: signatureSvg,
+                pickupProofNote: `${photoSummary} • Digitally Signed by: ${signerName}`,
+                riderLat: 12.9562,
+                riderLng: 77.6315,
+              };
+              setOrders((prev) =>
+                prev.map((o) => (o.id === targetOrder.id ? updatedPickupOrder : o))
+              );
+              dbService.saveOrder(updatedPickupOrder);
+              setRiderNotice(
+                `✅ Pickup Proof & Digital Signature by ${signerName} confirmed for #${targetOrder.orderCode}!`
+              );
+            } else {
+              setDeliveryPhotoByOrder((prev) => ({
+                ...prev,
+                [targetOrder.id]: { url: photoUrl, note: photoSummary },
+              }));
+              setRecipientNameByOrder((prev) => ({ ...prev, [targetOrder.id]: signerName }));
+              setRecipientSignatureByOrder((prev) => ({ ...prev, [targetOrder.id]: signatureSvg }));
+              setOtpInputByOrder((prev) => ({ ...prev, [targetOrder.id]: verifiedOtp }));
+              setCodCollectedByOrder((prev) => ({ ...prev, [targetOrder.id]: true }));
+
+              await dbService.uploadDeliveryProof(targetOrder.id, {
+                riderId: targetOrder.assignedRiderId || riderWallet.riderId || 'RIDER-101',
+                verifiedOtp,
+                deliveryPhotoUrl: photoUrl,
+                deliveryPhotoSummary: photoSummary,
+                recipientName: signerName,
+                recipientSignatureSvg: signatureSvg,
+                codAmountCollectedInr: Math.round(targetOrder.totalAmountPaise / 100),
+              });
+
+              const updatedDeliveredOrder: DeliveryOrder = {
+                ...targetOrder,
+                status: 'DELIVERED',
+                isDelayed: false,
+                statusLabel: 'Delivered',
+                codCashCollected: true,
+                deliveryPhotoUrl: photoUrl,
+                deliveryPhotoSummary: photoSummary,
+                deliveryProofNote: `${photoSummary} • Digitally Signed by: ${signerName}`,
+                recipientName: signerName,
+                recipientSignatureSvg: signatureSvg,
+              };
+              setOrders((prev) =>
+                prev.map((o) => (o.id === targetOrder.id ? updatedDeliveredOrder : o))
+              );
+              dbService.saveOrder(updatedDeliveredOrder);
+              setRiderNotice(
+                `🎉 Delivery Proof & Digital Signature by ${signerName} confirmed for #${targetOrder.orderCode}!`
+              );
+            }
+            setHandoverProofModalState(null);
+          }}
         />
       )}
     </div>

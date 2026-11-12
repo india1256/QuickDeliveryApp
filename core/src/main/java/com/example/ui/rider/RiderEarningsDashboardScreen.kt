@@ -158,41 +158,31 @@ fun RiderEarningsDashboardScreen(
         }
     }
 
-    // Seed baseline today earnings so dashboard looks rich immediately and increments live with every order/tip
-    val todayCompletedDeliveries = remember(deliveredOrders, rider.totalDeliveries) {
-        maxOf(deliveredOrders.size + 4, if (rider.totalDeliveries > 0) minOf(rider.totalDeliveries, 6) else 4)
+    // Live today earnings strictly from real completed orders and tips
+    val todayCompletedDeliveries = remember(deliveredOrders) {
+        deliveredOrders.size
     }
-    val todayBaseEarningsInr = remember(liveDeliveredBaseInr, rider.walletBalanceInr) {
-        val baseSeed = if (rider.walletBalanceInr > 0) minOf(rider.walletBalanceInr, 340.0) else 320.0
-        baseSeed + liveDeliveredBaseInr
+    val todayBaseEarningsInr = remember(liveDeliveredBaseInr) {
+        liveDeliveredBaseInr
     }
     val todayTipsInr = remember(liveTipsFromOrdersInr) {
-        40 + liveTipsFromOrdersInr // Baseline ₹40 today tips + any live customer tips added during checkout/feedback
+        liveTipsFromOrdersInr
     }
 
-    // Build 7-Day Visual Bar Chart Series (6 prior days + Today at index 6)
+    // Build 7-Day Visual Bar Chart Series (6 prior days at 0 + Today at index 6)
     val sevenDayBars = remember(todayCompletedDeliveries, todayBaseEarningsInr, todayTipsInr) {
-        val priorSeeds = listOf(
-            Triple(5, 380.0, 30),
-            Triple(7, 510.0, 60),
-            Triple(6, 445.0, 40),
-            Triple(8, 590.0, 80),
-            Triple(6, 460.0, 50),
-            Triple(9, 640.0, 90)
-        )
         val dayFmt = SimpleDateFormat("EEE", Locale.US)
         val dateFmt = SimpleDateFormat("dd MMM", Locale.US)
         val items = mutableListOf<DailyEarningsBarItem>()
         for (offset in 6 downTo 1) {
             val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -offset) }
-            val seed = priorSeeds[6 - offset]
             items.add(
                 DailyEarningsBarItem(
                     dayShortLabel = dayFmt.format(cal.time),
                     dateSubtitle = dateFmt.format(cal.time),
-                    deliveriesCount = seed.first,
-                    baseEarningsInr = seed.second,
-                    tipsInr = seed.third,
+                    deliveriesCount = 0,
+                    baseEarningsInr = 0.0,
+                    tipsInr = 0,
                     isToday = false
                 )
             )
@@ -1261,33 +1251,33 @@ fun RiderEarningsDashboardScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Today's Completed Shift Trips (4 Trips)",
+                                    text = "No Completed Trips Yet (0 Trips)",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DashNavy
                                 )
                                 Surface(
-                                    color = Color(0xFFFEF3C7),
+                                    color = Color(0xFFECFDF5),
                                     shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, DashGold)
+                                    border = BorderStroke(1.dp, DashTeal)
                                 ) {
                                     Text(
-                                        text = "💝 +₹40 Tips Earned",
+                                        text = "Ready for Orders",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color(0xFF92400E),
+                                        color = DashTeal,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
                                 }
                             }
                             Text(
-                                text = "Base Payout (80%): ₹320 • Customer Tips (100%): ₹40 • Total: ₹360",
+                                text = "Base Payout (80%): ₹0 • Customer Tips (100%): ₹0 • Total: ₹0",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = DashTeal
                             )
                             Text(
-                                text = "New orders booked by customers and any tips added during checkout or post-delivery rating will appear live here.",
+                                text = "New orders booked by customers and any tips added during checkout will appear live here.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF64748B)
                             )

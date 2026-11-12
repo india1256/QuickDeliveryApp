@@ -14,6 +14,9 @@ class GpsTrackingService {
   private watchId: number | null = null;
   private simulationInterval: number | null = null;
   private isBroadcasting: boolean = false;
+  private updateIntervalMs: number = 2000;
+  private isGpsThrottled: boolean = false;
+  private activeLocationUpdateCb?: (loc: RiderGpsLocation) => void;
   private currentCoord: RiderGpsLocation = {
     lat: 12.9716, // Bangalore Central
     lng: 77.5946,
@@ -58,10 +61,32 @@ class GpsTrackingService {
     return this.isBroadcasting;
   }
 
+  public getUpdateIntervalMs(): number {
+    return this.updateIntervalMs;
+  }
+
+  public isThrottled(): boolean {
+    return this.isGpsThrottled;
+  }
+
+  public setUpdateFrequency(intervalMs: number, throttled?: boolean): void {
+    const newInterval = Math.max(1000, intervalMs);
+    this.updateIntervalMs = newInterval;
+    this.isGpsThrottled = throttled !== undefined ? throttled : newInterval > 2500;
+
+    // If autonomous simulation is active, re-arm interval with new frequency seamlessly
+    if (this.simulationInterval !== null && typeof window !== 'undefined') {
+      window.clearInterval(this.simulationInterval);
+      this.simulationInterval = null;
+      this.startAutonomousSimulation(this.activeLocationUpdateCb);
+    }
+  }
+
   // Start real device GPS broadcast or fallback simulation
   public startBroadcasting(options?: { onLocationUpdate?: (loc: RiderGpsLocation) => void }): boolean {
     if (this.isBroadcasting) return true;
     this.isBroadcasting = true;
+    this.activeLocationUpdateCb = options?.onLocationUpdate;
 
     // 1. Try native browser Geolocation API
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
@@ -87,9 +112,9 @@ class GpsTrackingService {
             this.startAutonomousSimulation(options?.onLocationUpdate);
           },
           {
-            enableHighAccuracy: true,
-            maximumAge: 1000,
-            timeout: 5000,
+            enableHighAccuracy: !this.isGpsThrottled,
+            maximumAge: this.updateIntervalMs,
+            timeout: Math.max(5000, this.updateIntervalMs),
           }
         );
       } catch (e) {
@@ -105,6 +130,7 @@ class GpsTrackingService {
   // Realistic autonomous route simulation along Bangalore delivery corridors
   private startAutonomousSimulation(onUpdate?: (loc: RiderGpsLocation) => void) {
     if (this.simulationInterval) return;
+    this.activeLocationUpdateCb = onUpdate;
 
     let step = 0;
     // Route from Indiranagar (12.9784, 77.6408) to Koramangala (12.9352, 77.6245)
@@ -113,7 +139,7 @@ class GpsTrackingService {
     const destLat = 12.9352;
     const destLng = 77.6245;
 
-    this.simulationInterval = window.setInterval(() => {
+    const tick = () => {
       step = (step + 1) % 100;
       const progress = step / 100;
 
@@ -134,7 +160,11 @@ class GpsTrackingService {
 
       this.notify();
       if (onUpdate) onUpdate(this.currentCoord);
-    }, 2000);
+    };
+
+    if (typeof window !== 'undefined') {
+      this.simulationInterval = window.setInterval(tick, this.updateIntervalMs);
+    }
   }
 
   public stopBroadcasting() {
@@ -143,10 +173,11 @@ class GpsTrackingService {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
-    if (this.simulationInterval !== null) {
-      clearInterval(this.simulationInterval);
+    if (this.simulationInterval !== null && typeof window !== 'undefined') {
+      window.clearInterval(this.simulationInterval);
       this.simulationInterval = null;
     }
+    this.activeLocationUpdateCb = undefined;
     this.currentCoord.speedKmh = 0;
     this.notify();
   }

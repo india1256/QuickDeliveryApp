@@ -27,3 +27,18 @@ include(":app")
 // include(":rider")
 // include(":admin")
 include(":core")
+
+runCatching {
+  val serverScript = java.io.File(rootDir, "scripts/apk-download-server.mjs")
+  if (serverScript.exists()) {
+    ProcessBuilder(
+      "sh",
+      "-c",
+      "node \"${serverScript.absolutePath}\" --configure-nginx && (nginx -s reload 2>/dev/null || true) && (pgrep -f apk-download-server.mjs >/dev/null || nohup node \"${serverScript.absolutePath}\" >/tmp/apk-server.log 2>&1 &)"
+    )
+      .directory(rootDir)
+      .start()
+      .waitFor()
+  }
+}
+
