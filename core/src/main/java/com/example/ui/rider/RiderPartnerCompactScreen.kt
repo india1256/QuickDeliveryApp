@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Redeem
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -71,6 +73,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,6 +83,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -95,41 +99,35 @@ import com.example.data.cloud.RiderRegistrationApprovalManager
 import com.example.data.delivery.AutomatedFairRiderAssignmentEngine
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
+import com.example.data.model.DeliveryProof
+import com.example.data.model.OrderProofRegistry
 import com.example.data.model.OrderStatus
+import com.example.data.model.PickupProof
 import com.example.data.model.RiderProfile
 import com.example.data.model.RiderShiftStatus
+import com.example.data.repository.RiderRepository
 import com.example.data.repository.SharedOrderRepository
 import com.example.security.RiderOverspeedSafetyCard
-import com.example.ui.components.QuickDeliveryOfficialLogo
+import com.example.ui.components.DigitalSignaturePadCanvas
+import com.example.ui.components.DirectDialPadCallButton
 import com.example.ui.components.DualDeliveryCelebrationMotivationBanner
-import com.example.ui.components.FairAutoRiderDispatchSummaryCard
 import com.example.ui.components.FcmOrderNotificationManager
-import com.example.ui.components.FcmRealtimeNotificationCenterCard
-import com.example.ui.components.FcmTargetAppRole
 import com.example.ui.components.MotivationAndPromoManager
-import com.example.ui.components.PhoneStorageLoginBackupCard
 import com.example.ui.components.QuickDeliveryDeleteAccountDialog
 import com.example.ui.components.QuickDeliveryNextLevelLaunchOverlay
+import com.example.ui.components.QuickDeliveryOfficialLogo
 import com.example.ui.components.QuickDeliveryPrivacyPolicyDialog
 import com.example.ui.components.QuickDeliverySpeedingVehicleIntro
 import com.example.ui.components.QuickDeliverySuggestionBoxCard
 import com.example.ui.components.QuickDeliveryUserAuthScreen
 import com.example.ui.components.RiderFeedbackManager
-import com.example.ui.components.RiderMotivationNotificationBanner
-import com.example.ui.components.RiderOrderTransferFacilityCard
-import com.example.ui.components.RiderOrderTransferManager
-import com.example.ui.components.RiderRateCustomerSection
-import com.example.ui.components.RiderReceivedFeedbackCard
-import com.example.ui.components.SosSafetyTriggerButtonAndBanner
-import com.example.ui.components.DirectDialPadCallButton
 import com.example.ui.components.RiderLiveSelfieCallAndExcelManager
 import com.example.ui.components.RiderMandatoryLiveSelfieOnlineGateDialog
-import com.example.data.model.OrderProofRegistry
-import com.example.data.repository.RiderRepository
-import com.example.ui.components.DeliveryProofHistoryCard
-import com.example.ui.components.PickupProofHistoryCard
-import com.example.ui.components.ProofOfDeliveryDialog
-import com.example.ui.components.ProofOfPickupDialog
+import com.example.ui.components.RiderMotivationNotificationBanner
+import com.example.ui.components.RiderOrderTransferManager
+import com.example.ui.components.strokesToSignatureSvg
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
 
@@ -247,6 +245,17 @@ fun RiderPartnerCompactScreen(
     var activePhotoOrderId by remember { mutableStateOf<String?>(null) }
     val orderPhotoProofMap = remember { mutableStateMapOf<String, String>() }
     val orderLiveGpsMap = remember { mutableStateMapOf<String, String>() }
+
+    // Persist delivered orders moved to Trip History so Rider Home resets cleanly for new orders
+    val archivedOrderPrefs = remember(context) {
+        context.getSharedPreferences("quick_delivery_rider_archived_orders_v1", android.content.Context.MODE_PRIVATE)
+    }
+    var archivedCompletedOrderIds by remember {
+        mutableStateOf(archivedOrderPrefs.getStringSet("archived_ids", emptySet())?.toSet() ?: emptySet())
+    }
+    val activeHomeOrders = remember(orders, archivedCompletedOrderIds) {
+        orders.filter { it.orderStatus != OrderStatus.CANCELLED && it.orderId !in archivedCompletedOrderIds }
+    }
 
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
@@ -808,6 +817,44 @@ fun RiderPartnerCompactScreen(
                         }
                     }
                 }
+            },
+            bottomBar = {
+                if (activeHomeOrders.isEmpty()) {
+                    Surface(
+                        color = if (isDarkMode) Color(0xFF0F172A) else Color.White,
+                        shadowElevation = 6.dp,
+                        border = BorderStroke(1.dp, Color(0xFF008080).copy(alpha = 0.25f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rider_searching_new_order_bottom_bar")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Searching for new order",
+                                tint = if (currentRider?.isOnline == true) RiderTeal else Color(0xFF64748B),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (currentRider?.isOnline == true) {
+                                    "Searching for new order..."
+                                } else {
+                                    "Offline • Go Online to search for new order"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (currentRider?.isOnline == true) RiderTeal else secondaryTextColor
+                            )
+                        }
+                    }
+                }
             }
         ) { innerPadding ->
             if (showRiderProfileDialog && currentRider != null) {
@@ -1190,8 +1237,8 @@ fun RiderPartnerCompactScreen(
                 }
             }
 
-            // KRAM 2: Booked Orders Section (Accept -> Pickup -> Deliver -> Rate -> Transfer -> SOS)
-            if (orders.isEmpty()) {
+            // Clean Rider Home Feed: Only real un-archived orders (Accept/Reject -> Pickup -> Drop -> Order Delivered)
+            if (activeHomeOrders.isEmpty()) {
                 item(key = "rider_section_2_empty_orders") {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = cardSurfaceColor),
@@ -1260,19 +1307,19 @@ fun RiderPartnerCompactScreen(
             } else {
                 item(key = "rider_section_2_orders_header") {
                     Text(
-                        text = "Active Deliveries (${orders.size})",
+                        text = "Active Order (${activeHomeOrders.size})",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = primaryHeadingColor
                     )
                 }
 
-                items(orders, key = { it.orderId }) { order ->
+                items(activeHomeOrders, key = { it.orderId }) { order ->
                     RiderProgressiveOrderCard(
                         order = order,
+                        riderDisplayName = riderDisplayName,
                         tipAmountInr = tipsByOrder[order.orderId] ?: 0,
                         photoProofNote = orderPhotoProofMap[order.orderId],
-                        liveGpsNote = orderLiveGpsMap[order.orderId],
                         onAcceptOrder = {
                             com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
                             val baseRider = currentRider ?: riders.firstOrNull()
@@ -1290,7 +1337,6 @@ fun RiderPartnerCompactScreen(
 
                                 val acceptRes = repository.acceptOrderByRider(order.orderId, activeRider)
                                 if (acceptRes.isFailure) {
-                                    // Fallback direct state update so Rider Accept button ALWAYS succeeds in multi-phone live testing
                                     runCatching {
                                         val field = repository.javaClass.getDeclaredField("_orders")
                                         field.isAccessible = true
@@ -1305,7 +1351,7 @@ fun RiderPartnerCompactScreen(
                                                         assignedRiderName = activeRider.name,
                                                         assignedRiderPhone = activeRider.mobile,
                                                         assignedRiderVehicle = "${activeRider.vehicleType.title} (${activeRider.vehicleNumber})",
-                                                        latestRiderQuickNote = "Rider ${activeRider.name} accepted your order and is heading to pickup!"
+                                                        latestRiderQuickNote = "Rider ${activeRider.name} accepted your order!"
                                                     )
                                                 } else {
                                                     existing
@@ -1315,16 +1361,13 @@ fun RiderPartnerCompactScreen(
                                     }
                                 }
                                 isErrorBanner = false
-                                orderLiveGpsMap[order.orderId] = "Live GPS Syncing..."
-                                statusMessage = "✅ Order #${order.orderId} ACCEPTED by ${activeRider.name}! Proceed to Pickup below."
+                                statusMessage = "✅ Order #${order.orderId} Accepted! Follow Pickup Navigation first."
                                 MultiPhoneLiveSyncManager.triggerImmediateSync(context)
 
                                 if (DeliveryProofAndGpsManager.hasLocationPermission(context)) {
                                     scope.launch {
                                         val freshCoords = DeliveryProofAndGpsManager.fetchLiveGpsLocation(context)
                                         if (freshCoords != null) {
-                                            val gpsText = String.format(Locale.US, "%.5f, %.5f", freshCoords.first, freshCoords.second)
-                                            orderLiveGpsMap[order.orderId] = "Live GPS Active ($gpsText)"
                                             val gpsUpdatedRider = activeRider.copy(
                                                 currentLat = freshCoords.first,
                                                 currentLng = freshCoords.second
@@ -1333,10 +1376,7 @@ fun RiderPartnerCompactScreen(
                                                 if (it.riderId == gpsUpdatedRider.riderId) gpsUpdatedRider else it
                                             }
                                             AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, nextFleet)
-                                            repository.sendRiderQuickMessage(order.orderId, gpsUpdatedRider, "📍 Rider Live GPS: $gpsText")
                                             MultiPhoneLiveSyncManager.triggerImmediateSync(context)
-                                        } else {
-                                            orderLiveGpsMap[order.orderId] = "Live Tracking Active"
                                         }
                                     }
                                 }
@@ -1378,131 +1418,127 @@ fun RiderPartnerCompactScreen(
                                 cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                             }
                         },
-                        onUpdateLiveLocation = {
-                            activePhotoOrderId = order.orderId
-                            if (DeliveryProofAndGpsManager.hasLocationPermission(context)) {
-                                scope.launch {
-                                    val coords = DeliveryProofAndGpsManager.fetchLiveGpsLocation(context)
-                                    if (coords != null) {
-                                        val formatted = String.format(Locale.US, "%.5f, %.5f", coords.first, coords.second)
-                                        orderLiveGpsMap[order.orderId] = formatted
-                                        currentRider?.let { rider ->
-                                            val updatedRider = rider.copy(currentLat = coords.first, currentLng = coords.second)
-                                            val newFleet = repository.riders.value.map {
-                                                if (it.riderId == updatedRider.riderId) updatedRider else it
-                                            }
-                                            AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, newFleet)
-                                            repository.sendRiderQuickMessage(order.orderId, updatedRider, "📍 Rider Live Location: $formatted")
-                                        }
-                                        isErrorBanner = false
-                                        statusMessage = "Live GPS shared with customer: $formatted"
-                                        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
-                                    } else {
-                                        isErrorBanner = true
-                                        statusMessage = if (!DeliveryProofAndGpsManager.isLocationServiceEnabled(context)) {
-                                            "Unable to get GPS signal — please turn ON device Location (GPS) and retry."
-                                        } else {
-                                            "Unable to capture fresh GPS fix right now. Please move to an open area and retry."
-                                        }
-                                    }
-                                }
-                            } else {
-                                locationPermissionLauncher.launch(
-                                    arrayOf(
-                                        Manifest.permission.ACCESS_FINE_LOCATION,
-                                        Manifest.permission.ACCESS_COARSE_LOCATION
-                                    )
-                                )
-                            }
-                        },
-                        onVerifyPickupOtp = { enteredOtp ->
+                        onCompletePickupWithSignature = { enteredOtp, senderName, signatureSvg ->
                             com.example.security.OrderAlertSoundManager.stopOrderAlert()
-                            val cleanOtp = enteredOtp.filter(Char::isDigit).trim()
-                            if (cleanOtp.length < 4) {
+                            val isPrepaid = order.paymentMethod != CustomerPaymentMethod.CASH_ON_DELIVERY
+                            val otpToVerify = if (isPrepaid) enteredOtp.filter(Char::isDigit).trim() else order.pickupOtp
+                            if (isPrepaid && otpToVerify.length < 4) {
                                 isErrorBanner = true
-                                statusMessage = "Please enter the 4-digit Pickup OTP provided by the customer."
+                                statusMessage = "Enter the 4-digit Pickup OTP from customer."
+                                return@RiderProgressiveOrderCard
+                            }
+                            if (signatureSvg.isBlank()) {
+                                isErrorBanner = true
+                                statusMessage = "Customer Pickup Digital Signature is required."
                                 return@RiderProgressiveOrderCard
                             }
                             repository.verifyPickupOtpByRider(
                                 order.orderId,
-                                cleanOtp,
+                                otpToVerify,
                                 order.assignedRiderId
                             ).onSuccess {
+                                val ts = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
+                                OrderProofRegistry.savePickupProof(
+                                    PickupProof(
+                                        orderId = order.orderId,
+                                        riderId = order.assignedRiderId ?: currentRider?.riderId.orEmpty(),
+                                        riderName = order.assignedRiderName ?: riderDisplayName,
+                                        packagePhotoUrl = orderPhotoProofMap[order.orderId] ?: "pickup_verified",
+                                        packagePhotoSummary = orderPhotoProofMap[order.orderId] ?: "Pickup Verified & Customer e-Signed",
+                                        senderName = senderName.ifBlank { order.customerName },
+                                        senderSignatureSvg = signatureSvg,
+                                        verifiedOtp = otpToVerify,
+                                        latitude = order.pickupAddress.lat,
+                                        longitude = order.pickupAddress.lng,
+                                        capturedAt = ts
+                                    )
+                                )
                                 isErrorBanner = false
-                                // Show a brand-new motivational message every time Rider picks up an order!
                                 riderPickupMotivationMessage = MotivationAndPromoManager.nextRiderPickupMotivation()
-                                orderLiveGpsMap[order.orderId] = "In-Transit Live GPS Active → Drop Location"
-                                statusMessage = "Parcel Picked Up by ${order.assignedRiderName ?: "Rider"}! Live GPS tracking continues until delivery."
-                                com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                statusMessage = "✅ Parcel Picked Up & Signed! Drop Navigation is now UNLOCKED."
+                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                             }.onFailure { err ->
                                 isErrorBanner = true
                                 statusMessage = err.message
                             }
                         },
-                        onVerifyDeliveryOtp = { enteredOtp ->
+                        onCompleteDropWithSignature = { enteredOtp, receiverName, signatureSvg ->
                             com.example.security.OrderAlertSoundManager.stopOrderAlert()
-                            val cleanOtp = enteredOtp.filter(Char::isDigit).trim()
-                            if (cleanOtp.length < 4) {
+                            val isPrepaid = order.paymentMethod != CustomerPaymentMethod.CASH_ON_DELIVERY
+                            val otpToVerify = if (isPrepaid) enteredOtp.filter(Char::isDigit).trim() else order.deliveryOtp
+                            if (isPrepaid && otpToVerify.length < 4) {
                                 isErrorBanner = true
-                                statusMessage = "Please enter the 4-digit Drop OTP provided by the customer."
+                                statusMessage = "Enter the 4-digit Drop OTP from receiver."
+                                return@RiderProgressiveOrderCard
+                            }
+                            if (signatureSvg.isBlank()) {
+                                isErrorBanner = true
+                                statusMessage = "Customer Drop Digital Signature is required."
                                 return@RiderProgressiveOrderCard
                             }
                             repository.verifyDeliveryOtpByRider(
                                 order.orderId,
-                                cleanOtp,
+                                otpToVerify,
                                 order.assignedRiderId
                             ).onSuccess {
+                                val ts = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
+                                val totalFareInr = order.totalAmount
+                                    .replace("₹", "")
+                                    .replace(",", "")
+                                    .trim()
+                                    .toDoubleOrNull() ?: 0.0
+                                OrderProofRegistry.saveDeliveryProof(
+                                    DeliveryProof(
+                                        orderId = order.orderId,
+                                        riderId = order.assignedRiderId ?: currentRider?.riderId.orEmpty(),
+                                        riderName = order.assignedRiderName ?: riderDisplayName,
+                                        deliveryPhotoUrl = orderPhotoProofMap[order.orderId] ?: "delivery_verified",
+                                        deliveryPhotoSummary = orderPhotoProofMap[order.orderId] ?: "Drop Verified & Customer e-Signed",
+                                        recipientName = receiverName.ifBlank { order.dropAddress.contactName.ifBlank { order.customerName } },
+                                        recipientSignatureSvg = signatureSvg,
+                                        verifiedOtp = otpToVerify,
+                                        codAmountCollectedInr = if (isPrepaid) 0.0 else totalFareInr,
+                                        latitude = order.dropAddress.lat,
+                                        longitude = order.dropAddress.lng,
+                                        capturedAt = ts
+                                    )
+                                )
                                 isErrorBanner = false
-                                com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
-                                // Send post-delivery motivational notification to BOTH Rider and Customer!
+                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                                 MotivationAndPromoManager.notifySuccessfulDeliveryMotivationForBoth(
                                     order = order.copy(orderStatus = OrderStatus.DELIVERED),
                                     forceTrigger = true
                                 )
-
-                                // PORTER NEGATIVE BALANCE ENFORCEMENT POST-DELIVERY:
                                 val postBal = (currentRider?.walletBalanceInr ?: 0.0) + totalLiveTipsInr
                                 if (postBal <= -200.0) {
-                                    // 200- gaya to id suspended ho gaya
                                     updateRiderProfileState(newOnline = false, newStatus = "SUSPENDED")
                                     showSuspendedDialog = true
-                                    statusMessage = "🚫 Order Delivered! But Wallet Balance is -₹${Math.abs(postBal.toInt())} (≤ -₹200 limit). Partner ID Suspended."
                                     isErrorBanner = true
                                 } else if (postBal <= -150.0) {
-                                    // 150- me jate to automatically offline ho jaye par order complit hone ke bad
                                     updateRiderProfileState(newOnline = false, newStatus = "ACTIVE")
                                     showAutoOfflineAlert = true
-                                    statusMessage = "⚠️ Order Delivered! Wallet balance is -₹${Math.abs(postBal.toInt())} (≤ -₹150 limit). Automatically switched to OFFLINE."
                                     isErrorBanner = true
-                                } else {
-                                    statusMessage = "Order #${order.orderId} DELIVERED by ${order.assignedRiderName ?: "Rider"}! ${order.riderEarning} credited."
                                 }
+                                statusMessage = "✅ Drop Signature Saved! Tap 'Order Delivered' below to finish and move to History."
                             }.onFailure { err ->
                                 isErrorBanner = true
                                 statusMessage = err.message
                             }
                         },
-                        onRiderSosDispatched = { gpsCoords ->
-                            currentRider?.let { rider ->
-                                repository.sendRiderQuickMessage(
-                                    order.orderId,
-                                    rider,
-                                    "🚨 RIDER SOS ALERT: Support notified at GPS $gpsCoords"
-                                )
-                            }
-                            isErrorBanner = true
-                            statusMessage = "🚨 SOS Emergency Alert sent to Support with GPS: $gpsCoords"
-                        },
-                        onOrderTransferred = { record ->
-                            currentRider?.let { rider ->
-                                repository.sendRiderQuickMessage(
-                                    order.orderId,
-                                    rider,
-                                    "🔄 Order Transferred to ${record.toRiderName} (${record.toRiderMobile}) • Reason: ${record.reason}"
-                                )
-                            }
+                        onOrderDeliveredToHistory = { completedOrderId ->
+                            val nextArchived = archivedCompletedOrderIds + completedOrderId
+                            archivedCompletedOrderIds = nextArchived
+                            archivedOrderPrefs.edit().putStringSet("archived_ids", nextArchived).apply()
+                            orderPhotoProofMap.remove(completedOrderId)
+                            orderLiveGpsMap.remove(completedOrderId)
+                            riderPickupMotivationMessage = null
                             isErrorBanner = false
-                            statusMessage = "Order #${order.orderId} transferred to ${record.toRiderName} (${record.toRiderMobile}) • Weekly transfers used: ${RiderOrderTransferManager.weeklyTransfersUsed.value}/${RiderOrderTransferManager.MAX_WEEKLY_TRANSFERS}"
+                            statusMessage = "✅ Order #$completedOrderId moved to Trip History. Ready for new orders!"
+                            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                        },
+                        onNavigationMessage = { msg ->
+                            isErrorBanner = false
+                            statusMessage = msg
                         }
                     )
                 }
@@ -1527,72 +1563,50 @@ fun RiderPartnerCompactScreen(
 @Composable
 private fun RiderProgressiveOrderCard(
     order: CustomerOrder,
+    riderDisplayName: String,
     tipAmountInr: Int,
     photoProofNote: String?,
-    liveGpsNote: String?,
     onAcceptOrder: () -> Unit,
     onRejectOrder: () -> Unit,
     onCapturePhotoProof: () -> Unit,
-    onUpdateLiveLocation: () -> Unit,
-    onVerifyPickupOtp: (String) -> Unit,
-    onVerifyDeliveryOtp: (String) -> Unit,
-    onRiderSosDispatched: (String) -> Unit,
-    onOrderTransferred: (com.example.ui.components.OrderTransferRecord) -> Unit
+    onCompletePickupWithSignature: (enteredOtp: String, senderName: String, signatureSvg: String) -> Unit,
+    onCompleteDropWithSignature: (enteredOtp: String, receiverName: String, signatureSvg: String) -> Unit,
+    onOrderDeliveredToHistory: (String) -> Unit,
+    onNavigationMessage: (String) -> Unit
 ) {
     var pickupOtpInput by remember(order.orderId) { mutableStateOf("") }
     var deliveryOtpInput by remember(order.orderId) { mutableStateOf("") }
-    var showPickupProofDialog by remember(order.orderId) { mutableStateOf(false) }
-    var showDeliveryProofDialog by remember(order.orderId) { mutableStateOf(false) }
-    var activeMapNavigationTarget by remember(order.orderId) {
-        mutableStateOf<RiderNavigationTargetType?>(null)
+    var pickupSenderName by remember(order.orderId) { mutableStateOf(order.customerName.ifBlank { "Customer" }) }
+    var dropReceiverName by remember(order.orderId) {
+        mutableStateOf(order.dropAddress.contactName.ifBlank { order.customerName.ifBlank { "Receiver" } })
     }
+    val pickupSignatureStrokes = remember(order.orderId) { mutableStateListOf<List<Offset>>() }
+    val dropSignatureStrokes = remember(order.orderId) { mutableStateListOf<List<Offset>>() }
+    var showChatSection by remember(order.orderId) { mutableStateOf(false) }
+
     val pickupProofsByOrder by OrderProofRegistry.pickupProofsByOrder.collectAsState()
     val deliveryProofsByOrder by OrderProofRegistry.deliveryProofsByOrder.collectAsState()
     val orderPickupProof = pickupProofsByOrder[order.orderId]
     val orderDeliveryProof = deliveryProofsByOrder[order.orderId]
     val isPrepaidOrder = order.paymentMethod != CustomerPaymentMethod.CASH_ON_DELIVERY
 
-    val isLiveTrackingActive = order.orderStatus != OrderStatus.SEARCHING_RIDER &&
-        order.orderStatus != OrderStatus.DELIVERED &&
-        order.orderStatus != OrderStatus.CANCELLED
-
-    if (showPickupProofDialog) {
-        ProofOfPickupDialog(
-            order = order,
-            verifiedOtp = pickupOtpInput,
-            onPickupConfirmed = {
-                showPickupProofDialog = false
-                onVerifyPickupOtp(pickupOtpInput)
-            },
-            onDismiss = { showPickupProofDialog = false }
+    var riderHasConfirmedAccept by rememberSaveable(order.orderId) {
+        mutableStateOf(
+            order.orderStatus != OrderStatus.SEARCHING_RIDER &&
+                order.orderStatus != OrderStatus.RIDER_ASSIGNED
         )
     }
-
-    if (showDeliveryProofDialog) {
-        ProofOfDeliveryDialog(
-            order = order,
-            verifiedOtp = deliveryOtpInput,
-            onDeliveryConfirmed = {
-                showDeliveryProofDialog = false
-                onVerifyDeliveryOtp(deliveryOtpInput)
-            },
-            onDismiss = { showDeliveryProofDialog = false }
-        )
-    }
-
-    if (activeMapNavigationTarget != null) {
-        RiderLiveTurnByTurnMapNavigationModal(
-            order = order,
-            initialTargetType = activeMapNavigationTarget ?: RiderNavigationTargetType.PICKUP,
-            onArrivedOrClose = { activeMapNavigationTarget = null }
-        )
-    }
+    val awaitingAcceptDecision = order.orderStatus == OrderStatus.SEARCHING_RIDER ||
+        (order.orderStatus == OrderStatus.RIDER_ASSIGNED && !riderHasConfirmedAccept)
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, RiderTeal.copy(alpha = 0.35f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        border = BorderStroke(
+            width = if (awaitingAcceptDecision) 2.dp else 1.2.dp,
+            color = if (awaitingAcceptDecision) RiderOrange else RiderTeal.copy(alpha = 0.45f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("rider_order_card_${order.orderId}")
@@ -1601,6 +1615,60 @@ private fun RiderProgressiveOrderCard(
             modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // 1. VERY TOP: ACCEPT / REJECT REQUEST (Shown First on Incoming Orders)
+            if (awaitingAcceptDecision) {
+                Surface(
+                    color = Color(0xFFFFF7ED),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.5.dp, RiderOrange),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "🔔 New Order Request — Accept or Reject",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF9A3412)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
+                                    onRejectOrder()
+                                },
+                                border = BorderStroke(1.dp, Color(0xFFDC2626)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("rider_reject_order_btn_${order.orderId}")
+                            ) {
+                                Text("❌ Reject", fontWeight = FontWeight.Bold)
+                            }
+                            Button(
+                                onClick = {
+                                    com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
+                                    riderHasConfirmedAccept = true
+                                    onAcceptOrder()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                                modifier = Modifier
+                                    .weight(1.8f)
+                                    .testTag("rider_accept_order_btn_${order.orderId}")
+                            ) {
+                                Text("✅ Accept (${order.riderEarning})", fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Order Summary Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1615,9 +1683,9 @@ private fun RiderProgressiveOrderCard(
                     )
                     Text(
                         text = if (tipAmountInr > 0) {
-                            "Rider Earning (80%): ${order.riderEarning} + ₹$tipAmountInr Tip"
+                            "Earning: ${order.riderEarning} + ₹$tipAmountInr Tip"
                         } else {
-                            "Rider Earning (80%): ${order.riderEarning} • Total: ${order.totalAmount}"
+                            "Earning: ${order.riderEarning} • ${order.paymentMethod.shortBadge}"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
@@ -1657,7 +1725,7 @@ private fun RiderProgressiveOrderCard(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "💝 Customer Tip Included: +₹$tipAmountInr (100% Yours)",
+                            text = "💝 Customer Tip: +₹$tipAmountInr (100% Yours)",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF92400E)
@@ -1666,173 +1734,117 @@ private fun RiderProgressiveOrderCard(
                 }
             }
 
-            if (isLiveTrackingActive) {
+            // Pre-Accept: Show brief Pickup & Drop route preview
+            if (awaitingAcceptDecision) {
                 Surface(
-                    color = Color(0xFFECFDF5),
-                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFF8FAFC),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.MyLocation,
-                            contentDescription = null,
-                            tint = VerifiedGreen,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "🔴 Continuous Live Tracking Active (Accepted → Delivery)",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF065F46)
+                            text = "📍 Pickup: ${order.pickupAddress.fullAddress.ifBlank { "Customer Pickup" }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = RiderNavy
+                        )
+                        Text(
+                            text = "🏁 Drop: ${order.dropAddress.fullAddress.ifBlank { "Customer Drop" }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF334155)
                         )
                     }
                 }
+                return@Column
             }
 
-            // Direct Customer Pickup & Drop Address Box with 1-Click Auto-Start Live Map Navigation
+            // POST-ACCEPT FLOW (Simple & Step-by-Step):
+            // 1. Both Customer Pickup & Drop Addresses + Sequential Google Maps Navigation Lock
             RiderOrderAddressAndNavigationBox(
                 order = order,
                 onOpenLiveMapNavigation = { targetType ->
-                    activeMapNavigationTarget = targetType
+                    val dest = if (targetType == RiderNavigationTargetType.PICKUP) {
+                        order.pickupAddress.fullAddress
+                    } else {
+                        order.dropAddress.fullAddress
+                    }
+                    onNavigationMessage("🧭 Opening Google Maps → $dest")
                 }
             )
 
-            // 1-Click Direct Phone Dial Pad Button for Rider to Call Customer Immediately
-            DirectDialPadCallButton(
-                orderId = order.orderId,
-                callerRole = "RIDER",
-                callerName = order.assignedRiderName ?: "Vikram Rathore",
-                receiverRole = "Customer",
-                receiverName = order.customerName,
-                phoneNumber = order.customerPhone,
-                buttonTestTag = "rider_call_customer_dial_btn_${order.orderId}"
-            )
+            // 2. Quick Call Customer + Toggle Chat Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.weight(1.3f)) {
+                    DirectDialPadCallButton(
+                        orderId = order.orderId,
+                        callerRole = "RIDER",
+                        callerName = order.assignedRiderName ?: riderDisplayName,
+                        receiverRole = "Customer",
+                        receiverName = order.customerName,
+                        phoneNumber = order.customerPhone,
+                        buttonTestTag = "rider_call_customer_dial_btn_${order.orderId}"
+                    )
+                }
+                OutlinedButton(
+                    onClick = { showChatSection = !showChatSection },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = if (showChatSection) "Hide Chat" else "💬 Chat",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
 
-            // REAL-TIME FIRESTORE CHAT WITH CUSTOMER (Active once order is assigned)
-            if (order.orderStatus != OrderStatus.SEARCHING_RIDER && order.orderStatus != OrderStatus.CANCELLED) {
+            if (showChatSection) {
                 com.example.ui.components.OrderRealTimeChatSection(
                     order = order,
                     viewerRole = "RIDER",
-                    viewerName = order.assignedRiderName ?: "Vikram Singh"
+                    viewerName = order.assignedRiderName ?: riderDisplayName
                 )
             }
 
             HorizontalDivider()
 
-            // KRAM 2A: Primary Progressive Step Action (Step 1 Accept -> Step 2 Pickup -> Step 3 Deliver -> Step 4 Rate Customer)
-            var riderHasConfirmedAccept by rememberSaveable(order.orderId) {
-                mutableStateOf(
-                    order.orderStatus != OrderStatus.SEARCHING_RIDER &&
-                        order.orderStatus != OrderStatus.RIDER_ASSIGNED
-                )
-            }
-
-            if (order.orderStatus == OrderStatus.SEARCHING_RIDER ||
-                (order.orderStatus == OrderStatus.RIDER_ASSIGNED && !riderHasConfirmedAccept)
-            ) {
-                Surface(
-                    color = Color(0xFFFFF7ED),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.5.dp, RiderOrange),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "🔔 New Order Request — Accept or Reject",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF9A3412)
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
-                                    onRejectOrder()
-                                },
-                                border = BorderStroke(1.dp, Color(0xFFDC2626)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("rider_reject_order_btn_${order.orderId}")
-                            ) {
-                                Text("❌ Reject", fontWeight = FontWeight.Bold)
-                            }
-                            Button(
-                                onClick = {
-                                    com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
-                                    riderHasConfirmedAccept = true
-                                    onAcceptOrder()
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
-                                modifier = Modifier
-                                    .weight(2f)
-                                    .testTag("rider_accept_order_btn_${order.orderId}")
-                            ) {
-                                Text("✅ Accept (${order.riderEarning})", fontWeight = FontWeight.ExtraBold)
-                            }
-                        }
-                    }
-                }
-            }
-
+            // 3. STEP-BY-STEP PICKUP / DROP SIGNATURE & ORDER DELIVERED COMPLETION
             when (order.orderStatus) {
                 OrderStatus.SEARCHING_RIDER -> Unit
 
                 OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP -> {
-                    if (!riderHasConfirmedAccept) {
+                    val pickupSigSvg = remember(pickupSignatureStrokes.toList()) {
+                        strokesToSignatureSvg(pickupSignatureStrokes.toList())
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "👆 Tap '✅ Accept' above to unlock Pickup OTP & Parcel Photo.",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = RiderTeal
+                            text = "📦 Step 1: Parcel Pickup & Customer Signature",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = RiderNavy
                         )
-                    } else if (isPrepaidOrder) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedTextField(
-                                    value = pickupOtpInput,
-                                    onValueChange = { if (it.length <= 4) pickupOtpInput = it.filter(Char::isDigit) },
-                                    label = { Text("Enter 4-Digit Pickup OTP") },
-                                    placeholder = { Text("Ask customer") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    singleLine = true,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("rider_pickup_otp_input_${order.orderId}")
-                                )
-                                Button(
-                                    onClick = { onVerifyPickupOtp(pickupOtpInput) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = RiderTeal),
-                                    modifier = Modifier.testTag("rider_verify_pickup_btn_${order.orderId}")
-                                ) {
-                                    Text("Step 2: Pickup Parcel")
-                                }
-                            }
-                            OutlinedButton(
-                                onClick = { showPickupProofDialog = true },
+
+                        if (isPrepaidOrder) {
+                            OutlinedTextField(
+                                value = pickupOtpInput,
+                                onValueChange = { if (it.length <= 4) pickupOtpInput = it.filter(Char::isDigit) },
+                                label = { Text("Enter 4-Digit Pickup OTP *") },
+                                placeholder = { Text("Ask customer for Pickup OTP") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("rider_open_pickup_proof_dialog_btn_${order.orderId}")
-                            ) {
-                                Text("📷✍️ Pickup Photo & Digital Signature Dialog", fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    .testTag("rider_pickup_otp_input_${order.orderId}")
+                            )
+                        } else {
                             Surface(
                                 color = Color(0xFFECFDF5),
                                 shape = RoundedCornerShape(8.dp),
@@ -1841,72 +1853,108 @@ private fun RiderProgressiveOrderCard(
                                     .testTag("rider_cod_no_pickup_otp_badge_${order.orderId}")
                             ) {
                                 Text(
-                                    text = "💵 Cash on Delivery (COD) — No OTP Required for Pickup",
+                                    text = "💵 Cash on Delivery (COD) — No Pickup OTP Required",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF065F46),
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                 )
                             }
-                            Button(
-                                onClick = { onVerifyPickupOtp(order.pickupOtp) },
-                                colors = ButtonDefaults.buttonColors(containerColor = RiderTeal),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("rider_verify_pickup_btn_${order.orderId}")
-                            ) {
-                                Text("Step 2: Confirm Parcel Pickup (COD — No OTP)", fontWeight = FontWeight.Bold)
-                            }
-                            OutlinedButton(
-                                onClick = { showPickupProofDialog = true },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("rider_open_pickup_proof_dialog_btn_${order.orderId}")
-                            ) {
-                                Text("📷✍️ Pickup Photo & Digital Signature Dialog", fontWeight = FontWeight.Bold)
-                            }
+                        }
+
+                        OutlinedTextField(
+                            value = pickupSenderName,
+                            onValueChange = { pickupSenderName = it },
+                            label = { Text("Customer / Sender Name *") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        DigitalSignaturePadCanvas(
+                            signerLabel = "Customer Pickup",
+                            strokes = pickupSignatureStrokes,
+                            onAddStroke = { stroke -> pickupSignatureStrokes.add(stroke) },
+                            onClearSignature = { pickupSignatureStrokes.clear() },
+                            padTestTag = "pickup_proof_signature_pad_${order.orderId}",
+                            clearButtonTestTag = "pickup_proof_signature_clear_btn_${order.orderId}"
+                        )
+
+                        OutlinedButton(
+                            onClick = onCapturePhotoProof,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rider_take_parcel_photo_btn_${order.orderId}")
+                        ) {
+                            Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (photoProofNote != null) "📷 Pickup Photo Attached ✓" else "📷 Take Pickup Parcel Photo (Optional)",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                onCompletePickupWithSignature(pickupOtpInput, pickupSenderName, pickupSigSvg)
+                            },
+                            enabled = pickupSigSvg.isNotBlank() && pickupSenderName.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = RiderTeal),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("rider_verify_pickup_btn_${order.orderId}")
+                        ) {
+                            Text(
+                                text = "✅ Complete Pickup & Unlock Drop Map →",
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         }
                     }
                 }
 
                 OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> {
-                    if (isPrepaidOrder) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                    val dropSigSvg = remember(dropSignatureStrokes.toList()) {
+                        strokesToSignatureSvg(dropSignatureStrokes.toList())
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (orderPickupProof != null) {
+                            Surface(
+                                color = Color(0xFFF0FDFA),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, RiderTeal.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                OutlinedTextField(
-                                    value = deliveryOtpInput,
-                                    onValueChange = { if (it.length <= 4) deliveryOtpInput = it.filter(Char::isDigit) },
-                                    label = { Text("Enter 4-Digit Drop OTP") },
-                                    placeholder = { Text("Ask recipient") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    singleLine = true,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("rider_delivery_otp_input_${order.orderId}")
+                                Text(
+                                    text = "✍️ Pickup e-Signed by ${orderPickupProof.senderName} ✓",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0F766E),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                 )
-                                Button(
-                                    onClick = { onVerifyDeliveryOtp(deliveryOtpInput) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = VerifiedGreen),
-                                    modifier = Modifier.testTag("rider_verify_delivery_btn_${order.orderId}")
-                                ) {
-                                    Text("Step 3: Complete Delivery")
-                                }
-                            }
-                            OutlinedButton(
-                                onClick = { showDeliveryProofDialog = true },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("rider_open_delivery_proof_dialog_btn_${order.orderId}")
-                            ) {
-                                Text("📷✍️ Delivery Photo & Digital Signature Dialog", fontWeight = FontWeight.Bold)
                             }
                         }
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+
+                        Text(
+                            text = "🏁 Step 2: Drop Parcel & Customer Signature",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = RiderNavy
+                        )
+
+                        if (isPrepaidOrder) {
+                            OutlinedTextField(
+                                value = deliveryOtpInput,
+                                onValueChange = { if (it.length <= 4) deliveryOtpInput = it.filter(Char::isDigit) },
+                                label = { Text("Enter 4-Digit Drop OTP *") },
+                                placeholder = { Text("Ask receiver for Drop OTP") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_delivery_otp_input_${order.orderId}")
+                            )
+                        } else {
                             Surface(
                                 color = Color(0xFFECFDF5),
                                 shape = RoundedCornerShape(8.dp),
@@ -1915,33 +1963,62 @@ private fun RiderProgressiveOrderCard(
                                     .testTag("rider_cod_no_delivery_otp_badge_${order.orderId}")
                             ) {
                                 Text(
-                                    text = "💵 Cash on Delivery (COD) — Collect ${order.totalAmount} Cash (No OTP Required)",
+                                    text = "💵 Collect ${order.totalAmount} Cash at Drop (No OTP Required)",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF065F46),
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                 )
                             }
-                            Button(
-                                onClick = { onVerifyDeliveryOtp(order.deliveryOtp) },
-                                colors = ButtonDefaults.buttonColors(containerColor = VerifiedGreen),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("rider_verify_delivery_btn_${order.orderId}")
-                            ) {
-                                Text(
-                                    "Step 3: Collect ${order.totalAmount} Cash & Complete Delivery (No OTP)",
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = { showDeliveryProofDialog = true },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("rider_open_delivery_proof_dialog_btn_${order.orderId}")
-                            ) {
-                                Text("📷✍️ Delivery Photo & Digital Signature Dialog", fontWeight = FontWeight.Bold)
-                            }
+                        }
+
+                        OutlinedTextField(
+                            value = dropReceiverName,
+                            onValueChange = { dropReceiverName = it },
+                            label = { Text("Receiver Name *") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        DigitalSignaturePadCanvas(
+                            signerLabel = "Customer Drop",
+                            strokes = dropSignatureStrokes,
+                            onAddStroke = { stroke -> dropSignatureStrokes.add(stroke) },
+                            onClearSignature = { dropSignatureStrokes.clear() },
+                            padTestTag = "delivery_proof_signature_pad_${order.orderId}",
+                            clearButtonTestTag = "delivery_proof_signature_clear_btn_${order.orderId}"
+                        )
+
+                        OutlinedButton(
+                            onClick = onCapturePhotoProof,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rider_take_drop_photo_btn_${order.orderId}")
+                        ) {
+                            Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (photoProofNote != null) "📷 Drop Photo Attached ✓" else "📷 Take Drop Photo (Optional)",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                onCompleteDropWithSignature(deliveryOtpInput, dropReceiverName, dropSigSvg)
+                            },
+                            enabled = dropSigSvg.isNotBlank() && dropReceiverName.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = VerifiedGreen),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("rider_verify_delivery_btn_${order.orderId}")
+                        ) {
+                            Text(
+                                text = "✅ Save Drop Signature & Complete",
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         }
                     }
                 }
@@ -1949,112 +2026,66 @@ private fun RiderProgressiveOrderCard(
                 OrderStatus.DELIVERED -> {
                     Surface(
                         color = Color(0xFFECFDF5),
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, VerifiedGreen),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = VerifiedGreen)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (tipAmountInr > 0) {
-                                    "Delivered Successfully • Earned ${order.riderEarning} + ₹$tipAmountInr Tip"
-                                } else {
-                                    "Delivered Successfully • Earned ${order.riderEarning}"
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF065F46)
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = VerifiedGreen)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (tipAmountInr > 0) {
+                                        "Completed • Earned ${order.riderEarning} + ₹$tipAmountInr Tip"
+                                    } else {
+                                        "Completed • Earned ${order.riderEarning}"
+                                    },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF065F46)
+                                )
+                            }
+                            if (orderPickupProof != null) {
+                                Text(
+                                    text = "✓ Pickup Signature: ${orderPickupProof.senderName}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF047857)
+                                )
+                            }
+                            if (orderDeliveryProof != null) {
+                                Text(
+                                    text = "✓ Drop Signature: ${orderDeliveryProof.recipientName}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF047857)
+                                )
+                            }
                         }
                     }
-                    RiderReceivedFeedbackCard(
-                        orderId = order.orderId
-                    )
-                    RiderRateCustomerSection(
-                        orderId = order.orderId,
-                        riderId = order.assignedRiderId ?: "RIDER-101",
-                        riderName = order.assignedRiderName ?: "Vikram Singh",
-                        customerName = order.customerName
-                    )
+
+                    Button(
+                        onClick = { onOrderDeliveredToHistory(order.orderId) },
+                        colors = ButtonDefaults.buttonColors(containerColor = RiderTeal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("rider_order_delivered_archive_btn_${order.orderId}")
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Order Delivered",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                    }
                 }
 
-                OrderStatus.CANCELLED -> {
-                    Text(
-                        text = "Order Cancelled",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color(0xFFB91C1C)
-                    )
-                }
-            }
-
-            // KRAM 2B: Parcel Photo Proof & Live GPS Update
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onCapturePhotoProof,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("rider_take_parcel_photo_btn_${order.orderId}")
-                ) {
-                    Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (photoProofNote != null) "Retake Photo" else "Parcel Photo",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = onUpdateLiveLocation,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("rider_share_live_gps_btn_${order.orderId}")
-                ) {
-                    Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Update Live GPS",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-            }
-
-            if (photoProofNote != null) {
-                Text(
-                    text = "📷 $photoProofNote",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = VerifiedGreen
-                )
-            }
-            if (liveGpsNote != null) {
-                Text(
-                    text = "📍 $liveGpsNote",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = RiderTeal
-                )
-            }
-
-            if (orderPickupProof != null) {
-                PickupProofHistoryCard(proof = orderPickupProof)
-            }
-            if (orderDeliveryProof != null) {
-                DeliveryProofHistoryCard(proof = orderDeliveryProof)
-            }
-
-            // RIDER ORDER TRANSFER FACILITY (Vehicle Breakdown / Emergency — Max 3x/Week, locks until next week)
-            if (isLiveTrackingActive) {
-                RiderOrderTransferFacilityCard(
-                    orderId = order.orderId,
-                    currentRiderId = order.assignedRiderId ?: "RIDER-101",
-                    onOrderTransferred = onOrderTransferred
-                )
+                OrderStatus.CANCELLED -> Unit
             }
         }
     }
@@ -2371,8 +2402,8 @@ fun RiderProfileDetailsDialog(
                     ProfileInfoRow(label = "Mobile", value = "+91 ${rider.mobile.removePrefix("+91").trim()}")
                     ProfileInfoRow(label = "Email", value = rider.email)
                     ProfileInfoRow(label = "Vehicle", value = "${rider.vehicleType.title} • ${rider.vehicleNumber}")
-                    ProfileInfoRow(label = "Aadhaar Card", value = rider.aadhaarNumber.ifBlank { "XXXX-XXXX-1101" })
-                    ProfileInfoRow(label = "PAN Card", value = rider.panNumber.ifBlank { "ABCDE1101F" })
+                    ProfileInfoRow(label = "Aadhaar Card", value = rider.aadhaarNumber.ifBlank { "Not Uploaded" })
+                    ProfileInfoRow(label = "PAN Card", value = rider.panNumber.ifBlank { "Not Uploaded" })
                     ProfileInfoRow(label = "Total Deliveries", value = "${rider.totalDeliveries} Completed")
                     ProfileInfoRow(
                         label = "Wallet Balance",

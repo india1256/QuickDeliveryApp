@@ -102,6 +102,24 @@ object RiderMapNavigationManager {
     private val _activeSession = MutableStateFlow<ActiveRiderMapNavigationSession?>(null)
     val activeSession: StateFlow<ActiveRiderMapNavigationSession?> = _activeSession.asStateFlow()
 
+    private fun isLegacyPlaceholderCoord(lat: Double, lng: Double, address: String): Boolean {
+        val lower = address.lowercase()
+        val mentionsBangalore = lower.contains("indiranagar") ||
+            lower.contains("koramangala") ||
+            lower.contains("mg road") ||
+            lower.contains("bangalore") ||
+            lower.contains("bengaluru")
+        if (mentionsBangalore) return false
+        val placeholders = listOf(
+            12.9716 to 77.5946,
+            12.9784 to 77.6408,
+            12.9352 to 77.6245
+        )
+        return placeholders.any { (pLat, pLng) ->
+            kotlin.math.abs(lat - pLat) < 0.0005 && kotlin.math.abs(lng - pLng) < 0.0005
+        }
+    }
+
     fun startDirectNavigationForOrder(
         order: CustomerOrder,
         preferredTarget: RiderNavigationTargetType? = null
@@ -121,8 +139,8 @@ object RiderMapNavigationManager {
             targetType = resolvedTarget,
             targetAddress = if (isPickup) order.pickupAddress.fullAddress else order.dropAddress.fullAddress,
             targetLandmark = if (isPickup) order.pickupAddress.landmark else order.dropAddress.landmark,
-            startLat = if (isPickup) (order.pickupAddress.lat - 0.012) else order.pickupAddress.lat,
-            startLng = if (isPickup) (order.pickupAddress.lng - 0.012) else order.pickupAddress.lng,
+            startLat = if (isPickup) order.pickupAddress.lat else order.dropAddress.lat,
+            startLng = if (isPickup) order.pickupAddress.lng else order.dropAddress.lng,
             targetLat = if (isPickup) order.pickupAddress.lat else order.dropAddress.lat,
             targetLng = if (isPickup) order.pickupAddress.lng else order.dropAddress.lng,
             isNavigationActive = true
@@ -136,9 +154,8 @@ object RiderMapNavigationManager {
     }
 
     /**
-     * Launches external Google Maps Turn-by-Turn Navigation directly to the target coordinates/address.
-     * Guaranteed to work on all Android versions (11+, 14, 15) and fall back smoothly to web directions
-     * without failing on package visibility.
+     * Launches external Google Maps Turn-by-Turn Navigation directly to the customer's
+     * real verified GPS coordinates OR their real street address text (never dummy coordinates).
      */
     fun launchExternalGoogleMapsTurnByTurn(
         context: Context,
@@ -146,14 +163,28 @@ object RiderMapNavigationManager {
         targetLng: Double,
         targetAddress: String
     ): Boolean {
-        val safeLat = if (targetLat == 0.0) 12.9716 else targetLat
-        val safeLng = if (targetLng == 0.0) 77.5946 else targetLng
-        val latLngStr = String.format(Locale.US, "%.6f,%.6f", safeLat, safeLng)
-        val encodedAddr = Uri.encode(targetAddress.ifBlank { "Customer Location" })
+        val cleanAddress = targetAddress.trim()
+        val hasValidRealCoords = targetLat != 0.0 && targetLng != 0.0 &&
+            !isLegacyPlaceholderCoord(targetLat, targetLng, cleanAddress)
+        if (!hasValidRealCoords && cleanAddress.isBlank()) {
+            return false
+        }
+
+        val encodedAddr = Uri.encode(cleanAddress)
+        val navQuery = if (hasValidRealCoords) {
+            String.format(Locale.US, "%.6f,%.6f", targetLat, targetLng)
+        } else {
+            encodedAddr
+        }
+        val webDestination = if (hasValidRealCoords) {
+            String.format(Locale.US, "%.6f,%.6f", targetLat, targetLng)
+        } else {
+            encodedAddr
+        }
 
         // 1. Direct Turn-by-Turn Driving Navigation in Google Maps app
         try {
-            val navUri = Uri.parse("google.navigation:q=$latLngStr&mode=d")
+            val navUri = Uri.parse("google.navigation:q=$navQuery&mode=d")
             val navIntent = Intent(Intent.ACTION_VIEW, navUri).apply {
                 setPackage("com.google.android.apps.maps")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -162,9 +193,20 @@ object RiderMapNavigationManager {
             return true
         } catch (_: Exception) {}
 
-        // 2. Generic navigation scheme (any navigation app installed on device)
+        // 2. Google Maps Web/App-Link Driving Directions in Google Maps app
         try {
-            val genericNavUri = Uri.parse("google.navigation:q=$latLngStr&mode=d")
+            val appLinkUri = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$webDestination&travelmode=driving")
+            val appLinkIntent = Intent(Intent.ACTION_VIEW, appLinkUri).apply {
+                setPackage("com.google.android.apps.maps")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            context.startActivity(appLinkIntent)
+            return true
+        } catch (_: Exception) {}
+
+        // 3. Generic navigation scheme (any navigation app installed on device)
+        try {
+            val genericNavUri = Uri.parse("google.navigation:q=$navQuery&mode=d")
             val genericNavIntent = Intent(Intent.ACTION_VIEW, genericNavUri).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
@@ -172,9 +214,14 @@ object RiderMapNavigationManager {
             return true
         } catch (_: Exception) {}
 
-        // 3. Standard geo: scheme with coordinates pin
+        // 4. Standard geo: scheme with coordinates or address search
         try {
-            val geoUri = Uri.parse("geo:$latLngStr?q=$latLngStr($encodedAddr)&z=17")
+            val geoUri = if (hasValidRealCoords) {
+                val labelParam = if (cleanAddress.isNotBlank()) "($encodedAddr)" else ""
+                Uri.parse("geo:$navQuery?q=$navQuery$labelParam&z=17")
+            } else {
+                Uri.parse("geo:0,0?q=$encodedAddr")
+            }
             val geoIntent = Intent(Intent.ACTION_VIEW, geoUri).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
@@ -182,23 +229,13 @@ object RiderMapNavigationManager {
             return true
         } catch (_: Exception) {}
 
-        // 4. Google Maps Web Directions (Opens Google Maps app via App Links, or browser in Driving Navigation mode)
+        // 5. Universal Google Maps Web Directions fallback (Browser or App Link)
         try {
-            val webDirUri = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$latLngStr&travelmode=driving")
+            val webDirUri = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$webDestination&travelmode=driving")
             val webDirIntent = Intent(Intent.ACTION_VIEW, webDirUri).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
             context.startActivity(webDirIntent)
-            return true
-        } catch (_: Exception) {}
-
-        // 5. Fallback Maps URL
-        try {
-            val fallbackUri = Uri.parse("https://maps.google.com/?q=$latLngStr")
-            val fallbackIntent = Intent(Intent.ACTION_VIEW, fallbackUri).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-            context.startActivity(fallbackIntent)
             return true
         } catch (_: Exception) {}
 
@@ -207,9 +244,10 @@ object RiderMapNavigationManager {
 }
 
 /**
- * Inline Address & 1-Click Direct Map Navigation Card shown inside every Rider Order Card.
- * Clicking "Start Navigation" or either Pickup/Drop "Navigate" button immediately opens
- * Google Maps Turn-by-Turn Navigation directly to the Customer's exact location!
+ * Clean Customer Pickup & Drop Address Box with Sequential Map Navigation:
+ * - Always displays BOTH Pickup & Drop addresses clearly after order acceptance.
+ * - Stage 1 (Before Pickup): Pickup Navigation is active; Drop Navigation is LOCKED.
+ * - Stage 2 (After Pickup): Drop Navigation UNLOCKS and launches Google Maps directly.
  */
 @Composable
 fun RiderOrderAddressAndNavigationBox(
@@ -218,45 +256,52 @@ fun RiderOrderAddressAndNavigationBox(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val defaultTarget = when (order.orderStatus) {
-        OrderStatus.SEARCHING_RIDER,
-        OrderStatus.RIDER_ASSIGNED,
-        OrderStatus.ARRIVED_AT_PICKUP -> RiderNavigationTargetType.PICKUP
-        else -> RiderNavigationTargetType.DROP
-    }
+    val isPickedUp = order.orderStatus == OrderStatus.PICKED_UP ||
+        order.orderStatus == OrderStatus.IN_TRANSIT ||
+        order.orderStatus == OrderStatus.DELIVERED
 
-    val pickupLat = if (order.pickupAddress.lat != 0.0) order.pickupAddress.lat else 12.9784
-    val pickupLng = if (order.pickupAddress.lng != 0.0) order.pickupAddress.lng else 77.6408
-    val dropLat = if (order.dropAddress.lat != 0.0) order.dropAddress.lat else 12.9352
-    val dropLng = if (order.dropAddress.lng != 0.0) order.dropAddress.lng else 77.6245
+    val pickupLat = order.pickupAddress.lat
+    val pickupLng = order.pickupAddress.lng
+    val dropLat = order.dropAddress.lat
+    val dropLng = order.dropAddress.lng
 
     Surface(
-        color = Color(0xFFF0FDF4),
+        color = Color(0xFFF8FAFC),
         shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.2.dp, Color(0xFF059669)),
+        border = BorderStroke(1.2.dp, Color(0xFF008080).copy(alpha = 0.45f)),
         modifier = modifier
             .fillMaxWidth()
             .testTag("rider_address_navigation_box_${order.orderId}")
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Pickup Address Row + Direct Navigate Button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // 1. CUSTOMER PICKUP ADDRESS + NAVIGATION BAR
+            Surface(
+                color = if (!isPickedUp) Color(0xFFF0FDF4) else Color(0xFFF1F5F9),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, if (!isPickedUp) Color(0xFF10B981) else Color(0xFFCBD5E1)),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isPickedUp) "✅ PICKUP COMPLETED (${order.customerName})" else "📍 1. PICKUP ADDRESS (${order.customerName})",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isPickedUp) Color(0xFF047857) else Color(0xFF065F46)
+                        )
+                    }
                     Text(
-                        text = "📍 Pickup Location (Customer: ${order.customerName})",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF065F46)
-                    )
-                    Text(
-                        text = order.pickupAddress.fullAddress,
+                        text = order.pickupAddress.fullAddress.ifBlank { "Pickup address pending" },
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF0D1B2A)
@@ -268,47 +313,62 @@ fun RiderOrderAddressAndNavigationBox(
                             color = Color(0xFF475569)
                         )
                     }
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(
-                    onClick = {
-                        RiderMapNavigationManager.launchExternalGoogleMapsTurnByTurn(
-                            context = context,
-                            targetLat = pickupLat,
-                            targetLng = pickupLng,
-                            targetAddress = order.pickupAddress.fullAddress
-                        )
-                        onOpenLiveMapNavigation(RiderNavigationTargetType.PICKUP)
-                    },
-                    border = BorderStroke(1.dp, Color(0xFF059669)),
-                    modifier = Modifier.testTag("rider_navigate_pickup_btn_${order.orderId}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Navigation,
-                        contentDescription = "Navigate to Pickup",
-                        tint = Color(0xFF059669),
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Pickup Map", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    if (!isPickedUp) {
+                        Button(
+                            onClick = {
+                                RiderMapNavigationManager.launchExternalGoogleMapsTurnByTurn(
+                                    context = context,
+                                    targetLat = pickupLat,
+                                    targetLng = pickupLng,
+                                    targetAddress = order.pickupAddress.fullAddress
+                                )
+                                onOpenLiveMapNavigation(RiderNavigationTargetType.PICKUP)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rider_navigate_pickup_btn_${order.orderId}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Navigation,
+                                contentDescription = "Navigate to Pickup Location",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Navigate to Pickup Location",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
+                            )
+                        }
+                    }
                 }
             }
 
-            // Drop Address Row + Direct Navigate Button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // 2. CUSTOMER DROP ADDRESS + SEQUENTIAL NAVIGATION LOCK
+            val dropContactLabel = order.dropAddress.contactName.ifBlank { order.customerName }
+            Surface(
+                color = if (isPickedUp) Color(0xFFFFF7ED) else Color(0xFFF1F5F9),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, if (isPickedUp) Color(0xFFEA580C) else Color(0xFFCBD5E1)),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Text(
-                        text = "🏁 Customer Drop Address",
+                        text = "🏁 2. DROP ADDRESS ($dropContactLabel" +
+                            if (order.dropAddress.contactPhone.isNotBlank()) " • ${order.dropAddress.contactPhone})" else ")",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFFEA580C)
+                        color = if (isPickedUp) Color(0xFFC2410C) else Color(0xFF475569)
                     )
                     Text(
-                        text = order.dropAddress.fullAddress,
+                        text = order.dropAddress.fullAddress.ifBlank { "Drop address pending" },
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF0D1B2A)
@@ -320,69 +380,56 @@ fun RiderOrderAddressAndNavigationBox(
                             color = Color(0xFF475569)
                         )
                     }
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(
-                    onClick = {
-                        RiderMapNavigationManager.launchExternalGoogleMapsTurnByTurn(
-                            context = context,
-                            targetLat = dropLat,
-                            targetLng = dropLng,
-                            targetAddress = order.dropAddress.fullAddress
-                        )
-                        onOpenLiveMapNavigation(RiderNavigationTargetType.DROP)
-                    },
-                    border = BorderStroke(1.dp, Color(0xFFEA580C)),
-                    modifier = Modifier.testTag("rider_navigate_drop_btn_${order.orderId}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Navigation,
-                        contentDescription = "Navigate to Drop",
-                        tint = Color(0xFFEA580C),
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Drop Map", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                }
-            }
 
-            // Primary 1-Click Direct Google Maps Turn-by-Turn Navigation Button
-            val activeTargetIsPickup = defaultTarget == RiderNavigationTargetType.PICKUP
-            val activeLat = if (activeTargetIsPickup) pickupLat else dropLat
-            val activeLng = if (activeTargetIsPickup) pickupLng else dropLng
-            val activeAddress = if (activeTargetIsPickup) order.pickupAddress.fullAddress else order.dropAddress.fullAddress
-
-            Button(
-                onClick = {
-                    RiderMapNavigationManager.launchExternalGoogleMapsTurnByTurn(
-                        context = context,
-                        targetLat = activeLat,
-                        targetLng = activeLng,
-                        targetAddress = activeAddress
-                    )
-                    onOpenLiveMapNavigation(defaultTarget)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("rider_start_live_navigation_btn_${order.orderId}")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Navigation,
-                    contentDescription = "Start Direct Map Navigation",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (activeTargetIsPickup) {
-                        "🧭 Open Google Maps Navigation → Pickup Address"
+                    if (isPickedUp) {
+                        Button(
+                            onClick = {
+                                RiderMapNavigationManager.launchExternalGoogleMapsTurnByTurn(
+                                    context = context,
+                                    targetLat = dropLat,
+                                    targetLng = dropLng,
+                                    targetAddress = order.dropAddress.fullAddress
+                                )
+                                onOpenLiveMapNavigation(RiderNavigationTargetType.DROP)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEA580C)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rider_navigate_drop_btn_${order.orderId}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Navigation,
+                                contentDescription = "Navigate to Drop Location",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Navigate to Drop Location",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
+                            )
+                        }
                     } else {
-                        "🧭 Open Google Maps Navigation → Drop Address"
-                    },
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.ExtraBold
-                )
+                        Surface(
+                            color = Color(0xFFE2E8F0),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rider_drop_navigation_locked_${order.orderId}")
+                        ) {
+                            Text(
+                                text = "🔒 Drop Navigation Locked — Complete Parcel Pickup First",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF475569),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

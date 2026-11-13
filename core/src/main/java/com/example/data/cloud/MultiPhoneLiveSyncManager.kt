@@ -422,26 +422,26 @@ object MultiPhoneLiveSyncManager {
 
     private fun deserializeOrderFromJson(obj: JSONObject): CustomerOrder? = runCatching {
         val pickup = AddressDetails(
-            fullAddress = obj.optString("pickupFullAddress", "Indiranagar"),
+            fullAddress = obj.optString("pickupFullAddress", ""),
             landmark = obj.optString("pickupLandmark", ""),
             contactName = obj.optString("pickupContactName", "Sender"),
-            contactPhone = obj.optString("pickupContactPhone", "9876543210"),
-            lat = obj.optDouble("pickupLat", 12.9784),
-            lng = obj.optDouble("pickupLng", 77.6408)
+            contactPhone = obj.optString("pickupContactPhone", ""),
+            lat = obj.optDouble("pickupLat", 0.0),
+            lng = obj.optDouble("pickupLng", 0.0)
         )
         val drop = AddressDetails(
-            fullAddress = obj.optString("dropFullAddress", "Koramangala"),
+            fullAddress = obj.optString("dropFullAddress", ""),
             landmark = obj.optString("dropLandmark", ""),
             contactName = obj.optString("dropContactName", "Receiver"),
-            contactPhone = obj.optString("dropContactPhone", "9845012345"),
-            lat = obj.optDouble("dropLat", 12.9352),
-            lng = obj.optDouble("dropLng", 77.6245)
+            contactPhone = obj.optString("dropContactPhone", ""),
+            lat = obj.optDouble("dropLat", 0.0),
+            lng = obj.optDouble("dropLng", 0.0)
         )
         val pkgType = runCatching { PackageType.valueOf(obj.optString("packageType", "DOCUMENTS")) }
             .getOrDefault(PackageType.DOCUMENTS)
         val pkg = PackageDetails(
             packageType = pkgType,
-            weightKg = obj.optString("weightKg", "1.5"),
+            weightKg = obj.optString("weightKg", "1.0"),
             description = obj.optString("description", "Parcel")
         )
         val vehicle = runCatching { VehicleType.valueOf(obj.optString("vehicleType", "BIKE")) }
@@ -463,18 +463,18 @@ object MultiPhoneLiveSyncManager {
             orderId = obj.optString("orderId", "QD-1001"),
             customerId = obj.optString("customerId", "CUST-1001"),
             customerName = obj.optString("customerName", "Customer"),
-            customerPhone = obj.optString("customerPhone", "9876543210"),
+            customerPhone = obj.optString("customerPhone", ""),
             pickupAddress = pickup,
             dropAddress = drop,
             packageDetails = pkg,
             vehicleType = vehicle,
             orderStatus = status,
-            totalAmount = obj.optString("totalAmount", "₹100"),
-            platformCommission = obj.optString("platformCommission", "₹20"),
-            riderEarning = obj.optString("riderEarning", "₹80"),
-            distanceKm = obj.optDouble("distanceKm", 4.5),
-            pickupOtp = obj.optString("pickupOtp", "4821"),
-            deliveryOtp = obj.optString("deliveryOtp", "9314"),
+            totalAmount = obj.optString("totalAmount", "₹0"),
+            platformCommission = obj.optString("platformCommission", "₹0"),
+            riderEarning = obj.optString("riderEarning", "₹0"),
+            distanceKm = obj.optDouble("distanceKm", 0.0),
+            pickupOtp = obj.optString("pickupOtp", ""),
+            deliveryOtp = obj.optString("deliveryOtp", ""),
             assignedRiderId = assignedRiderId,
             assignedRiderName = assignedRiderName,
             assignedRiderPhone = assignedRiderPhone,
@@ -489,15 +489,15 @@ object MultiPhoneLiveSyncManager {
     private fun parsePickupProof(obj: JSONObject, fallbackOrderId: String): PickupProof? = runCatching {
         PickupProof(
             orderId = obj.optString("orderId", fallbackOrderId),
-            riderId = obj.optString("riderId", "RIDER-101"),
-            riderName = obj.optString("riderName", "Vikram Rathore"),
+            riderId = obj.optString("riderId", ""),
+            riderName = obj.optString("riderName", "Rider Partner"),
             packagePhotoUrl = obj.optString("packagePhotoUrl", ""),
-            packagePhotoSummary = obj.optString("packagePhotoSummary", "Live Camera Package Photo Verified"),
+            packagePhotoSummary = obj.optString("packagePhotoSummary", "Pickup Verified"),
             senderName = obj.optString("senderName", "Sender"),
             senderSignatureSvg = obj.optString("senderSignatureSvg", ""),
             verifiedOtp = obj.optString("verifiedOtp", ""),
-            latitude = obj.optDouble("latitude", 12.9716),
-            longitude = obj.optDouble("longitude", 77.5946),
+            latitude = obj.optDouble("latitude", 0.0),
+            longitude = obj.optDouble("longitude", 0.0),
             capturedAt = obj.optString("capturedAt", "")
         )
     }.getOrNull()
@@ -505,16 +505,16 @@ object MultiPhoneLiveSyncManager {
     private fun parseDeliveryProof(obj: JSONObject, fallbackOrderId: String): DeliveryProof? = runCatching {
         DeliveryProof(
             orderId = obj.optString("orderId", fallbackOrderId),
-            riderId = obj.optString("riderId", "RIDER-101"),
-            riderName = obj.optString("riderName", "Vikram Rathore"),
+            riderId = obj.optString("riderId", ""),
+            riderName = obj.optString("riderName", "Rider Partner"),
             deliveryPhotoUrl = obj.optString("deliveryPhotoUrl", ""),
-            deliveryPhotoSummary = obj.optString("deliveryPhotoSummary", "Live Camera Drop Photo Verified"),
+            deliveryPhotoSummary = obj.optString("deliveryPhotoSummary", "Delivery Verified"),
             recipientName = obj.optString("recipientName", "Receiver"),
             recipientSignatureSvg = obj.optString("recipientSignatureSvg", ""),
             verifiedOtp = obj.optString("verifiedOtp", ""),
             codAmountCollectedInr = obj.optDouble("codAmountCollectedInr", 0.0),
-            latitude = obj.optDouble("latitude", 12.9352),
-            longitude = obj.optDouble("longitude", 77.6245),
+            latitude = obj.optDouble("latitude", 0.0),
+            longitude = obj.optDouble("longitude", 0.0),
             capturedAt = obj.optString("capturedAt", "")
         )
     }.getOrNull()

@@ -74,8 +74,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.data.cloud.KycDocFieldType
+import com.example.data.cloud.KycPhotoVerificationResult
 import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.RiderApprovalWorkflowStatus
+import com.example.data.cloud.RiderKycImageQualityVerifier
 import com.example.data.cloud.RiderRegistrationApprovalManager
 import com.example.data.cloud.RiderRegistrationRecord
 import com.example.data.model.VehicleType
@@ -138,20 +141,86 @@ fun RiderFirstTimeKycUploadScreen(
         mutableStateOf(RiderRegistrationApprovalManager.decodeBase64ToBitmap(existingRecord?.selfieImageBase64))
     }
 
+    var aadhaarCheck by remember {
+        mutableStateOf(
+            aadhaarBitmap?.let {
+                RiderKycImageQualityVerifier.analyzeBitmap(KycDocFieldType.AADHAAR, it)
+            }
+        )
+    }
+    var panCheck by remember {
+        mutableStateOf(
+            panBitmap?.let {
+                RiderKycImageQualityVerifier.analyzeBitmap(KycDocFieldType.PAN, it)
+            }
+        )
+    }
+    var dlCheck by remember {
+        mutableStateOf(
+            dlBitmap?.let {
+                RiderKycImageQualityVerifier.analyzeBitmap(KycDocFieldType.DRIVING_LICENCE, it)
+            }
+        )
+    }
+    var rcCheck by remember {
+        mutableStateOf(
+            rcBitmap?.let {
+                RiderKycImageQualityVerifier.analyzeBitmap(KycDocFieldType.VEHICLE_RC, it)
+            }
+        )
+    }
+    var selfieCheck by remember {
+        mutableStateOf(
+            selfieBitmap?.let {
+                RiderKycImageQualityVerifier.analyzeBitmap(KycDocFieldType.LIVE_SELFIE, it)
+            }
+        )
+    }
+
     var activeTarget by remember { mutableStateOf<UploadTargetField?>(null) }
     var validationError by remember { mutableStateOf<String?>(null) }
 
     val assignBitmapForTarget: (Bitmap?) -> Unit = { bmp ->
-        if (bmp != null) {
-            when (activeTarget) {
-                UploadTargetField.AADHAAR -> aadhaarBitmap = bmp
-                UploadTargetField.PAN -> panBitmap = bmp
-                UploadTargetField.DRIVING_LICENCE -> dlBitmap = bmp
-                UploadTargetField.VEHICLE_RC -> rcBitmap = bmp
-                UploadTargetField.LIVE_SELFIE -> selfieBitmap = bmp
-                null -> Unit
+        val target = activeTarget
+        if (bmp != null && target != null) {
+            val docField = when (target) {
+                UploadTargetField.AADHAAR -> KycDocFieldType.AADHAAR
+                UploadTargetField.PAN -> KycDocFieldType.PAN
+                UploadTargetField.DRIVING_LICENCE -> KycDocFieldType.DRIVING_LICENCE
+                UploadTargetField.VEHICLE_RC -> KycDocFieldType.VEHICLE_RC
+                UploadTargetField.LIVE_SELFIE -> KycDocFieldType.LIVE_SELFIE
             }
-            validationError = null
+            val otherHashes = buildMap {
+                aadhaarCheck?.perceptualHash?.takeIf { it != 0L }?.let { put(KycDocFieldType.AADHAAR, it) }
+                panCheck?.perceptualHash?.takeIf { it != 0L }?.let { put(KycDocFieldType.PAN, it) }
+                dlCheck?.perceptualHash?.takeIf { it != 0L }?.let { put(KycDocFieldType.DRIVING_LICENCE, it) }
+                rcCheck?.perceptualHash?.takeIf { it != 0L }?.let { put(KycDocFieldType.VEHICLE_RC, it) }
+                selfieCheck?.perceptualHash?.takeIf { it != 0L }?.let { put(KycDocFieldType.LIVE_SELFIE, it) }
+            }
+            val result = RiderKycImageQualityVerifier.analyzeBitmap(docField, bmp, otherHashes)
+            when (target) {
+                UploadTargetField.AADHAAR -> {
+                    aadhaarCheck = result
+                    aadhaarBitmap = if (result.isValid) bmp else null
+                }
+                UploadTargetField.PAN -> {
+                    panCheck = result
+                    panBitmap = if (result.isValid) bmp else null
+                }
+                UploadTargetField.DRIVING_LICENCE -> {
+                    dlCheck = result
+                    dlBitmap = if (result.isValid) bmp else null
+                }
+                UploadTargetField.VEHICLE_RC -> {
+                    rcCheck = result
+                    rcBitmap = if (result.isValid) bmp else null
+                }
+                UploadTargetField.LIVE_SELFIE -> {
+                    selfieCheck = result
+                    selfieBitmap = if (result.isValid) bmp else null
+                }
+            }
+            validationError = if (result.isValid) null else "❌ ${result.message}"
         }
     }
 
@@ -366,7 +435,7 @@ fun RiderFirstTimeKycUploadScreen(
             item {
                 KycDocUploadCard(
                     title = "1. Aadhaar Card *",
-                    subtitle = "12-digit Aadhaar Number & Front Photo",
+                    subtitle = "12-digit Aadhaar Number & Sharp Front Photo",
                     numberValue = aadhaarNumber,
                     onNumberChange = {
                         aadhaarNumber = it.filter { ch -> ch.isDigit() || ch == '-' || ch == ' ' }.take(16)
@@ -374,6 +443,7 @@ fun RiderFirstTimeKycUploadScreen(
                     },
                     numberLabel = "Aadhaar Number *",
                     bitmap = aadhaarBitmap,
+                    verificationResult = aadhaarCheck,
                     onTakePhoto = { launchCameraFor(UploadTargetField.AADHAAR) },
                     onPickGallery = { launchGalleryFor(UploadTargetField.AADHAAR) },
                     testTagPrefix = "kyc_aadhaar"
@@ -384,7 +454,7 @@ fun RiderFirstTimeKycUploadScreen(
             item {
                 KycDocUploadCard(
                     title = "2. PAN Card *",
-                    subtitle = "10-digit PAN Number & Card Photo",
+                    subtitle = "10-character PAN (e.g. ABCDE1234F) & Sharp Card Photo",
                     numberValue = panNumber,
                     onNumberChange = {
                         panNumber = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(10)
@@ -392,6 +462,7 @@ fun RiderFirstTimeKycUploadScreen(
                     },
                     numberLabel = "PAN Number *",
                     bitmap = panBitmap,
+                    verificationResult = panCheck,
                     onTakePhoto = { launchCameraFor(UploadTargetField.PAN) },
                     onPickGallery = { launchGalleryFor(UploadTargetField.PAN) },
                     testTagPrefix = "kyc_pan"
@@ -402,7 +473,7 @@ fun RiderFirstTimeKycUploadScreen(
             item {
                 KycDocUploadCard(
                     title = "3. Driving Licence (DL) *",
-                    subtitle = "DL Number & Valid Licence Photo",
+                    subtitle = "DL Number & Clear Licence Photo",
                     numberValue = dlNumber,
                     onNumberChange = {
                         dlNumber = it.uppercase().take(20)
@@ -410,6 +481,7 @@ fun RiderFirstTimeKycUploadScreen(
                     },
                     numberLabel = "Driving Licence Number *",
                     bitmap = dlBitmap,
+                    verificationResult = dlCheck,
                     onTakePhoto = { launchCameraFor(UploadTargetField.DRIVING_LICENCE) },
                     onPickGallery = { launchGalleryFor(UploadTargetField.DRIVING_LICENCE) },
                     testTagPrefix = "kyc_dl"
@@ -420,11 +492,12 @@ fun RiderFirstTimeKycUploadScreen(
             item {
                 KycDocUploadCard(
                     title = "4. Vehicle RC Certificate Photo *",
-                    subtitle = "Upload clear photo of Vehicle Registration (RC)",
+                    subtitle = "Upload sharp photo of Vehicle Registration (RC)",
                     numberValue = null,
                     onNumberChange = null,
                     numberLabel = "",
                     bitmap = rcBitmap,
+                    verificationResult = rcCheck,
                     onTakePhoto = { launchCameraFor(UploadTargetField.VEHICLE_RC) },
                     onPickGallery = { launchGalleryFor(UploadTargetField.VEHICLE_RC) },
                     testTagPrefix = "kyc_rc"
@@ -435,11 +508,12 @@ fun RiderFirstTimeKycUploadScreen(
             item {
                 KycDocUploadCard(
                     title = "5. Rider Profile Selfie *",
-                    subtitle = "Clear front face photo for verification",
+                    subtitle = "Clear well-lit front face photo",
                     numberValue = null,
                     onNumberChange = null,
                     numberLabel = "",
                     bitmap = selfieBitmap,
+                    verificationResult = selfieCheck,
                     onTakePhoto = { launchCameraFor(UploadTargetField.LIVE_SELFIE) },
                     onPickGallery = { launchGalleryFor(UploadTargetField.LIVE_SELFIE) },
                     testTagPrefix = "kyc_selfie"
@@ -468,43 +542,57 @@ fun RiderFirstTimeKycUploadScreen(
                 Button(
                     onClick = {
                         when {
-                            vehicleNumber.trim().length < 4 -> {
-                                validationError = "Please enter a valid Vehicle Registration Number (*)."
+                            !RiderKycImageQualityVerifier.validateVehicleRcNumber(vehicleNumber) -> {
+                                validationError = "Enter a valid Vehicle RC Registration No. (e.g. DL01AB1234)."
                                 return@Button
                             }
-                            aadhaarNumber.filter(Char::isDigit).length < 12 -> {
-                                validationError = "Please enter a valid 12-digit Aadhaar Number (*)."
+                            !RiderKycImageQualityVerifier.validateAadhaarNumber(aadhaarNumber) -> {
+                                validationError = "Enter a valid 12-digit Aadhaar Number (*)."
                                 return@Button
                             }
-                            aadhaarBitmap == null -> {
-                                validationError = "Please upload or capture Aadhaar Card photo (*)."
+                            aadhaarBitmap == null || aadhaarCheck?.isValid != true -> {
+                                validationError = aadhaarCheck?.takeIf { !it.isValid }?.message
+                                    ?: "Please upload a clear, non-blurry Aadhaar Card photo (*)."
                                 return@Button
                             }
-                            panNumber.trim().length < 10 -> {
-                                validationError = "Please enter your 10-character PAN Number (*)."
+                            !RiderKycImageQualityVerifier.validatePanNumber(panNumber) -> {
+                                validationError = "Enter a valid 10-character PAN Number (e.g. ABCDE1234F)."
                                 return@Button
                             }
-                            panBitmap == null -> {
-                                validationError = "Please upload or capture PAN Card photo (*)."
+                            panBitmap == null || panCheck?.isValid != true -> {
+                                validationError = panCheck?.takeIf { !it.isValid }?.message
+                                    ?: "Please upload a clear, non-blurry PAN Card photo (*)."
                                 return@Button
                             }
-                            dlNumber.trim().length < 6 -> {
-                                validationError = "Please enter your Driving Licence (DL) Number (*)."
+                            !RiderKycImageQualityVerifier.validateDlNumber(dlNumber) -> {
+                                validationError = "Enter a valid Driving Licence (DL) Number (*)."
                                 return@Button
                             }
-                            dlBitmap == null -> {
-                                validationError = "Please upload or capture Driving Licence photo (*)."
+                            dlBitmap == null || dlCheck?.isValid != true -> {
+                                validationError = dlCheck?.takeIf { !it.isValid }?.message
+                                    ?: "Please upload a clear, non-blurry Driving Licence photo (*)."
                                 return@Button
                             }
-                            rcBitmap == null -> {
-                                validationError = "Please upload or capture Vehicle RC photo (*)."
+                            rcBitmap == null || rcCheck?.isValid != true -> {
+                                validationError = rcCheck?.takeIf { !it.isValid }?.message
+                                    ?: "Please upload a clear, non-blurry Vehicle RC photo (*)."
                                 return@Button
                             }
-                            selfieBitmap == null -> {
-                                validationError = "Please capture or upload your Live Selfie photo (*)."
+                            selfieBitmap == null || selfieCheck?.isValid != true -> {
+                                validationError = selfieCheck?.takeIf { !it.isValid }?.message
+                                    ?: "Please capture a clear, well-lit Live Selfie photo (*)."
                                 return@Button
                             }
                         }
+                        val scoresSummary = listOf(
+                            "Aadhaar ${aadhaarCheck?.clarityScorePercent ?: 80}%",
+                            "PAN ${panCheck?.clarityScorePercent ?: 80}%",
+                            "DL ${dlCheck?.clarityScorePercent ?: 80}%",
+                            "RC ${rcCheck?.clarityScorePercent ?: 80}%",
+                            "Selfie ${selfieCheck?.clarityScorePercent ?: 80}%"
+                        ).joinToString(" • ")
+                        val reportText = "Auto-Verified Clear & Valid Format ($scoresSummary)"
+
                         val submitted = RiderRegistrationApprovalManager.submitRiderKycDocuments(
                             context = context,
                             name = riderName,
@@ -519,7 +607,10 @@ fun RiderFirstTimeKycUploadScreen(
                             panBitmap = panBitmap,
                             dlBitmap = dlBitmap,
                             rcBitmap = rcBitmap,
-                            selfieBitmap = selfieBitmap
+                            selfieBitmap = selfieBitmap,
+                            autoKycVerified = true,
+                            autoVerificationReport = reportText,
+                            clarityScoresSummary = scoresSummary
                         )
                         MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                         onDocumentsSubmitted(submitted)
@@ -534,7 +625,7 @@ fun RiderFirstTimeKycUploadScreen(
                     Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Submit Documents for Admin Approval →",
+                        text = "Submit Verified Documents for Admin Approval →",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White
@@ -553,15 +644,30 @@ private fun KycDocUploadCard(
     onNumberChange: ((String) -> Unit)?,
     numberLabel: String,
     bitmap: Bitmap?,
+    verificationResult: KycPhotoVerificationResult? = null,
     onTakePhoto: () -> Unit,
     onPickGallery: () -> Unit,
     testTagPrefix: String
 ) {
-    val isDone = bitmap != null
+    val isDone = bitmap != null && (verificationResult?.isValid != false)
+    val isRejectedByAutoCheck = verificationResult != null && !verificationResult.isValid
     Card(
-        colors = CardDefaults.cardColors(containerColor = if (isDone) Color(0xFFF0FDF4) else Color.White),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                isRejectedByAutoCheck -> Color(0xFFFEF2F2)
+                isDone -> Color(0xFFF0FDF4)
+                else -> Color.White
+            }
+        ),
         shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.2.dp, if (isDone) Color(0xFF10B981) else Color(0xFFE2E8F0)),
+        border = BorderStroke(
+            1.2.dp,
+            when {
+                isRejectedByAutoCheck -> Color(0xFFEF4444)
+                isDone -> Color(0xFF10B981)
+                else -> Color(0xFFE2E8F0)
+            }
+        ),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("${testTagPrefix}_card")
@@ -589,17 +695,38 @@ private fun KycDocUploadCard(
                     )
                 }
                 Surface(
-                    color = if (isDone) Color(0xFF10B981) else Color(0xFFFFF7ED),
+                    color = when {
+                        isRejectedByAutoCheck -> Color(0xFFDC2626)
+                        isDone -> Color(0xFF10B981)
+                        else -> Color(0xFFFFF7ED)
+                    },
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = if (isDone) "Uploaded ✓" else "Required",
+                        text = when {
+                            isRejectedByAutoCheck -> "Blurry/Retry ✕"
+                            isDone -> "Verified Clear ✓"
+                            else -> "Required"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = if (isDone) Color.White else Color(0xFFEA580C),
+                        color = if (isDone || isRejectedByAutoCheck) Color.White else Color(0xFFEA580C),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
+            }
+
+            if (verificationResult != null) {
+                Text(
+                    text = if (verificationResult.isValid) {
+                        "🤖 Auto-Check: ✅ ${verificationResult.message}"
+                    } else {
+                        "🤖 Auto-Check: ⚠️ ${verificationResult.message}"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (verificationResult.isValid) Color(0xFF047857) else Color(0xFFB91C1C)
+                )
             }
 
             if (numberValue != null && onNumberChange != null) {
@@ -1051,6 +1178,32 @@ fun AdminPendingRiderApprovalsSection(
                             }
                         }
 
+                        // System Automatic Photo & Document Verification Status
+                        val canAdminApprove = reg.autoKycVerified &&
+                            reg.aadhaarImageBase64.isNotBlank() &&
+                            reg.panImageBase64.isNotBlank() &&
+                            reg.dlImageBase64.isNotBlank() &&
+                            reg.rcImageBase64.isNotBlank() &&
+                            reg.selfieImageBase64.isNotBlank()
+
+                        Surface(
+                            color = if (canAdminApprove) Color(0xFFECFDF5) else Color(0xFFFEE2E2),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (canAdminApprove) {
+                                    "🤖 Auto-Verified Clear: ${reg.clarityScoresSummary.ifBlank { "All 5 Docs Clear & Readable ✓" }}"
+                                } else {
+                                    "⚠️ Auto-Verify Failed: Missing or blurry document photos. Reject & ask rider to re-upload."
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (canAdminApprove) Color(0xFF065F46) else Color(0xFF991B1B),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                            )
+                        }
+
                         HorizontalDivider(color = Color(0xFFFDE68A))
 
                         Row(
@@ -1070,10 +1223,15 @@ fun AdminPendingRiderApprovalsSection(
                                 Text("Reject", fontWeight = FontWeight.Bold)
                             }
                             Button(
+                                enabled = canAdminApprove,
                                 onClick = {
-                                    RiderRegistrationApprovalManager.approveRiderByAdmin(context, reg.riderKey)
-                                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
-                                    actionFeedback = "✅ Approved ${reg.name}! Rider can now re-login and go Online."
+                                    val approved = RiderRegistrationApprovalManager.approveRiderByAdmin(context, reg.riderKey)
+                                    if (approved != null) {
+                                        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                        actionFeedback = "✅ Approved ${reg.name}! Rider can now re-login and go Online."
+                                    } else {
+                                        actionFeedback = "⚠️ Cannot approve ${reg.name} until all 5 documents pass clarity check."
+                                    }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                                 modifier = Modifier
@@ -1082,7 +1240,11 @@ fun AdminPendingRiderApprovalsSection(
                             ) {
                                 Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Approve Rider", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                                Text(
+                                    text = if (canAdminApprove) "Approve Rider" else "Blurry/Incomplete",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
                             }
                         }
                     }

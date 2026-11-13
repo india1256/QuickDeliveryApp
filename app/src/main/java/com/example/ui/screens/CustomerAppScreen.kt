@@ -209,8 +209,8 @@ fun CustomerAppScreen(
     var pickupAddressText by rememberSaveable { mutableStateOf("") }
     var pickupPinCode by rememberSaveable { mutableStateOf("") }
     var pickupLandmark by rememberSaveable { mutableStateOf("") }
-    var pickupLat by rememberSaveable { mutableDoubleStateOf(12.9784) }
-    var pickupLng by rememberSaveable { mutableDoubleStateOf(77.6408) }
+    var pickupLat by rememberSaveable { mutableDoubleStateOf(0.0) }
+    var pickupLng by rememberSaveable { mutableDoubleStateOf(0.0) }
     var pickupLiveGpsVerified by rememberSaveable { mutableStateOf(false) }
 
     var dropHouseFlat by rememberSaveable { mutableStateOf("") }
@@ -218,8 +218,8 @@ fun CustomerAppScreen(
     var dropAddressText by rememberSaveable { mutableStateOf("") }
     var dropPinCode by rememberSaveable { mutableStateOf("") }
     var dropLandmark by rememberSaveable { mutableStateOf("") }
-    var dropLat by rememberSaveable { mutableDoubleStateOf(12.9352) }
-    var dropLng by rememberSaveable { mutableDoubleStateOf(77.6245) }
+    var dropLat by rememberSaveable { mutableDoubleStateOf(0.0) }
+    var dropLng by rememberSaveable { mutableDoubleStateOf(0.0) }
     var dropLiveGpsVerified by rememberSaveable { mutableStateOf(false) }
     var pendingGpsTarget by rememberSaveable { mutableStateOf("PICKUP") }
     var isCapturingPickupLocation by remember { mutableStateOf(false) }
@@ -637,10 +637,12 @@ fun CustomerAppScreen(
                 pickupLandmark = pastOrder.pickupAddress.landmark
                 pickupLat = pastOrder.pickupAddress.lat
                 pickupLng = pastOrder.pickupAddress.lng
+                pickupLiveGpsVerified = pastOrder.pickupAddress.lat != 0.0 && pastOrder.pickupAddress.lng != 0.0
                 dropAddressText = pastOrder.dropAddress.fullAddress
                 dropLandmark = pastOrder.dropAddress.landmark
                 dropLat = pastOrder.dropAddress.lat
                 dropLng = pastOrder.dropAddress.lng
+                dropLiveGpsVerified = pastOrder.dropAddress.lat != 0.0 && pastOrder.dropAddress.lng != 0.0
                 selectedVehicle = pastOrder.vehicleType
                 selectedPackageType = pastOrder.packageDetails.packageType
                 packageWeightKg = pastOrder.packageDetails.weightKg
@@ -2203,7 +2205,12 @@ fun CustomerAppScreen(
                                         // Pickup Row 2: Area / Locality Address
                                         OutlinedTextField(
                                             value = pickupAddressText,
-                                            onValueChange = { pickupAddressText = it },
+                                            onValueChange = {
+                                                pickupAddressText = it
+                                                pickupLiveGpsVerified = false
+                                                pickupLat = 0.0
+                                                pickupLng = 0.0
+                                            },
                                             label = { Text("Pickup Area / Locality / Street *") },
                                             isError = attemptedStep1Next && pickupAddressText.isBlank(),
                                             leadingIcon = {
@@ -2473,7 +2480,12 @@ fun CustomerAppScreen(
                                         // Drop Row 2: Area / Locality Address
                                         OutlinedTextField(
                                             value = dropAddressText,
-                                            onValueChange = { dropAddressText = it },
+                                            onValueChange = {
+                                                dropAddressText = it
+                                                dropLiveGpsVerified = false
+                                                dropLat = 0.0
+                                                dropLng = 0.0
+                                            },
                                             label = { Text("Drop Area / Locality / Street *") },
                                             isError = attemptedStep1Next && dropAddressText.isBlank(),
                                             leadingIcon = {

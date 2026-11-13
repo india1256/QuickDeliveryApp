@@ -53,6 +53,9 @@ data class RiderRegistrationRecord(
     val dlImageBase64: String = "",
     val rcImageBase64: String = "",
     val selfieImageBase64: String = "",
+    val autoKycVerified: Boolean = false,
+    val autoVerificationReport: String = "",
+    val clarityScoresSummary: String = "",
     val approvalStatus: RiderApprovalWorkflowStatus = RiderApprovalWorkflowStatus.NEEDS_KYC,
     val rejectionReason: String = "",
     val submittedAtEpochMs: Long = 0L,
@@ -80,6 +83,9 @@ data class RiderRegistrationRecord(
         put("dlImageBase64", dlImageBase64)
         put("rcImageBase64", rcImageBase64)
         put("selfieImageBase64", selfieImageBase64)
+        put("autoKycVerified", autoKycVerified)
+        put("autoVerificationReport", autoVerificationReport)
+        put("clarityScoresSummary", clarityScoresSummary)
         put("approvalStatus", approvalStatus.name)
         put("rejectionReason", rejectionReason)
         put("submittedAtEpochMs", submittedAtEpochMs)
@@ -93,6 +99,13 @@ data class RiderRegistrationRecord(
         fun fromJson(obj: JSONObject): RiderRegistrationRecord? {
             val key = obj.optString("riderKey", "").trim()
             if (key.isEmpty()) return null
+            val aadhaarB64 = obj.optString("aadhaarImageBase64", "")
+            val panB64 = obj.optString("panImageBase64", "")
+            val dlB64 = obj.optString("dlImageBase64", "")
+            val rcB64 = obj.optString("rcImageBase64", "")
+            val selfieB64 = obj.optString("selfieImageBase64", "")
+            val hasAllDocs = aadhaarB64.isNotBlank() && panB64.isNotBlank() &&
+                dlB64.isNotBlank() && rcB64.isNotBlank() && selfieB64.isNotBlank()
             return RiderRegistrationRecord(
                 riderKey = key,
                 riderId = obj.optString("riderId", "RIDER-REG-${key.takeLast(4)}"),
@@ -104,11 +117,14 @@ data class RiderRegistrationRecord(
                 aadhaarNumber = obj.optString("aadhaarNumber", ""),
                 panNumber = obj.optString("panNumber", ""),
                 drivingLicenseNumber = obj.optString("drivingLicenseNumber", ""),
-                aadhaarImageBase64 = obj.optString("aadhaarImageBase64", ""),
-                panImageBase64 = obj.optString("panImageBase64", ""),
-                dlImageBase64 = obj.optString("dlImageBase64", ""),
-                rcImageBase64 = obj.optString("rcImageBase64", ""),
-                selfieImageBase64 = obj.optString("selfieImageBase64", ""),
+                aadhaarImageBase64 = aadhaarB64,
+                panImageBase64 = panB64,
+                dlImageBase64 = dlB64,
+                rcImageBase64 = rcB64,
+                selfieImageBase64 = selfieB64,
+                autoKycVerified = obj.optBoolean("autoKycVerified", hasAllDocs),
+                autoVerificationReport = obj.optString("autoVerificationReport", ""),
+                clarityScoresSummary = obj.optString("clarityScoresSummary", ""),
                 approvalStatus = RiderApprovalWorkflowStatus.fromString(obj.optString("approvalStatus")),
                 rejectionReason = obj.optString("rejectionReason", ""),
                 submittedAtEpochMs = obj.optLong("submittedAtEpochMs", 0L),
@@ -264,7 +280,10 @@ object RiderRegistrationApprovalManager {
         panBitmap: Bitmap?,
         dlBitmap: Bitmap?,
         rcBitmap: Bitmap?,
-        selfieBitmap: Bitmap?
+        selfieBitmap: Bitmap?,
+        autoKycVerified: Boolean = true,
+        autoVerificationReport: String = "All 5 KYC documents verified clear.",
+        clarityScoresSummary: String = ""
     ): RiderRegistrationRecord {
         ensureLoaded(context)
         val key = buildRiderKey(phone, email).ifBlank { "phone_${System.currentTimeMillis()}" }
@@ -290,6 +309,9 @@ object RiderRegistrationApprovalManager {
                 rcImageBase64 = compressBitmapToBase64(rcBitmap).ifBlank { existing?.rcImageBase64.orEmpty() },
                 selfieImageBase64 = compressBitmapToBase64(selfieBitmap, maxDimPx = 220, quality = 55)
                     .ifBlank { existing?.selfieImageBase64.orEmpty() },
+                autoKycVerified = autoKycVerified,
+                autoVerificationReport = autoVerificationReport,
+                clarityScoresSummary = clarityScoresSummary,
                 approvalStatus = RiderApprovalWorkflowStatus.PENDING_APPROVAL,
                 rejectionReason = "",
                 submittedAtEpochMs = now,
@@ -306,12 +328,16 @@ object RiderRegistrationApprovalManager {
 
     /**
      * Called from Admin Console App to approve a pending Rider.
+     * Requires all 5 documents to have passed automatic clarity & document verification (`autoKycVerified`).
      */
     fun approveRiderByAdmin(context: Context, riderKey: String, adminNote: String = "Approved by Admin"): RiderRegistrationRecord? {
         ensureLoaded(context)
         val now = System.currentTimeMillis()
         val updated: RiderRegistrationRecord? = synchronized(lock) {
             val existing = _registrationsByKey.value[riderKey] ?: return@synchronized null
+            if (!existing.autoKycVerified) {
+                return@synchronized null
+            }
             val next = existing.copy(
                 approvalStatus = RiderApprovalWorkflowStatus.APPROVED,
                 rejectionReason = "",

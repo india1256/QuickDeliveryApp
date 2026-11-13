@@ -1579,6 +1579,8 @@ fun PorterTripHistoryDialog(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         items(completedOrders) { order ->
+                            val hasPickupSign = com.example.data.model.OrderProofRegistry.getPickupProof(order.orderId)?.senderSignatureSvg?.isNotBlank() == true
+                            val hasDropSign = com.example.data.model.OrderProofRegistry.getDeliveryProof(order.orderId)?.recipientSignatureSvg?.isNotBlank() == true
                             Surface(
                                 color = PorterCardBg,
                                 shape = RoundedCornerShape(12.dp),
@@ -1587,7 +1589,7 @@ fun PorterTripHistoryDialog(
                             ) {
                                 Column(
                                     modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    verticalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -1595,7 +1597,7 @@ fun PorterTripHistoryDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "Order #${order.orderId}",
+                                            text = "Order #${order.orderId} • ${order.customerName}",
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = PorterNavy
@@ -1608,13 +1610,20 @@ fun PorterTripHistoryDialog(
                                         )
                                     }
                                     Text(
-                                        text = "${order.pickupAddress.fullAddress.take(28)}... → ${order.dropAddress.fullAddress.take(28)}...",
+                                        text = "📍 Pickup: ${order.pickupAddress.fullAddress}",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF64748B)
+                                        color = Color(0xFF334155)
                                     )
                                     Text(
-                                        text = "${order.vehicleType.title} • ${order.paymentMethod.shortBadge} • Delivered ✓",
+                                        text = "🏁 Drop: ${order.dropAddress.fullAddress}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF334155)
+                                    )
+                                    Text(
+                                        text = "${order.vehicleType.title} • ${order.paymentMethod.shortBadge} • Delivered ✓" +
+                                            if (hasPickupSign || hasDropSign) " • ✍️ Signed ✓" else "",
                                         style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
                                         color = PorterBlue
                                     )
                                 }

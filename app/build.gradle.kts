@@ -21,8 +21,8 @@ android {
     applicationId = "com.aistudio.quickdelivery.ltkeqf"
     minSdk = 24
     targetSdk = 36
-    versionCode = 55
-    versionName = "5.5.0"
+    versionCode = 56
+    versionName = "5.6.0"
 
     val targetAppRole = (project.findProperty("appRole") as? String)?.trim()?.uppercase() ?: "UNIFIED"
     buildConfigField("String", "APP_ROLE", "\"$targetAppRole\"")
