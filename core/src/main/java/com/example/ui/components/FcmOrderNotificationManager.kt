@@ -317,6 +317,15 @@ object FcmOrderNotificationManager {
         }
     }
 
+    private val DEMO_ORDER_IDS = setOf("QD-7001", "QD-6204", "QD-5910", "QD-5402", "ORD-1001", "ORD-1002")
+
+    fun clearAllNotifications() {
+        observedOrderStatuses.clear()
+        _fcmMessages.value = emptyList()
+        _latestCustomerBanner.value = null
+        _latestRiderBanner.value = null
+    }
+
     /**
      * Observes `orders` and automatically dispatches targeted Customer + Rider FCM push notifications
      * whenever an order is created or transitions to a new `OrderStatus`.
@@ -326,14 +335,19 @@ object FcmOrderNotificationManager {
         orders: List<CustomerOrder>
     ) {
         ensureInitialized(context)
+        val realOrders = orders.filterNot { it.orderId in DEMO_ORDER_IDS }
+        if (realOrders.isEmpty()) {
+            _latestCustomerBanner.value = null
+            _latestRiderBanner.value = null
+            return
+        }
         val isInitialSeed = observedOrderStatuses.isEmpty() && _fcmMessages.value.isEmpty()
 
-        orders.forEach { order ->
+        realOrders.forEach { order ->
             subscribeToOrderTopic(order.orderId)
             val previousStatus = observedOrderStatuses[order.orderId]
             if (previousStatus == null) {
                 observedOrderStatuses[order.orderId] = order.orderStatus
-                // Seed initial active order status notification without spamming OS tray for all historical orders
                 dispatchOrderStatusPair(
                     context = context,
                     order = order,

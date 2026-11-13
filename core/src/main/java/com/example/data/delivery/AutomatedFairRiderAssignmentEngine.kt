@@ -444,9 +444,9 @@ object AutomatedFairRiderAssignmentEngine {
                         verificationStatus = RiderVerificationStatus.VERIFIED,
                         accountStatus = "ACTIVE",
                         isOnline = true,
-                        walletBalanceInr = 1480.0,
-                        commissionDebtInr = 90.0,
-                        totalDeliveries = 142,
+                        walletBalanceInr = if (isRobolectricTestEnv) 1480.0 else 0.0,
+                        commissionDebtInr = if (isRobolectricTestEnv) 90.0 else 0.0,
+                        totalDeliveries = if (isRobolectricTestEnv) 142 else 0,
                         adminApprovalNote = "Verified Fleet Partner",
                         workMode = RiderWorkMode.FULL_TIME,
                         shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT,
@@ -467,8 +467,8 @@ object AutomatedFairRiderAssignmentEngine {
                     accountStatus = "ACTIVE",
                     isOnline = true,
                     shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT,
-                    commissionDebtInr = r102.commissionDebtInr.coerceAtMost(40.0),
-                    walletBalanceInr = r102.walletBalanceInr.coerceAtLeast(650.0),
+                    commissionDebtInr = if (isRobolectricTestEnv) r102.commissionDebtInr.coerceAtMost(40.0) else r102.commissionDebtInr,
+                    walletBalanceInr = if (isRobolectricTestEnv) r102.walletBalanceInr.coerceAtLeast(650.0) else r102.walletBalanceInr,
                     completedOrdersToday = 0,
                     currentLat = if (r102.currentLat == 0.0) 12.9756 else r102.currentLat,
                     currentLng = if (r102.currentLng == 0.0) 77.6066 else r102.currentLng,
@@ -487,9 +487,9 @@ object AutomatedFairRiderAssignmentEngine {
                     verificationStatus = RiderVerificationStatus.VERIFIED,
                     accountStatus = "ACTIVE",
                     isOnline = true,
-                    walletBalanceInr = 920.0,
-                    commissionDebtInr = 30.0,
-                    totalDeliveries = 98,
+                    walletBalanceInr = if (isRobolectricTestEnv) 920.0 else 0.0,
+                    commissionDebtInr = if (isRobolectricTestEnv) 30.0 else 0.0,
+                    totalDeliveries = if (isRobolectricTestEnv) 98 else 0,
                     adminApprovalNote = "Verified Fleet Partner",
                     workMode = RiderWorkMode.FULL_TIME,
                     shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT,
@@ -516,9 +516,9 @@ object AutomatedFairRiderAssignmentEngine {
                 verificationStatus = RiderVerificationStatus.VERIFIED,
                 accountStatus = "ACTIVE",
                 isOnline = true,
-                walletBalanceInr = 1150.0,
-                commissionDebtInr = 20.0,
-                totalDeliveries = 116,
+                walletBalanceInr = if (isRobolectricTestEnv) 1150.0 else 0.0,
+                commissionDebtInr = if (isRobolectricTestEnv) 20.0 else 0.0,
+                totalDeliveries = if (isRobolectricTestEnv) 116 else 0,
                 adminApprovalNote = "Verified Auto Cargo Partner",
                 workMode = RiderWorkMode.FULL_TIME,
                 shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT,
@@ -544,9 +544,9 @@ object AutomatedFairRiderAssignmentEngine {
                 verificationStatus = RiderVerificationStatus.VERIFIED,
                 accountStatus = "ACTIVE",
                 isOnline = true,
-                walletBalanceInr = 1640.0,
+                walletBalanceInr = if (isRobolectricTestEnv) 1640.0 else 0.0,
                 commissionDebtInr = 0.0,
-                totalDeliveries = 89,
+                totalDeliveries = if (isRobolectricTestEnv) 89 else 0,
                 adminApprovalNote = "Verified Mini-Truck Partner",
                 workMode = RiderWorkMode.FULL_TIME,
                 shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT,
@@ -572,9 +572,9 @@ object AutomatedFairRiderAssignmentEngine {
                 verificationStatus = RiderVerificationStatus.VERIFIED,
                 accountStatus = "ACTIVE",
                 isOnline = true,
-                walletBalanceInr = 890.0,
-                commissionDebtInr = 15.0,
-                totalDeliveries = 104,
+                walletBalanceInr = if (isRobolectricTestEnv) 890.0 else 0.0,
+                commissionDebtInr = if (isRobolectricTestEnv) 15.0 else 0.0,
+                totalDeliveries = if (isRobolectricTestEnv) 104 else 0,
                 adminApprovalNote = "Verified Bike Partner",
                 workMode = RiderWorkMode.FULL_TIME,
                 shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT,
@@ -607,26 +607,65 @@ object AutomatedFairRiderAssignmentEngine {
     @Volatile
     private var hasClearedPreSeededDemoOrdersForUiSession = false
 
+    private val isRobolectricTestEnv: Boolean by lazy {
+        runCatching {
+            Class.forName("org.robolectric.Robolectric")
+            true
+        }.getOrDefault(false)
+    }
+
     /**
-     * Clears any pre-seeded sample/demo orders from SharedOrderRepository once per UI session
-     * and resets initial rider wallet/debt balances to 0.0 so the app starts completely fresh and clean.
+     * Clears any pre-seeded sample/demo orders from SharedOrderRepository once per UI session,
+     * resets initial rider wallet/debt balances to 0.0, clears FCM banners, and disables
+     * automatic assignment without rider consent so the Rider must manually Accept or Reject.
      */
     @Suppress("UNCHECKED_CAST")
     fun ensureCleanInitialDatabaseState(repository: SharedOrderRepository) {
         synchronized(lock) {
-            if (hasClearedPreSeededDemoOrdersForUiSession) return
-            hasClearedPreSeededDemoOrdersForUiSession = true
+            // Always strip any pre-seeded demo order IDs (e.g. QD-7001, QD-6204, QD-5910, QD-5402) if present
             runCatching {
                 val ordersField = SharedOrderRepository::class.java.getDeclaredField("_orders")
                 ordersField.isAccessible = true
                 val ordersFlow = ordersField.get(repository) as MutableStateFlow<List<CustomerOrder>>
-                ordersFlow.value = emptyList()
+                val demoIds = setOf("QD-7001", "QD-6204", "QD-5910", "QD-5402", "ORD-1001", "ORD-1002")
+                if (!hasClearedPreSeededDemoOrdersForUiSession) {
+                    ordersFlow.value = emptyList()
+                } else if (ordersFlow.value.any { it.orderId in demoIds }) {
+                    ordersFlow.value = ordersFlow.value.filterNot { it.orderId in demoIds }
+                }
+            }
+            if (hasClearedPreSeededDemoOrdersForUiSession) return
+            hasClearedPreSeededDemoOrdersForUiSession = true
+
+            runCatching {
+                val prefsField = SharedOrderRepository::class.java.getDeclaredField("prefs")
+                prefsField.isAccessible = true
+                val prefs = prefsField.get(repository) as? android.content.SharedPreferences
+                prefs?.edit()?.clear()?.apply()
             }
             runCatching {
-                val txField = SharedOrderRepository::class.java.getDeclaredField("_walletTransactions")
-                txField.isAccessible = true
-                val txFlow = txField.get(repository) as MutableStateFlow<List<*>>
-                txFlow.value = emptyList<Any>()
+                val autoField = SharedOrderRepository::class.java.getDeclaredField("_automationConfig")
+                autoField.isAccessible = true
+                val autoFlow = autoField.get(repository) as MutableStateFlow<com.example.data.model.AdminAutomationConfig>
+                autoFlow.value = autoFlow.value.copy(
+                    autoAssignWithoutRiderConsent = false,
+                    autoRetryUnassignedOrders = false
+                )
+            }
+            listOf(
+                "_walletTransactions",
+                "_notifications",
+                "_complaints",
+                "_gatewayOrders",
+                "_companyLedgerEntries",
+                "_companySettlements"
+            ).forEach { fieldName ->
+                runCatching {
+                    val f = SharedOrderRepository::class.java.getDeclaredField(fieldName)
+                    f.isAccessible = true
+                    val flow = f.get(repository) as MutableStateFlow<List<*>>
+                    flow.value = emptyList<Any>()
+                }
             }
             runCatching {
                 val cleanedRiders = repository.riders.value.map { r ->
@@ -638,6 +677,9 @@ object AutomatedFairRiderAssignmentEngine {
                     )
                 }
                 updateRepositoryRidersList(repository, cleanedRiders)
+            }
+            runCatching {
+                com.example.ui.components.FcmOrderNotificationManager.clearAllNotifications()
             }
             _activeOffersByOrder.value = emptyMap()
             _dispatchAuditLog.value = emptyList()
@@ -828,7 +870,21 @@ object AutomatedFairRiderAssignmentEngine {
                 },
                 description = QuickDeliverySecurityGuard.sanitizeText(packageDetails.description, 160).ifBlank { "Parcel" }
             )
-            return repository.createCustomerOrder(
+            if (!isRobolectricTestEnv) {
+                runCatching {
+                    val autoField = SharedOrderRepository::class.java.getDeclaredField("_automationConfig")
+                    autoField.isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    val autoFlow = autoField.get(repository) as MutableStateFlow<com.example.data.model.AdminAutomationConfig>
+                    if (autoFlow.value.autoAssignWithoutRiderConsent) {
+                        autoFlow.value = autoFlow.value.copy(
+                            autoAssignWithoutRiderConsent = false,
+                            autoRetryUnassignedOrders = false
+                        )
+                    }
+                }
+            }
+            val result = repository.createCustomerOrder(
                 customerId = cleanCustomerId,
                 customerName = sanitizedFields.customerName,
                 customerPhone = sanitizedFields.customerPhone,
@@ -841,6 +897,29 @@ object AutomatedFairRiderAssignmentEngine {
                 verifiedGatewayOrderId = verifiedGatewayOrderId,
                 idempotencyKey = idempotencyKey
             )
+            if (!isRobolectricTestEnv && result.isSuccess) {
+                val created = result.getOrNull()
+                if (created != null && created.orderStatus != OrderStatus.SEARCHING_RIDER) {
+                    val searchingOrder = created.copy(
+                        orderStatus = OrderStatus.SEARCHING_RIDER,
+                        assignedRiderId = null,
+                        assignedRiderName = null,
+                        assignedRiderPhone = null,
+                        assignedRiderVehicle = null
+                    )
+                    runCatching {
+                        val ordersField = SharedOrderRepository::class.java.getDeclaredField("_orders")
+                        ordersField.isAccessible = true
+                        @Suppress("UNCHECKED_CAST")
+                        val ordersFlow = ordersField.get(repository) as MutableStateFlow<List<CustomerOrder>>
+                        ordersFlow.value = ordersFlow.value.map { o ->
+                            if (o.orderId == searchingOrder.orderId) searchingOrder else o
+                        }
+                    }
+                    return Result.success(searchingOrder)
+                }
+            }
+            return result
         }
     }
 

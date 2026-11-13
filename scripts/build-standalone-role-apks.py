@@ -1,11 +1,22 @@
 import hashlib
 import os
-import shutil
 import struct
 import subprocess
+import zipfile
 import zlib
 
-BASE_APK = ".build-outputs/app-debug.apk"
+def resolve_base_apk() -> str:
+    candidates = [
+        "app/build/outputs/apk/debug/app-debug.apk",
+        ".build-outputs/app-debug.apk",
+    ]
+    existing = [p for p in candidates if os.path.exists(p) and os.path.getsize(p) > 1000000]
+    if not existing:
+        return ".build-outputs/app-debug.apk"
+    existing.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return existing[0]
+
+
 KEYSTORE = "debug.keystore"
 
 
@@ -17,6 +28,47 @@ def extract_private_key_pem():
     with open(key_path, "wb") as f:
         f.write(pem)
     return key_path
+
+
+def patch_classes11_dex_for_customer_live_gps(raw_dex: bytes) -> bytes:
+    """
+    Patches classes11.dex so that in CustomerAppScreen:
+    1. Format string '%.5f, %.5f' -> '%.6f, %.6f' (exact 6-decimal Latitude & Longitude).
+    2. Label 'Pickup Area / Locality / Street' -> 'Pickup Area / Live Lat, Lng GPS'.
+    3. Tapping the 'Use GPS' button in the Customer Pickup section always invokes
+       locationPermissionLauncher and writes the exact live GPS Latitude & Longitude
+       directly into pickupAddressText$delegate (v31) as well as pickupLat & pickupLng.
+    4. Recomputes DEX SHA-1 signature and Adler32 checksum.
+    """
+    dex = bytearray(raw_dex)
+
+    # 1. '%.5f, %.5f' -> '%.6f, %.6f' at offset 643548
+    if dex[643548:643559] == b"\x0a%.5f, %.5f":
+        dex[643548:643559] = b"\x0a%.6f, %.6f"
+
+    # 2. 'Pickup Area / Locality / Street' -> 'Pickup Area / Live Lat, Lng GPS' at offset 744946
+    if dex[744946:744978] == b"\x1fPickup Area / Locality / Street":
+        dex[744946:744978] = b"\x1fPickup Area / Live Lat, Lng GPS"
+
+    # 3. In CustomerAppScreen$lambda$490$...$lambda$326 (code_off = 160380):
+    # Replace if-eqz v0, +0x14 (38 00 14 00) at 160380 + 16 + 12 = 160408 with goto +0x14; nop (28 14 00 00)
+    if dex[160408:160412] == bytes.fromhex("38 00 14 00"):
+        dex[160408:160412] = bytes.fromhex("28 14 00 00")
+
+    # 4. In CustomerAppScreen$lambda$490 (code_off = 232444):
+    # At 232444 + 16 + 10054 = 242514, replace move-object/from16 v19, v12 (08 13 0c 00)
+    # with move-object/from16 v19, v31 (08 13 1f 00) so ExternalSyntheticLambda10 writes
+    # the formatted live GPS coordinates directly into pickupAddressText$delegate (v31).
+    if dex[242514:242518] == bytes.fromhex("08 13 0c 00"):
+        dex[242514:242518] = bytes.fromhex("08 13 1f 00")
+
+    # 5. Recompute DEX SHA-1 signature (bytes 12..32) and Adler32 checksum (bytes 8..12)
+    sha1_digest = hashlib.sha1(dex[32:]).digest()
+    dex[12:32] = sha1_digest
+    adler_val = zlib.adler32(dex[12:]) & 0xFFFFFFFF
+    struct.pack_into("<I", dex, 8, adler_val)
+
+    return bytes(dex)
 
 
 def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
@@ -34,7 +86,6 @@ def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
     """
     axml = bytearray(raw_axml)
 
-    # Parse string pool
     sp_type, sp_header_size, sp_size, str_count, style_count, flags, strings_start, styles_start = (
         struct.unpack("<HHIIIIII", axml[8:36])
     )
@@ -53,7 +104,6 @@ def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
     }
     new_suffix = suffix_map[target_role]
 
-    # 1. Replace "ltkeqf" with the 6-char role suffix in the UTF-16LE string pool
     for i, s in enumerate(strings):
         if "com.aistudio.quickdelivery.ltkeqf" in s:
             replaced = s.replace("ltkeqf", new_suffix)
@@ -61,15 +111,14 @@ def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
             p = pool_base + offsets[i]
             axml[p + 2 : p + 2 + len(replaced) * 2] = replaced.encode("utf-16le")
 
-    # Find string indices for activities and labels
     idx_main_act = strings.index("com.example.MainActivity")
     idx_cust_act = strings.index("com.example.CustomerMainActivity")
     idx_rider_act = strings.index("com.example.RiderMainActivity")
     idx_admin_act = strings.index("com.example.AdminMainActivity")
 
-    idx_cust_lbl = strings.index("QD Customer App")
-    idx_rider_lbl = strings.index("QD Rider Partner")
-    idx_admin_lbl = strings.index("QD Admin Console")
+    idx_cust_lbl = strings.index("Quick Delivery")
+    idx_rider_lbl = strings.index("Quick Delivery Partner")
+    idx_admin_lbl = strings.index("Quick Delivery Admin")
 
     role_target = {
         "CUSTOMER": (idx_cust_act, idx_cust_lbl),
@@ -78,12 +127,11 @@ def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
     }
     target_act_idx, target_lbl_idx = role_target[target_role]
 
-    # 2. Walk XML elements and update <application> label and swap <activity> name/label
     pos = 8 + sp_size
     TYPE_STRING = 0x03000008
     while pos < len(axml):
         ctype, cheader, csize = struct.unpack("<HHI", axml[pos : pos + 8])
-        if ctype == 0x0102:  # START_ELEMENT
+        if ctype == 0x0102:
             ns, name_idx, attr_start, attr_size, attr_count = struct.unpack(
                 "<IIHHH", axml[pos + 16 : pos + 30]
             )
@@ -109,8 +157,6 @@ def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
                     elif k == "label":
                         label_ap = ap
 
-                # The first activity (idx_main_act) has the MAIN/LAUNCHER intent-filter.
-                # Point it to target_act_idx and target_lbl_idx, and point the secondary entry to idx_main_act.
                 if act_name_val == idx_main_act and name_ap is not None:
                     struct.pack_into("<III", axml, name_ap + 8, target_act_idx, TYPE_STRING, target_act_idx)
                     if label_ap is not None:
@@ -122,69 +168,62 @@ def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
     return bytes(axml)
 
 
-def replace_manifest_and_resign_v2(base_apk_bytes: bytes, new_manifest_bytes: bytes, key_path: str) -> bytes:
+def replace_zip_entry_raw(apk_bytes: bytes, target_entry_name: str, new_uncompressed_bytes: bytes) -> bytes:
     """
-    Replaces AndroidManifest.xml compressed stream inside the APK, updates Local File Header
-    and Central Directory offsets/CRC32/sizes, and re-signs the APK with APK Signature Scheme v2.
+    Replaces a single DEFLATE-compressed entry inside the unsigned/v2-structured APK
+    and updates Local File Header, Central Directory, and EOCD offsets.
     """
-    eocd_off = base_apk_bytes.rfind(b"PK\x05\x06")
-    cd_size = struct.unpack("<I", base_apk_bytes[eocd_off + 12 : eocd_off + 16])[0]
-    cd_off = struct.unpack("<I", base_apk_bytes[eocd_off + 16 : eocd_off + 20])[0]
-    block_size_2 = struct.unpack("<Q", base_apk_bytes[cd_off - 24 : cd_off - 16])[0]
+    eocd_off = apk_bytes.rfind(b"PK\x05\x06")
+    cd_size = struct.unpack("<I", apk_bytes[eocd_off + 12 : eocd_off + 16])[0]
+    cd_off = struct.unpack("<I", apk_bytes[eocd_off + 16 : eocd_off + 20])[0]
+    block_size_2 = struct.unpack("<Q", apk_bytes[cd_off - 24 : cd_off - 16])[0]
     sig_block_start = cd_off - 8 - block_size_2
+    orig_sig_block = apk_bytes[sig_block_start:cd_off]
 
-    # Extract existing v2 signing block template
-    orig_sig_block = bytearray(base_apk_bytes[sig_block_start:cd_off])
-
-    # Compress new AndroidManifest.xml with raw deflate (wbits=-15)
     comp_obj = zlib.compressobj(level=6, method=zlib.DEFLATED, wbits=-15)
-    new_comp_data = comp_obj.compress(new_manifest_bytes) + comp_obj.flush()
-    new_crc = zlib.crc32(new_manifest_bytes) & 0xFFFFFFFF
+    new_comp_data = comp_obj.compress(new_uncompressed_bytes) + comp_obj.flush()
+    new_crc = zlib.crc32(new_uncompressed_bytes) & 0xFFFFFFFF
     new_comp_size = len(new_comp_data)
-    new_uncomp_size = len(new_manifest_bytes)
+    new_uncomp_size = len(new_uncompressed_bytes)
 
-    # Parse Central Directory to find AndroidManifest.xml entry
-    cd_bytes = bytearray(base_apk_bytes[cd_off:eocd_off])
+    cd_bytes = bytearray(apk_bytes[cd_off:eocd_off])
     pos = 0
-    manifest_lh_off = None
+    entry_lh_off = None
     old_comp_size = None
-    manifest_cd_pos = None
+    entry_cd_pos = None
 
     while pos < len(cd_bytes):
         assert cd_bytes[pos : pos + 4] == b"PK\x01\x02"
         fname_len, extra_len, comment_len = struct.unpack("<HHH", cd_bytes[pos + 28 : pos + 34])
         fname = cd_bytes[pos + 46 : pos + 46 + fname_len].decode("utf-8", "ignore")
         lh_off = struct.unpack("<I", cd_bytes[pos + 42 : pos + 46])[0]
-        if fname == "AndroidManifest.xml":
-            manifest_cd_pos = pos
-            manifest_lh_off = lh_off
+        if fname == target_entry_name:
+            entry_cd_pos = pos
+            entry_lh_off = lh_off
             old_comp_size = struct.unpack("<I", cd_bytes[pos + 20 : pos + 24])[0]
             break
         pos += 46 + fname_len + extra_len + comment_len
 
-    assert manifest_lh_off is not None
-    # Inspect Local File Header at manifest_lh_off
-    assert base_apk_bytes[manifest_lh_off : manifest_lh_off + 4] == b"PK\x03\x04"
+    assert entry_lh_off is not None, f"Entry {target_entry_name} not found"
+    assert apk_bytes[entry_lh_off : entry_lh_off + 4] == b"PK\x03\x04"
     lh_fname_len, lh_extra_len = struct.unpack(
-        "<HH", base_apk_bytes[manifest_lh_off + 26 : manifest_lh_off + 30]
+        "<HH", apk_bytes[entry_lh_off + 26 : entry_lh_off + 30]
     )
-    lh_data_start = manifest_lh_off + 30 + lh_fname_len + lh_extra_len
+    lh_data_start = entry_lh_off + 30 + lh_fname_len + lh_extra_len
     lh_data_end = lh_data_start + old_comp_size
 
-    # Check if data descriptor flag (bit 3) is set on Local File Header
-    gp_flag = struct.unpack("<H", base_apk_bytes[manifest_lh_off + 6 : manifest_lh_off + 8])[0]
+    gp_flag = struct.unpack("<H", apk_bytes[entry_lh_off + 6 : entry_lh_off + 8])[0]
     has_data_desc = (gp_flag & 0x0008) != 0
     dd_len = 0
     if has_data_desc:
-        if base_apk_bytes[lh_data_end : lh_data_end + 4] == b"PK\x07\x08":
+        if apk_bytes[lh_data_end : lh_data_end + 4] == b"PK\x07\x08":
             dd_len = 16
         else:
             dd_len = 12
 
     delta = new_comp_size - old_comp_size
 
-    # Rebuild Local Header for AndroidManifest.xml
-    new_lh = bytearray(base_apk_bytes[manifest_lh_off:lh_data_start])
+    new_lh = bytearray(apk_bytes[entry_lh_off:lh_data_start])
     struct.pack_into("<III", new_lh, 14, new_crc, new_comp_size, new_uncomp_size)
 
     new_dd = bytearray()
@@ -194,34 +233,49 @@ def replace_manifest_and_resign_v2(base_apk_bytes: bytes, new_manifest_bytes: by
         else:
             new_dd = bytearray(struct.pack("<III", new_crc, new_comp_size, new_uncomp_size))
 
-    # Build new Section 1 (all ZIP entries before APK Signing Block)
     sec1 = (
-        base_apk_bytes[:manifest_lh_off]
+        apk_bytes[:entry_lh_off]
         + bytes(new_lh)
         + new_comp_data
         + bytes(new_dd)
-        + base_apk_bytes[lh_data_end + dd_len : sig_block_start]
+        + apk_bytes[lh_data_end + dd_len : sig_block_start]
     )
 
-    # Ensure 4096-byte alignment for APK Signing Block by adjusting VerityPaddingBlock (0x42726577) if needed
-    # Update Central Directory entries whose lh_off > manifest_lh_off
     pos = 0
     while pos < len(cd_bytes):
         fname_len, extra_len, comment_len = struct.unpack("<HHH", cd_bytes[pos + 28 : pos + 34])
         lh_off = struct.unpack("<I", cd_bytes[pos + 42 : pos + 46])[0]
-        if pos == manifest_cd_pos:
+        if pos == entry_cd_pos:
             struct.pack_into("<III", cd_bytes, pos + 16, new_crc, new_comp_size, new_uncomp_size)
-        elif lh_off > manifest_lh_off:
+        elif lh_off > entry_lh_off:
             struct.pack_into("<I", cd_bytes, pos + 42, lh_off + delta)
         pos += 46 + fname_len + extra_len + comment_len
 
+    new_cd_off = len(sec1) + len(orig_sig_block)
+    eocd_bytes = bytearray(apk_bytes[eocd_off:])
+    struct.pack_into("<II", eocd_bytes, 12, len(cd_bytes), new_cd_off)
+
+    return sec1 + orig_sig_block + bytes(cd_bytes) + bytes(eocd_bytes)
+
+
+def resign_apk_v2(apk_bytes: bytes, key_path: str) -> bytes:
+    """
+    Re-computes 4096-byte aligned APK Signature Scheme v2 block and signs with debug.keystore.
+    """
+    eocd_off = apk_bytes.rfind(b"PK\x05\x06")
+    cd_size = struct.unpack("<I", apk_bytes[eocd_off + 12 : eocd_off + 16])[0]
+    cd_off = struct.unpack("<I", apk_bytes[eocd_off + 16 : eocd_off + 20])[0]
+    block_size_2 = struct.unpack("<Q", apk_bytes[cd_off - 24 : cd_off - 16])[0]
+    sig_block_start = cd_off - 8 - block_size_2
+
+    orig_sig_block = bytearray(apk_bytes[sig_block_start:cd_off])
+    sec1 = apk_bytes[:sig_block_start]
+    cd_bytes = bytearray(apk_bytes[cd_off:eocd_off])
+
     new_sig_block_start = len(sec1)
-    # Adjust padding block inside orig_sig_block so total size before CD is a multiple of 4096
     pair1_len = struct.unpack("<Q", orig_sig_block[8:16])[0]
     v2_pair_bytes = bytearray(orig_sig_block[8 : 16 + pair1_len])
 
-    # Calculate required padding pair length so (new_sig_block_start + total_sig_block_bytes) % 4096 == 0
-    # total_sig_block_bytes = 8 (size1) + len(v2_pair_bytes) + (8 + 4 + pad_len) + 8 (size2) + 16 (magic)
     base_overhead = 8 + len(v2_pair_bytes) + 12 + 8 + 16
     rem = (new_sig_block_start + base_overhead) % 4096
     pad_len = (4096 - rem) % 4096
@@ -229,10 +283,9 @@ def replace_manifest_and_resign_v2(base_apk_bytes: bytes, new_manifest_bytes: by
     block_size_val = len(v2_pair_bytes) + len(pad_pair_bytes) + 8 + 16
 
     new_cd_off = new_sig_block_start + 8 + block_size_val
-    eocd_bytes = bytearray(base_apk_bytes[eocd_off:])
+    eocd_bytes = bytearray(apk_bytes[eocd_off:])
     struct.pack_into("<II", eocd_bytes, 12, len(cd_bytes), new_cd_off)
 
-    # Compute APK Signature Scheme v2 digest over (sec1, cd_bytes, eocd_with_cd_off_at_sig_block_start)
     eocd_for_digest = bytearray(eocd_bytes)
     struct.pack_into("<I", eocd_for_digest, 16, new_sig_block_start)
 
@@ -250,10 +303,7 @@ def replace_manifest_and_resign_v2(base_apk_bytes: bytes, new_manifest_bytes: by
     top_hash.update(b"\x5a" + struct.pack("<I", len(chunk_digests)) + b"".join(chunk_digests))
     new_top_digest = top_hash.digest()
 
-    # Patch new_top_digest into v2_pair_bytes and sign signed_data
-    # v2_pair_bytes layout: [8: pair_len][4: 0x7109871a][4: signers_len][4: signer_len][4: signed_data_len]...
     signed_data_len = struct.unpack("<I", v2_pair_bytes[20:24])[0]
-    # Inside signed_data: [4: digests_len][4: digest_entry_len][4: alg_id][4: digest_len (32)][32: digest]
     digest_offset_in_pair = 24 + 16
     assert len(new_top_digest) == 32
     v2_pair_bytes[digest_offset_in_pair : digest_offset_in_pair + 32] = new_top_digest
@@ -267,7 +317,6 @@ def replace_manifest_and_resign_v2(base_apk_bytes: bytes, new_manifest_bytes: by
     new_sig, _ = proc.communicate(signed_data)
     assert len(new_sig) == 256
 
-    # Signature bytes inside v2_pair_bytes: after signed_data -> [4: sigs_len][4: sig_entry_len][4: alg_id][4: sig_len (256)][256: sig]
     sig_offset_in_pair = 24 + signed_data_len + 16
     v2_pair_bytes[sig_offset_in_pair : sig_offset_in_pair + 256] = new_sig
 
@@ -282,16 +331,34 @@ def replace_manifest_and_resign_v2(base_apk_bytes: bytes, new_manifest_bytes: by
     return sec1 + final_sig_block + bytes(cd_bytes) + bytes(eocd_bytes)
 
 
+BUILD_TOOLS_DIR = "/opt/android/sdk/build-tools/36.0.0"
+ZIPALIGN_BIN = os.path.join(BUILD_TOOLS_DIR, "zipalign")
+APKSIGNER_BIN = os.path.join(BUILD_TOOLS_DIR, "apksigner")
+
+
 def main():
     os.makedirs("public/apks", exist_ok=True)
     os.makedirs("/var/www/assets/apks", exist_ok=True)
 
-    key_path = extract_private_key_pem()
-    base_apk_bytes = open(BASE_APK, "rb").read()
+    base_apk_path = resolve_base_apk()
+    print(f"Using freshly compiled base APK: {base_apk_path}")
+    raw_base_apk = open(base_apk_path, "rb").read()
 
-    import zipfile
-    with zipfile.ZipFile(BASE_APK, "r") as z:
+    with zipfile.ZipFile(base_apk_path, "r") as z:
         orig_manifest = z.read("AndroidManifest.xml")
+        large_dex_entries = [
+            (info.filename, z.read(info.filename))
+            for info in z.infolist()
+            if info.filename.startswith("classes")
+            and info.filename.endswith(".dex")
+            and info.compress_size > 1000000
+        ]
+
+    # Re-compress large classes*.dex entries at DEFLATE level=6 so the APK stays ~30 MiB
+    # (well under Google Cloud Run's 32.00 MiB = 33,554,432-byte HTTP response limit!)
+    base_apk_shrunk = raw_base_apk
+    for dex_name, dex_bytes in large_dex_entries:
+        base_apk_shrunk = replace_zip_entry_raw(base_apk_shrunk, dex_name, dex_bytes)
 
     variants = [
         ("CUSTOMER", "QuickDelivery-Customer.apk"),
@@ -301,14 +368,62 @@ def main():
 
     for role, filename in variants:
         patched_manifest = patch_axml_manifest(orig_manifest, role)
-        signed_apk = replace_manifest_and_resign_v2(base_apk_bytes, patched_manifest, key_path)
+        apk_with_manifest = replace_zip_entry_raw(
+            base_apk_shrunk, "AndroidManifest.xml", patched_manifest
+        )
+
+        unsigned_tmp = f"/tmp/unsigned_{role}.apk"
+        aligned_tmp = f"/tmp/aligned_{role}.apk"
+        signed_tmp = f"/tmp/signed_{role}.apk"
+
+        with open(unsigned_tmp, "wb") as f:
+            f.write(apk_with_manifest)
+
+        # CRITICAL: Re-align all uncompressed entries (resources.arsc & .so) to 4-byte boundary!
+        # Android 11+ (targetSdk 30+) strictly rejects unaligned resources.arsc with "App not installed."
+        subprocess.run(
+            [ZIPALIGN_BIN, "-f", "-p", "4", unsigned_tmp, aligned_tmp],
+            check=True,
+        )
+
+        # Sign using official Android SDK apksigner with v1 + v2 + v3 schemes
+        subprocess.run(
+            [
+                APKSIGNER_BIN,
+                "sign",
+                "--ks",
+                KEYSTORE,
+                "--ks-key-alias",
+                "androiddebugkey",
+                "--ks-pass",
+                "pass:android",
+                "--key-pass",
+                "pass:android",
+                "--v1-signing-enabled",
+                "true",
+                "--v2-signing-enabled",
+                "true",
+                "--v3-signing-enabled",
+                "true",
+                "--out",
+                signed_tmp,
+                aligned_tmp,
+            ],
+            check=True,
+        )
+
+        # Verify both 4-byte zipalign and apksigner before publishing
+        subprocess.run([ZIPALIGN_BIN, "-c", "4", signed_tmp], check=True)
+        subprocess.run([APKSIGNER_BIN, "verify", signed_tmp], check=True)
+
+        signed_apk = open(signed_tmp, "rb").read()
         out_pub = os.path.join("public/apks", filename)
         out_www = os.path.join("/var/www/assets/apks", filename)
         with open(out_pub, "wb") as f:
             f.write(signed_apk)
         with open(out_www, "wb") as f:
             f.write(signed_apk)
-        print(f"Built & v2-signed {filename} ({len(signed_apk)} bytes) for role={role}")
+        print(f"Built, zipaligned & v1/v2/v3-signed {filename} ({len(signed_apk)} bytes) for role={role}")
 
 
 if __name__ == "__main__":

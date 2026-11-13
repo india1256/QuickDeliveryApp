@@ -8,11 +8,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
@@ -44,7 +41,7 @@
         android:label="${appLauncherLabel}"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.MyApplication">
         <activity
             android:name=".MainActivity"
@@ -61,19 +58,19 @@
             android:name=".CustomerMainActivity"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
-            android:label="QD Customer App"
+            android:label="Quick Delivery"
             android:theme="@style/Theme.MyApplication" />
         <activity
             android:name=".RiderMainActivity"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
-            android:label="QD Rider Partner"
+            android:label="Quick Delivery Partner"
             android:theme="@style/Theme.MyApplication" />
         <activity
             android:name=".AdminMainActivity"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
-            android:label="QD Admin Console"
+            android:label="Quick Delivery Admin"
             android:theme="@style/Theme.MyApplication" />
 
         <meta-data

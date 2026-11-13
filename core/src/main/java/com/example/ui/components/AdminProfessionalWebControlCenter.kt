@@ -709,37 +709,11 @@ fun AdminProfessionalLiveMirrorScreen(
                                 )
                             }
 
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        RiderOverspeedAlarmManager.setSimulatedSpeedKmh(
-                                            context,
-                                            overspeedState.speedLimitKmh + 18
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("admin_test_rider_overspeed_btn")
-                                ) {
-                                    Text("Test Over-Speed (${overspeedState.speedLimitKmh + 18} km/h)", style = MaterialTheme.typography.labelSmall)
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        RiderOverspeedAlarmManager.setSimulatedSpeedKmh(
-                                            context,
-                                            (overspeedState.speedLimitKmh - 12).coerceAtLeast(25)
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("admin_reset_rider_safe_speed_btn")
-                                ) {
-                                    Text("Slow Down (Auto-Stop Alarm)", style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
+                            Text(
+                                text = "Automatic voice & visual alert activates whenever an active delivery partner exceeds ${overspeedState.speedLimitKmh} km/h on GPS telemetry.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF475569)
+                            )
                         }
                     }
 
@@ -1766,11 +1740,12 @@ fun AdminEnterpriseControlCenter(
         RiderOrderTransferManager.ensureLoaded(context)
         SosSafetySupportManager.ensureLoaded(context)
         RiderLiveSelfieCallAndExcelManager.ensureLoaded(context)
+        com.example.data.cloud.RiderRegistrationApprovalManager.ensureLoaded(context)
         RiderBatteryPowerMonitor.refreshFromSystem(context)
         val currentRiders = repository.riders.value
-        if (currentRiders.any { !it.isOnline }) {
+        if (currentRiders.any { !it.isOnline && !it.riderId.startsWith("RIDER-KYC-") }) {
             val allOnline = currentRiders.map {
-                it.copy(isOnline = true, shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT)
+                if (it.riderId.startsWith("RIDER-KYC-")) it else it.copy(isOnline = true, shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT)
             }
             AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, allOnline)
         }
@@ -1791,10 +1766,10 @@ fun AdminEnterpriseControlCenter(
 
     var selectedPageIndex by remember { mutableIntStateOf(0) }
     var globalRiderSearchQuery by remember { mutableStateOf("") }
-    var isAutoPilotEnabled by remember { mutableStateOf(true) }
+    var isAutoPilotEnabled by remember { mutableStateOf(false) }
     var autoSystemPulseCount by remember { mutableIntStateOf(1) }
     var lastAutoActionLog by remember {
-        mutableStateOf("🤖 100% Online Auto-Pilot Engine ON • Live Selfie Gate, Dial-Pad Calling, Full Document Vault & Excel Sync Active")
+        mutableStateOf("🟢 Live Fleet & Order Tracking Active • Manual Rider Accept / Reject Mode Enabled")
     }
 
     val executeSingleAutonomousStep: () -> Unit = {
@@ -1978,6 +1953,11 @@ private fun AdminOverviewPage(
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // Pending Rider Onboarding KYC Approvals (from newly registered Rider Partners)
+        item(key = "overview_admin_pending_rider_approvals") {
+            com.example.ui.rider.AdminPendingRiderApprovalsSection()
+        }
+
         // Instant Rider Name Search & Document/Selfie Lookup Bar
         item(key = "overview_instant_rider_name_search") {
             Card(
@@ -2891,6 +2871,10 @@ private fun AdminRidersCompleteDataPage(
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        item(key = "riders_admin_pending_rider_approvals") {
+            com.example.ui.rider.AdminPendingRiderApprovalsSection()
+        }
+
         // 1. Executive Logged-In Riders Summary Card
         item(key = "riders_login_summary_hero") {
             Card(
@@ -3922,6 +3906,10 @@ private fun AdminKycVerificationPage(
         contentPadding = PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item(key = "kyc_admin_pending_rider_approvals") {
+            com.example.ui.rider.AdminPendingRiderApprovalsSection()
+        }
+
         item(key = "kyc_header") {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),

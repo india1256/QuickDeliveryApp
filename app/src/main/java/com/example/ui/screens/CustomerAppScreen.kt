@@ -37,6 +37,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -46,16 +47,20 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Redeem
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material.icons.filled.Verified
@@ -63,6 +68,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -128,8 +135,10 @@ import com.example.ui.components.FcmTargetAppRole
 import com.example.ui.components.LiveRiderContinuousTrackingCard
 import com.example.ui.components.MotivationAndPromoManager
 import com.example.ui.components.PhoneStorageLoginBackupCard
+import com.example.ui.components.QuickDeliveryDeleteAccountDialog
 import com.example.ui.components.QuickDeliveryNextLevelLaunchOverlay
 import com.example.ui.components.QuickDeliveryOfficialLogo
+import com.example.ui.components.QuickDeliveryPrivacyPolicyDialog
 import com.example.ui.components.QuickDeliverySpeedingVehicleIntro
 import com.example.ui.components.QuickDeliverySuggestionBoxCard
 import com.example.ui.components.QuickDeliveryUserAuthScreen
@@ -202,6 +211,7 @@ fun CustomerAppScreen(
     var pickupLandmark by rememberSaveable { mutableStateOf("") }
     var pickupLat by rememberSaveable { mutableDoubleStateOf(12.9784) }
     var pickupLng by rememberSaveable { mutableDoubleStateOf(77.6408) }
+    var pickupLiveGpsVerified by rememberSaveable { mutableStateOf(false) }
 
     var dropHouseFlat by rememberSaveable { mutableStateOf("") }
     var dropBuilding by rememberSaveable { mutableStateOf("") }
@@ -210,6 +220,11 @@ fun CustomerAppScreen(
     var dropLandmark by rememberSaveable { mutableStateOf("") }
     var dropLat by rememberSaveable { mutableDoubleStateOf(12.9352) }
     var dropLng by rememberSaveable { mutableDoubleStateOf(77.6245) }
+    var dropLiveGpsVerified by rememberSaveable { mutableStateOf(false) }
+    var pendingGpsTarget by rememberSaveable { mutableStateOf("PICKUP") }
+    var isCapturingPickupLocation by remember { mutableStateOf(false) }
+    var isCapturingDropLocation by remember { mutableStateOf(false) }
+    var isResolvingStep1Route by remember { mutableStateOf(false) }
 
     var selectedPickupSavedTag by rememberSaveable { mutableStateOf("Home") }
     var selectedDropSavedTag by rememberSaveable { mutableStateOf("Office") }
@@ -232,7 +247,11 @@ fun CustomerAppScreen(
             .filter { it.isNotEmpty() }
             .joinToString(", ")
         val pinTrimmed = pickupPinCode.trim()
-        if (pinTrimmed.isNotEmpty()) "$baseParts - $pinTrimmed" else baseParts
+        if (pinTrimmed.isNotEmpty()) {
+            if (baseParts.isNotEmpty()) "$baseParts - $pinTrimmed" else pinTrimmed
+        } else {
+            baseParts
+        }
     }
 
     val fullDropAddressFormatted = remember(
@@ -251,7 +270,11 @@ fun CustomerAppScreen(
             .filter { it.isNotEmpty() }
             .joinToString(", ")
         val pinTrimmed = dropPinCode.trim()
-        if (pinTrimmed.isNotEmpty()) "$baseParts - $pinTrimmed" else baseParts
+        if (pinTrimmed.isNotEmpty()) {
+            if (baseParts.isNotEmpty()) "$baseParts - $pinTrimmed" else pinTrimmed
+        } else {
+            baseParts
+        }
     }
 
     val vehiclePolicy by AutomatedFairRiderAssignmentEngine.vehicleAndWeightPolicy.collectAsState()
@@ -374,25 +397,98 @@ fun CustomerAppScreen(
         }
     }
 
+    val applyLiveGpsCoordinates: (String, Double, Double) -> Unit = { target, lat, lng ->
+        if (target == "DROP") {
+            dropLat = lat
+            dropLng = lng
+            dropLiveGpsVerified = true
+            isCapturingDropLocation = true
+            scope.launch {
+                val geocoded = DeliveryProofAndGpsManager.reverseGeocodeDetailed(context, lat, lng)
+                isCapturingDropLocation = false
+                if (geocoded != null) {
+                    if (geocoded.houseFlat.isNotBlank()) {
+                        dropHouseFlat = geocoded.houseFlat
+                    }
+                    if (geocoded.building.isNotBlank()) {
+                        dropBuilding = geocoded.building
+                    }
+                    if (geocoded.areaStreet.isNotBlank()) {
+                        dropAddressText = geocoded.areaStreet
+                    }
+                    if (geocoded.pinCode.isNotBlank()) {
+                        dropPinCode = geocoded.pinCode
+                    }
+                    if (geocoded.landmark.isNotBlank()) {
+                        dropLandmark = geocoded.landmark
+                    }
+                    isErrorBanner = false
+                    statusBanner = "📍 Exact drop current address captured!"
+                } else {
+                    isErrorBanner = false
+                    statusBanner = "📍 Drop GPS locked! Please fill your House / Building details below."
+                }
+            }
+        } else {
+            pickupLat = lat
+            pickupLng = lng
+            pickupLiveGpsVerified = true
+            isCapturingPickupLocation = true
+            scope.launch {
+                val geocoded = DeliveryProofAndGpsManager.reverseGeocodeDetailed(context, lat, lng)
+                isCapturingPickupLocation = false
+                if (geocoded != null) {
+                    if (geocoded.houseFlat.isNotBlank()) {
+                        pickupHouseFlat = geocoded.houseFlat
+                    }
+                    if (geocoded.building.isNotBlank()) {
+                        pickupBuilding = geocoded.building
+                    }
+                    if (geocoded.areaStreet.isNotBlank()) {
+                        pickupAddressText = geocoded.areaStreet
+                    }
+                    if (geocoded.pinCode.isNotBlank()) {
+                        pickupPinCode = geocoded.pinCode
+                    }
+                    if (geocoded.landmark.isNotBlank()) {
+                        pickupLandmark = geocoded.landmark
+                    }
+                    isErrorBanner = false
+                    statusBanner = "📍 Exact current pickup address captured!"
+                } else {
+                    isErrorBanner = false
+                    statusBanner = "📍 Pickup GPS locked! Please fill your House / Building details below."
+                }
+            }
+        }
+    }
+
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
         val granted = perms[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        // Immediately clear any permission prompt so it never remains on screen after granting access
         statusBanner = null
         isErrorBanner = false
         if (granted) {
+            if (pendingGpsTarget == "DROP") isCapturingDropLocation = true else isCapturingPickupLocation = true
             scope.launch {
                 val coords = DeliveryProofAndGpsManager.fetchLiveGpsLocation(context)
-                liveRiderGpsCoordinates = if (coords != null) {
-                    String.format(Locale.US, "%.5f, %.5f", coords.first, coords.second)
+                if (coords != null) {
+                    applyLiveGpsCoordinates(pendingGpsTarget, coords.first, coords.second)
                 } else {
-                    String.format(Locale.US, "%.5f, %.5f", pickupLat, pickupLng)
+                    if (pendingGpsTarget == "DROP") isCapturingDropLocation = false else isCapturingPickupLocation = false
+                    isErrorBanner = true
+                    statusBanner = if (!DeliveryProofAndGpsManager.isLocationServiceEnabled(context)) {
+                        "Location (GPS) is OFF. Please turn ON GPS to auto-capture your exact address, or enter it below."
+                    } else {
+                        "Unable to capture GPS fix right now. Please enable High-Accuracy Location or enter your address manually."
+                    }
                 }
             }
         } else {
-            liveRiderGpsCoordinates = String.format(Locale.US, "%.5f, %.5f", pickupLat, pickupLng)
+            isErrorBanner = true
+            statusBanner = "Please allow Location permission to auto-capture your exact address, or enter your address below."
         }
     }
 
@@ -431,11 +527,44 @@ fun CustomerAppScreen(
     }
 
     var showCustomerTopOptionsDialog by remember { mutableStateOf(false) }
+    var showCustomerShareThreeDotsMenu by remember { mutableStateOf(false) }
+    var attemptedStep1Next by rememberSaveable { mutableStateOf(false) }
     var showCustomerLogoutConfirmDialog by remember { mutableStateOf(false) }
     var showCustomerSuggestionDialog by remember { mutableStateOf(false) }
+    var showCustomerPrivacyPolicyDialog by remember { mutableStateOf(false) }
+    var showCustomerDeleteAccountDialog by remember { mutableStateOf(false) }
+    var showGstInvoiceDialogForOrder by remember { mutableStateOf<CustomerOrder?>(null) }
+    var orderPendingCancellation by remember { mutableStateOf<CustomerOrder?>(null) }
     var isCustomerLoggedIn by remember { mutableStateOf(MotivationAndPromoManager.customerAuthenticatedInSession) }
 
-    val hasCustomerBackHistory = showCustomerLogoutConfirmDialog ||
+    val validateStep1MandatoryFields: () -> String? = {
+        val weightCheck = AutomatedFairRiderAssignmentEngine.validateCustomerParcelWeightKg(
+            packageWeightKg,
+            selectedVehicle
+        )
+        when {
+            pickupHouseFlat.isBlank() -> "Pickup House / Flat No. (*) is mandatory"
+            pickupBuilding.isBlank() -> "Pickup Building / Society (*) is mandatory"
+            pickupAddressText.isBlank() -> "Pickup Area / Locality / Street (*) is mandatory"
+            pickupPinCode.length != 6 -> "Please enter a valid 6-digit Pickup PIN Code (*)"
+            receiverFullName.isBlank() -> "Receiver Name (*) is mandatory"
+            receiverMobilePhone.length != 10 -> "Please enter a valid 10-digit Receiver Phone (*)"
+            dropHouseFlat.isBlank() -> "Drop House / Flat No. (*) is mandatory"
+            dropBuilding.isBlank() -> "Drop Building / Society (*) is mandatory"
+            dropAddressText.isBlank() -> "Drop Area / Locality / Street (*) is mandatory"
+            dropPinCode.length != 6 -> "Please enter a valid 6-digit Drop PIN Code (*)"
+            weightCheck.isFailure -> weightCheck.exceptionOrNull()?.message
+                ?: AutomatedFairRiderAssignmentEngine.MAX_PARCEL_WEIGHT_ERROR_MESSAGE
+            packageDescription.isBlank() -> "Parcel Note / Item Description (*) is mandatory"
+            else -> null
+        }
+    }
+
+    val hasCustomerBackHistory = orderPendingCancellation != null ||
+        showGstInvoiceDialogForOrder != null ||
+        showCustomerDeleteAccountDialog ||
+        showCustomerPrivacyPolicyDialog ||
+        showCustomerLogoutConfirmDialog ||
         showCustomerSuggestionDialog ||
         showCustomerTopOptionsDialog ||
         showBookingConfirmationScreen ||
@@ -445,6 +574,10 @@ fun CustomerAppScreen(
 
     BackHandler(enabled = hasCustomerBackHistory) {
         when {
+            orderPendingCancellation != null -> orderPendingCancellation = null
+            showGstInvoiceDialogForOrder != null -> showGstInvoiceDialogForOrder = null
+            showCustomerDeleteAccountDialog -> showCustomerDeleteAccountDialog = false
+            showCustomerPrivacyPolicyDialog -> showCustomerPrivacyPolicyDialog = false
             showCustomerLogoutConfirmDialog -> showCustomerLogoutConfirmDialog = false
             showCustomerSuggestionDialog -> showCustomerSuggestionDialog = false
             showCustomerTopOptionsDialog -> showCustomerTopOptionsDialog = false
@@ -638,14 +771,7 @@ fun CustomerAppScreen(
                             tipAmountInr = selectedRiderTipInr
                         )
                     }
-                    // Offer order to Rider Partners while keeping status in SEARCHING_RIDER until Rider taps Accept
-                    val fairDispatchOutcome = runCatching {
-                        AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
-                            repository = repository,
-                            orderId = newOrder.orderId,
-                            offerOnlyWaitForRiderConsent = true
-                        )
-                    }.getOrNull()
+                    // Keep order in SEARCHING_RIDER until a Rider Partner manually taps Accept in the Rider App
                     com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                     val refreshedOrder = repository.orders.value.firstOrNull { it.orderId == newOrder.orderId }
                     if (refreshedOrder != null) {
@@ -653,7 +779,7 @@ fun CustomerAppScreen(
                     }
                     isErrorBanner = false
                     val tipNote = if (selectedRiderTipInr > 0) " + ₹$selectedRiderTipInr Rider Tip" else ""
-                    statusBanner = "Order #${newOrder.orderId} Confirmed$tipNote! Sent to Rider Partner app for acceptance."
+                    statusBanner = "Order #${newOrder.orderId} Confirmed$tipNote! Waiting for Rider Partner to Accept."
                     customerPromoNotification = MotivationAndPromoManager.nextCustomerOrderPromoNotification()
                     showBookingConfirmationScreen = false
                     currentStep = 3
@@ -708,6 +834,8 @@ fun CustomerAppScreen(
     if (showCustomerTopOptionsDialog) {
         QuickDeliveryTopOptionsDialog(
             onDismiss = { showCustomerTopOptionsDialog = false },
+            showMobileCloudApkCard = false,
+            dialogTitle = "Menu & Language (☰)",
             extraTopContent = {
                 Column(
                     modifier = Modifier
@@ -1070,9 +1198,9 @@ fun CustomerAppScreen(
                         }
                     }
 
-                    // SECTION 6: SETTINGS & LOGOUT
+                    // SECTION 6: SETTINGS, PRIVACY & ACCOUNT
                     Text(
-                        text = "SETTINGS & LOGOUT",
+                        text = "SETTINGS, PRIVACY & ACCOUNT",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = SlateMuted
@@ -1081,6 +1209,55 @@ fun CustomerAppScreen(
                         accentColor = PrimaryTeal,
                         testTagPrefix = "customer_lang_chip"
                     )
+
+                    Surface(
+                        onClick = {
+                            showCustomerTopOptionsDialog = false
+                            showCustomerPrivacyPolicyDialog = true
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFF8FAFC),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_menu_privacy_policy_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = PrimaryTeal.copy(alpha = 0.12f),
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Description,
+                                        contentDescription = "Privacy Policy & Terms",
+                                        tint = PrimaryTeal,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Privacy Policy & Terms",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DeepNavy
+                                )
+                                Text(
+                                    text = "Data safety & commercial delivery terms",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = SlateMuted
+                                )
+                            }
+                        }
+                    }
 
                     Surface(
                         onClick = {
@@ -1126,6 +1303,55 @@ fun CustomerAppScreen(
                                     text = "Sign out of your customer account",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFF991B1B)
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            showCustomerTopOptionsDialog = false
+                            showCustomerDeleteAccountDialog = true
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFFFF1F2),
+                        border = BorderStroke(1.dp, Color(0xFFFDA4AF)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_delete_account_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFFBE123C).copy(alpha = 0.14f),
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Delete Account & Data",
+                                        tint = Color(0xFFBE123C),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Delete Account & Data",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF9F1239)
+                                )
+                                Text(
+                                    text = "Permanently remove saved profile from this device",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF881337)
                                 )
                             }
                         }
@@ -1203,6 +1429,213 @@ fun CustomerAppScreen(
         )
     }
 
+    if (showCustomerPrivacyPolicyDialog) {
+        QuickDeliveryPrivacyPolicyDialog(
+            context = context,
+            onDismiss = { showCustomerPrivacyPolicyDialog = false }
+        )
+    }
+
+    if (showCustomerDeleteAccountDialog) {
+        QuickDeliveryDeleteAccountDialog(
+            roleTitle = "Customer",
+            accountIdentifier = customerEmail.ifBlank { customerPhone.ifBlank { customerName } },
+            onConfirmDelete = {
+                showCustomerDeleteAccountDialog = false
+                MotivationAndPromoManager.deleteUserAccountData(context, "customer")
+                isCustomerLoggedIn = false
+                statusBanner = "Your customer account data has been deleted from this device."
+                currentStep = 1
+            },
+            onDismiss = { showCustomerDeleteAccountDialog = false }
+        )
+    }
+
+    showGstInvoiceDialogForOrder?.let { invOrder ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showGstInvoiceDialogForOrder = null },
+            title = {
+                Text(
+                    text = "Tax Invoice • #${invOrder.orderId}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = DeepNavy
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Quick Delivery Logistics",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = PrimaryTeal
+                    )
+                    Text(
+                        text = "Date: ${invOrder.createdAt.ifBlank { "Live Order" }} • Status: ${invOrder.orderStatus.displayTitle}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateMuted
+                    )
+                    HorizontalDivider()
+                    Text(
+                        text = "Customer: ${invOrder.customerName} (${invOrder.customerPhone})",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = DeepNavy
+                    )
+                    Text(
+                        text = "Pickup: ${invOrder.pickupAddress.fullAddress}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF334155)
+                    )
+                    Text(
+                        text = "Drop: ${invOrder.dropAddress.fullAddress}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF334155)
+                    )
+                    HorizontalDivider()
+                    Text(
+                        text = "Vehicle: ${invOrder.vehicleType.title} • Package: ${invOrder.packageDetails.packageType.title} (${invOrder.packageDetails.weightKg} kg)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = DeepNavy
+                    )
+                    Text(
+                        text = "Payment Mode: ${invOrder.paymentMethod.name.replace('_', ' ')}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateMuted
+                    )
+                    Surface(
+                        color = SoftTealSurface,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Total Paid / Payable (incl. GST)",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = DeepNavy
+                            )
+                            Text(
+                                text = invOrder.totalAmount,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = PrimaryTeal
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val invoiceSummary = buildString {
+                            appendLine("QUICK DELIVERY — TAX INVOICE")
+                            appendLine("Order ID: ${invOrder.orderId}")
+                            appendLine("Customer: ${invOrder.customerName} (${invOrder.customerPhone})")
+                            appendLine("Pickup: ${invOrder.pickupAddress.fullAddress}")
+                            appendLine("Drop: ${invOrder.dropAddress.fullAddress}")
+                            appendLine("Vehicle: ${invOrder.vehicleType.title} | Weight: ${invOrder.packageDetails.weightKg} kg")
+                            appendLine("Payment: ${invOrder.paymentMethod.name.replace('_', ' ')}")
+                            appendLine("Total Fare: ${invOrder.totalAmount}")
+                            appendLine("Status: ${invOrder.orderStatus.displayTitle}")
+                        }
+                        runCatching {
+                            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(
+                                    android.content.Intent.EXTRA_SUBJECT,
+                                    "Quick Delivery Invoice #${invOrder.orderId}"
+                                )
+                                putExtra(android.content.Intent.EXTRA_TEXT, invoiceSummary)
+                            }
+                            context.startActivity(
+                                android.content.Intent.createChooser(shareIntent, "Share or Save GST Invoice")
+                            )
+                        }
+                        showGstInvoiceDialogForOrder = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryTeal)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Share / Save", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showGstInvoiceDialogForOrder = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    orderPendingCancellation?.let { cancelTarget ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { orderPendingCancellation = null },
+            title = {
+                Text(
+                    text = "Cancel Order #${cancelTarget.orderId}?",
+                    fontWeight = FontWeight.Bold,
+                    color = DeepNavy
+                )
+            },
+            text = {
+                Text(
+                    text = "No rider has picked up this parcel yet. Cancelling now removes it from dispatch with zero cancellation fee.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SlateMuted
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        runCatching {
+                            val field = repository.javaClass.getDeclaredField("_orders")
+                            field.isAccessible = true
+                            @Suppress("UNCHECKED_CAST")
+                            val flow = field.get(repository) as? kotlinx.coroutines.flow.MutableStateFlow<List<CustomerOrder>>
+                            if (flow != null) {
+                                flow.value = flow.value.map { existing ->
+                                    if (existing.orderId == cancelTarget.orderId) {
+                                        existing.copy(
+                                            orderStatus = OrderStatus.CANCELLED,
+                                            latestRiderQuickNote = "Cancelled by Customer before pickup."
+                                        )
+                                    } else {
+                                        existing
+                                    }
+                                }
+                            }
+                        }
+                        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                        isErrorBanner = false
+                        statusBanner = "Order #${cancelTarget.orderId} cancelled."
+                        orderPendingCancellation = null
+                        currentStep = 1
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                    modifier = Modifier.testTag("confirm_cancel_order_btn")
+                ) {
+                    Text("Cancel Order", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { orderPendingCancellation = null }) {
+                    Text("Keep Searching")
+                }
+            }
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -1237,14 +1670,70 @@ fun CustomerAppScreen(
                     }
                 },
                 actions = {
-                    LanguageSwitcherPill()
+                    Box {
+                        IconButton(
+                            onClick = { showCustomerShareThreeDotsMenu = true },
+                            modifier = Modifier.testTag("customer_top_bar_three_dots_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Share App Link",
+                                tint = Color.White
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showCustomerShareThreeDotsMenu,
+                            onDismissRequest = { showCustomerShareThreeDotsMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "📤 Share App Link",
+                                        fontWeight = FontWeight.Bold,
+                                        color = DeepNavy
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Share App Link",
+                                        tint = PrimaryTeal
+                                    )
+                                },
+                                onClick = {
+                                    showCustomerShareThreeDotsMenu = false
+                                    val shareLinkUrl = "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/customer-apk"
+                                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(
+                                            android.content.Intent.EXTRA_SUBJECT,
+                                            "Download Quick Delivery Customer App"
+                                        )
+                                        putExtra(
+                                            android.content.Intent.EXTRA_TEXT,
+                                            "Book fast door-to-door parcel delivery on Quick Delivery! Download Customer App here: $shareLinkUrl"
+                                        )
+                                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    runCatching {
+                                        context.startActivity(
+                                            android.content.Intent.createChooser(shareIntent, "Share Customer App Link").apply {
+                                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.testTag("customer_share_app_link_menu_item")
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = { showCustomerTopOptionsDialog = true },
-                        modifier = Modifier.testTag("customer_top_bar_three_dots_btn")
+                        modifier = Modifier.testTag("customer_top_bar_three_lines_menu_btn")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Customer Menu & Account Options",
+                            imageVector = Icons.Default.Menu,
+                            contentDescription = "Customer Menu & Language Settings",
                             tint = Color.White
                         )
                     }
@@ -1296,7 +1785,41 @@ fun CustomerAppScreen(
                     currentStep = currentStep,
                     hasBookedOrder = activeOrder != null,
                     onSelectStep = { targetStep ->
-                        if (targetStep == 2 && weightErrorMessage != null) {
+                        if (targetStep == 2) {
+                            attemptedStep1Next = true
+                            val validationError = validateStep1MandatoryFields()
+                            if (validationError != null) {
+                                isErrorBanner = true
+                                statusBanner = validationError
+                                currentStep = 1
+                            } else {
+                                statusBanner = null
+                                isErrorBanner = false
+                                isResolvingStep1Route = true
+                                scope.launch {
+                                    if (!pickupLiveGpsVerified) {
+                                        val pickupQuery = listOf(pickupHouseFlat, pickupBuilding, pickupAddressText, pickupPinCode)
+                                            .filter { it.isNotBlank() }
+                                            .joinToString(", ")
+                                        DeliveryProofAndGpsManager.forwardGeocodeAddress(context, pickupQuery)?.let { coords ->
+                                            pickupLat = coords.first
+                                            pickupLng = coords.second
+                                        }
+                                    }
+                                    if (!dropLiveGpsVerified) {
+                                        val dropQuery = listOf(dropHouseFlat, dropBuilding, dropAddressText, dropPinCode)
+                                            .filter { it.isNotBlank() }
+                                            .joinToString(", ")
+                                        DeliveryProofAndGpsManager.forwardGeocodeAddress(context, dropQuery)?.let { coords ->
+                                            dropLat = coords.first
+                                            dropLng = coords.second
+                                        }
+                                    }
+                                    isResolvingStep1Route = false
+                                    currentStep = 2
+                                }
+                            }
+                        } else if (targetStep != 1 && weightErrorMessage != null) {
                             isErrorBanner = true
                             statusBanner = weightErrorMessage
                             currentStep = 1
@@ -1523,59 +2046,90 @@ fun CustomerAppScreen(
                                                 Spacer(modifier = Modifier.width(8.dp))
                                                 Column {
                                                     Text(
-                                                        text = "PICKUP LOCATION DETAILS",
+                                                        text = "PICKUP ADDRESS DETAILS",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         color = PrimaryTeal
                                                     )
                                                     Text(
-                                                        text = "House/Flat, Building, Area & PIN Code",
+                                                        text = "Auto-capture your exact current address or enter below",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = SlateMuted
                                                     )
                                                 }
                                             }
-                                            Surface(
-                                                color = SoftTealSurface,
-                                                shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier.clickable {
-                                                    if (DeliveryProofAndGpsManager.hasLocationPermission(context)) {
-                                                        scope.launch {
-                                                            val coords = DeliveryProofAndGpsManager.fetchLiveGpsLocation(context)
-                                                            if (coords != null) {
-                                                                pickupLat = coords.first
-                                                                pickupLng = coords.second
-                                                            }
-                                                        }
-                                                    } else {
-                                                        locationPermissionLauncher.launch(
-                                                            arrayOf(
-                                                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                                                Manifest.permission.ACCESS_COARSE_LOCATION
-                                                            )
-                                                        )
-                                                    }
-                                                }
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            if (pickupLiveGpsVerified) {
+                                                Surface(
+                                                    color = Color(0xFFDCFCE7),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    border = BorderStroke(1.dp, VerifiedGreen)
                                                 ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.MyLocation,
-                                                        contentDescription = "Use current GPS",
-                                                        tint = PrimaryTeal,
-                                                        modifier = Modifier.size(13.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(4.dp))
                                                     Text(
-                                                        text = "Use GPS",
+                                                        text = "✅ Exact Address Captured",
                                                         style = MaterialTheme.typography.labelSmall,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = PrimaryTeal
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = VerifiedGreen,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                     )
                                                 }
                                             }
+                                        }
+
+                                        // PROMINENT 1-TAP AUTO-CAPTURE EXACT CURRENT ADDRESS BUTTON
+                                        Button(
+                                            enabled = !isCapturingPickupLocation,
+                                            onClick = {
+                                                pendingGpsTarget = "PICKUP"
+                                                if (DeliveryProofAndGpsManager.hasLocationPermission(context)) {
+                                                    isCapturingPickupLocation = true
+                                                    scope.launch {
+                                                        val coords = DeliveryProofAndGpsManager.fetchLiveGpsLocation(context)
+                                                        if (coords != null) {
+                                                            applyLiveGpsCoordinates("PICKUP", coords.first, coords.second)
+                                                        } else {
+                                                            isCapturingPickupLocation = false
+                                                            isErrorBanner = true
+                                                            statusBanner = if (!DeliveryProofAndGpsManager.isLocationServiceEnabled(context)) {
+                                                                "Location (GPS) is OFF. Please turn ON GPS to auto-capture your exact address, or enter it below."
+                                                            } else {
+                                                                "Unable to capture GPS fix right now. Please enable High-Accuracy Location or enter your address manually."
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    locationPermissionLauncher.launch(
+                                                        arrayOf(
+                                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                                            Manifest.permission.ACCESS_COARSE_LOCATION
+                                                        )
+                                                    )
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = PrimaryTeal,
+                                                contentColor = Color.White
+                                            ),
+                                            shape = RoundedCornerShape(12.dp),
+                                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 11.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("customer_add_live_pickup_location_btn")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.MyLocation,
+                                                contentDescription = "Auto-Capture Current Address",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = if (isCapturingPickupLocation) {
+                                                    "Detecting Exact Current Address..."
+                                                } else {
+                                                    "📍 Auto-Capture My Current Address"
+                                                },
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
                                         }
 
                                         // Saved Pickup Address Tags (Home, Office, Other)
@@ -1615,7 +2169,8 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = pickupHouseFlat,
                                                 onValueChange = { pickupHouseFlat = it },
-                                                label = { Text("House / Flat No.") },
+                                                label = { Text("House / Flat No. *") },
+                                                isError = attemptedStep1Next && pickupHouseFlat.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -1630,7 +2185,8 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = pickupBuilding,
                                                 onValueChange = { pickupBuilding = it },
-                                                label = { Text("Building / Society") },
+                                                label = { Text("Building / Society *") },
+                                                isError = attemptedStep1Next && pickupBuilding.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -1648,7 +2204,8 @@ fun CustomerAppScreen(
                                         OutlinedTextField(
                                             value = pickupAddressText,
                                             onValueChange = { pickupAddressText = it },
-                                            label = { Text("Pickup Area / Locality / Street") },
+                                            label = { Text("Pickup Area / Locality / Street *") },
+                                            isError = attemptedStep1Next && pickupAddressText.isBlank(),
                                             leadingIcon = {
                                                 Icon(
                                                     Icons.Default.LocationOn,
@@ -1678,7 +2235,8 @@ fun CustomerAppScreen(
                                                 onValueChange = { input ->
                                                     pickupPinCode = input.filter { it.isDigit() }.take(6)
                                                 },
-                                                label = { Text("PIN Code") },
+                                                label = { Text("PIN Code *") },
+                                                isError = attemptedStep1Next && pickupPinCode.length != 6,
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
@@ -1713,27 +2271,92 @@ fun CustomerAppScreen(
                                             modifier = Modifier.padding(vertical = 2.dp)
                                         )
 
-                                        // DROP HEADER
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Box(
+                                        // DROP HEADER + LIVE GPS OPTION
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(10.dp)
+                                                        .clip(CircleShape)
+                                                        .background(BrandOrange)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Column {
+                                                    Text(
+                                                        text = "DROP DESTINATION DETAILS",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = BrandOrange
+                                                    )
+                                                    Text(
+                                                        text = "Enter receiver & drop delivery address",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = SlateMuted
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                color = SoftOrangeSurface,
+                                                shape = RoundedCornerShape(8.dp),
+                                                border = BorderStroke(1.dp, BrandOrange.copy(alpha = 0.45f)),
                                                 modifier = Modifier
-                                                    .size(10.dp)
-                                                    .clip(CircleShape)
-                                                    .background(BrandOrange)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Column {
-                                                Text(
-                                                    text = "DROP DESTINATION DETAILS",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = BrandOrange
-                                                )
-                                                Text(
-                                                    text = "House/Flat, Building, Area, PIN & Receiver Info",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = SlateMuted
-                                                )
+                                                    .clickable(enabled = !isCapturingDropLocation) {
+                                                        pendingGpsTarget = "DROP"
+                                                        if (DeliveryProofAndGpsManager.hasLocationPermission(context)) {
+                                                            isCapturingDropLocation = true
+                                                            scope.launch {
+                                                                val coords = DeliveryProofAndGpsManager.fetchLiveGpsLocation(context)
+                                                                if (coords != null) {
+                                                                    applyLiveGpsCoordinates("DROP", coords.first, coords.second)
+                                                                } else {
+                                                                    isCapturingDropLocation = false
+                                                                    isErrorBanner = true
+                                                                    statusBanner = if (!DeliveryProofAndGpsManager.isLocationServiceEnabled(context)) {
+                                                                        "Location (GPS) is OFF. Please turn ON GPS to auto-capture exact drop address, or enter it below."
+                                                                    } else {
+                                                                        "Unable to capture GPS fix right now. Please enter drop address manually."
+                                                                    }
+                                                                }
+                                                            }
+                                                        } else {
+                                                            locationPermissionLauncher.launch(
+                                                                arrayOf(
+                                                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                                                )
+                                                            )
+                                                        }
+                                                    }
+                                                    .testTag("customer_add_live_drop_location_btn")
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.MyLocation,
+                                                        contentDescription = "Auto-Capture Drop Current Address",
+                                                        tint = BrandOrange,
+                                                        modifier = Modifier.size(13.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = if (isCapturingDropLocation) {
+                                                            "Detecting..."
+                                                        } else if (dropLiveGpsVerified) {
+                                                            "✅ Address Captured"
+                                                        } else {
+                                                            "📍 Auto-Capture Address"
+                                                        },
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = BrandOrange
+                                                    )
+                                                }
                                             }
                                         }
 
@@ -1774,7 +2397,8 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = receiverFullName,
                                                 onValueChange = { receiverFullName = it },
-                                                label = { Text("Receiver Name") },
+                                                label = { Text("Receiver Name *") },
+                                                isError = attemptedStep1Next && receiverFullName.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -1791,7 +2415,8 @@ fun CustomerAppScreen(
                                                 onValueChange = { input ->
                                                     receiverMobilePhone = input.filter { it.isDigit() }.take(10)
                                                 },
-                                                label = { Text("Receiver Phone") },
+                                                label = { Text("Receiver Phone *") },
+                                                isError = attemptedStep1Next && receiverMobilePhone.length != 10,
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
@@ -1814,7 +2439,8 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = dropHouseFlat,
                                                 onValueChange = { dropHouseFlat = it },
-                                                label = { Text("House / Flat No.") },
+                                                label = { Text("House / Flat No. *") },
+                                                isError = attemptedStep1Next && dropHouseFlat.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -1829,7 +2455,8 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = dropBuilding,
                                                 onValueChange = { dropBuilding = it },
-                                                label = { Text("Building / Society") },
+                                                label = { Text("Building / Society *") },
+                                                isError = attemptedStep1Next && dropBuilding.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -1847,7 +2474,8 @@ fun CustomerAppScreen(
                                         OutlinedTextField(
                                             value = dropAddressText,
                                             onValueChange = { dropAddressText = it },
-                                            label = { Text("Drop Area / Locality / Street") },
+                                            label = { Text("Drop Area / Locality / Street *") },
+                                            isError = attemptedStep1Next && dropAddressText.isBlank(),
                                             leadingIcon = {
                                                 Icon(
                                                     Icons.Default.LocationOn,
@@ -1877,7 +2505,8 @@ fun CustomerAppScreen(
                                                 onValueChange = { input ->
                                                     dropPinCode = input.filter { it.isDigit() }.take(6)
                                                 },
-                                                label = { Text("PIN Code") },
+                                                label = { Text("PIN Code *") },
+                                                isError = attemptedStep1Next && dropPinCode.length != 6,
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
@@ -1893,7 +2522,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = dropLandmark,
                                                 onValueChange = { dropLandmark = it },
-                                                label = { Text("Landmark / Receiver Note") },
+                                                label = { Text("Landmark (Optional)") },
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -2256,8 +2885,8 @@ fun CustomerAppScreen(
                                                 statusBanner = null
                                             }
                                         },
-                                        label = { Text("Weight (kg • Max 20)") },
-                                        isError = weightErrorMessage != null,
+                                        label = { Text("Weight (kg • Max 20) *") },
+                                        isError = weightErrorMessage != null || (attemptedStep1Next && packageWeightKg.isBlank()),
                                         supportingText = {
                                             Text(
                                                 text = if (isWeightOverLimit) {
@@ -2285,17 +2914,19 @@ fun CustomerAppScreen(
                                     OutlinedTextField(
                                         value = packageDescription,
                                         onValueChange = { packageDescription = it },
-                                        label = { Text("Parcel Note") },
+                                        label = { Text("Parcel Note *") },
+                                        isError = attemptedStep1Next && packageDescription.isBlank(),
                                         supportingText = {
                                             Text(
-                                                text = "Bike / Scooter / Auto (≤ 20 kg)",
-                                                color = SlateMuted
+                                                text = "Mandatory: Describe item inside parcel",
+                                                color = if (attemptedStep1Next && packageDescription.isBlank()) Color(0xFFB91C1C) else SlateMuted
                                             )
                                         },
                                         singleLine = true,
                                         shape = RoundedCornerShape(12.dp),
                                         colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = PrimaryTeal
+                                            focusedBorderColor = PrimaryTeal,
+                                            errorBorderColor = Color(0xFFDC2626)
                                         ),
                                         modifier = Modifier
                                             .weight(1.5f)
@@ -2448,40 +3079,59 @@ fun CustomerAppScreen(
                                     }
                                 }
 
-                                // Step 1 Primary Action Button (Blocks booking when parcel weight > 20 kg)
-                                Button(
-                                    onClick = {
-                                        val weightCheck = AutomatedFairRiderAssignmentEngine.validateCustomerParcelWeightKg(
-                                            packageWeightKg,
-                                            selectedVehicle
+                                val inlineStep1ValidationError = if (attemptedStep1Next) validateStep1MandatoryFields() else null
+                                if (inlineStep1ValidationError != null) {
+                                    Surface(
+                                        color = Color(0xFFFEF2F2),
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.2.dp, Color(0xFFDC2626)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("customer_step1_mandatory_error_box")
+                                    ) {
+                                        Text(
+                                            text = "⚠️ $inlineStep1ValidationError",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFB91C1C),
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                                         )
-                                        when {
-                                            weightCheck.isFailure -> {
-                                                isErrorBanner = true
-                                                statusBanner = weightCheck.exceptionOrNull()?.message
-                                                    ?: AutomatedFairRiderAssignmentEngine.MAX_PARCEL_WEIGHT_ERROR_MESSAGE
-                                            }
-                                            fullPickupAddressFormatted.isBlank() || fullDropAddressFormatted.isBlank() -> {
-                                                isErrorBanner = true
-                                                statusBanner = "Please enter both Pickup and Drop address details"
-                                            }
-                                            pickupPinCode.isNotBlank() && pickupPinCode.length != 6 -> {
-                                                isErrorBanner = true
-                                                statusBanner = "Please enter a valid 6-digit Pickup PIN code"
-                                            }
-                                            dropPinCode.isNotBlank() && dropPinCode.length != 6 -> {
-                                                isErrorBanner = true
-                                                statusBanner = "Please enter a valid 6-digit Drop PIN code"
-                                            }
-                                            else -> {
-                                                if (pickupAddressText.isBlank()) {
-                                                    pickupAddressText = fullPickupAddressFormatted
+                                    }
+                                }
+
+                                // Step 1 Primary Action Button (Enforces mandatory * fields + max 20 kg limit)
+                                Button(
+                                    enabled = !isResolvingStep1Route,
+                                    onClick = {
+                                        attemptedStep1Next = true
+                                        val validationError = validateStep1MandatoryFields()
+                                        if (validationError != null) {
+                                            isErrorBanner = true
+                                            statusBanner = validationError
+                                        } else {
+                                            isErrorBanner = false
+                                            statusBanner = null
+                                            isResolvingStep1Route = true
+                                            scope.launch {
+                                                if (!pickupLiveGpsVerified) {
+                                                    val pickupQuery = listOf(pickupHouseFlat, pickupBuilding, pickupAddressText, pickupPinCode)
+                                                        .filter { it.isNotBlank() }
+                                                        .joinToString(", ")
+                                                    DeliveryProofAndGpsManager.forwardGeocodeAddress(context, pickupQuery)?.let { coords ->
+                                                        pickupLat = coords.first
+                                                        pickupLng = coords.second
+                                                    }
                                                 }
-                                                if (dropAddressText.isBlank()) {
-                                                    dropAddressText = fullDropAddressFormatted
+                                                if (!dropLiveGpsVerified) {
+                                                    val dropQuery = listOf(dropHouseFlat, dropBuilding, dropAddressText, dropPinCode)
+                                                        .filter { it.isNotBlank() }
+                                                        .joinToString(", ")
+                                                    DeliveryProofAndGpsManager.forwardGeocodeAddress(context, dropQuery)?.let { coords ->
+                                                        dropLat = coords.first
+                                                        dropLng = coords.second
+                                                    }
                                                 }
-                                                isErrorBanner = false
-                                                statusBanner = null
+                                                isResolvingStep1Route = false
                                                 currentStep = 2
                                             }
                                         }
@@ -2496,16 +3146,16 @@ fun CustomerAppScreen(
                                         .testTag("customer_step1_next_btn")
                                 ) {
                                     Text(
-                                        text = if (isWeightOverLimit) {
-                                            "Booking Blocked: Max 20 kg Allowed"
-                                        } else {
-                                            "Next: Parcel Photo (Step 2) "
+                                        text = when {
+                                            isResolvingStep1Route -> "Verifying Route & Continuing..."
+                                            isWeightOverLimit -> "Booking Blocked: Max 20 kg Allowed"
+                                            else -> "Next: Parcel Photo (Step 2) "
                                         },
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = Color.White
                                     )
-                                    if (!isWeightOverLimit) {
+                                    if (!isWeightOverLimit && !isResolvingStep1Route) {
                                         Icon(
                                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                                             contentDescription = null,
@@ -2757,6 +3407,126 @@ fun CustomerAppScreen(
                                     }
                                 }
 
+                                // Payment Method Selector Card (UPI, COD, Card, Net Banking)
+                                Surface(
+                                    color = SoftBg,
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("customer_step2_payment_method_card")
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Payment,
+                                                contentDescription = "Payment Method",
+                                                tint = PrimaryTeal,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Select Payment Method *",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = DeepNavy
+                                            )
+                                        }
+
+                                        val paymentChoices = listOf(
+                                            CustomerPaymentMethod.GATEWAY_UPI to "UPI",
+                                            CustomerPaymentMethod.CASH_ON_DELIVERY to "Cash (COD)",
+                                            CustomerPaymentMethod.GATEWAY_DEBIT_CARD to "Debit Card",
+                                            CustomerPaymentMethod.GATEWAY_CREDIT_CARD to "Credit Card",
+                                            CustomerPaymentMethod.GATEWAY_NET_BANKING to "Net Banking"
+                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            paymentChoices.forEach { (method, label) ->
+                                                FilterChip(
+                                                    selected = selectedPaymentMethod == method,
+                                                    onClick = { selectedPaymentMethod = method },
+                                                    label = { Text(label, fontWeight = FontWeight.Bold) },
+                                                    modifier = Modifier.testTag("customer_pay_method_${method.name}")
+                                                )
+                                            }
+                                        }
+
+                                        if (selectedPaymentMethod == CustomerPaymentMethod.GATEWAY_UPI) {
+                                            Text(
+                                                text = "Choose Preferred UPI App:",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SlateMuted
+                                            )
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .horizontalScroll(rememberScrollState()),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                UpiAppOption.entries.forEach { upiOption ->
+                                                    FilterChip(
+                                                        selected = selectedUpiApp == upiOption,
+                                                        onClick = { selectedUpiApp = upiOption },
+                                                        label = { Text(upiOption.displayName) },
+                                                        modifier = Modifier.testTag("customer_upi_app_${upiOption.name}")
+                                                    )
+                                                }
+                                            }
+                                        } else if (selectedPaymentMethod == CustomerPaymentMethod.CASH_ON_DELIVERY) {
+                                            Text(
+                                                text = "Pay cash directly to the Rider upon delivery pickup/drop-off.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFF065F46)
+                                            )
+                                        }
+
+                                        HorizontalDivider(color = Color(0xFFE2E8F0))
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Redeem,
+                                                contentDescription = "Optional Rider Tip",
+                                                tint = BrandOrange,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Reward Your Delivery Partner (100% goes to Rider)",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = DeepNavy
+                                            )
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            listOf(0, 20, 30, 50).forEach { tipVal ->
+                                                FilterChip(
+                                                    selected = selectedRiderTipInr == tipVal,
+                                                    onClick = { selectedRiderTipInr = tipVal },
+                                                    label = {
+                                                        Text(
+                                                            text = if (tipVal == 0) "No Tip" else "+₹$tipVal",
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    },
+                                                    modifier = Modifier.testTag("customer_tip_chip_$tipVal")
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
                                 Button(
                                     onClick = {
                                         if (currentBookingPhotoSummary == null) {
@@ -2873,52 +3643,70 @@ fun CustomerAppScreen(
                                 }
                             )
 
-                            // Verified Rider Profile & Download GST Invoice Card
+                            // Verified Rider Profile & Download GST Invoice + Cancel Option
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = DeepNavy),
                                 shape = RoundedCornerShape(18.dp),
                                 border = BorderStroke(1.dp, PrimaryTeal.copy(alpha = 0.4f)),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Row(
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(14.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = if (!activeOrder.assignedRiderName.isNullOrBlank()) {
-                                                "Assigned Rider: ${activeOrder.assignedRiderName} • ${activeOrder.assignedRiderRating ?: 4.9}★"
-                                            } else {
-                                                "Waiting for nearby Rider Partner to Accept..."
-                                            },
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            text = "Pickup OTP: ${activeOrder.pickupOtp} • Drop OTP: ${activeOrder.deliveryOtp}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = BrightTeal
-                                        )
-                                    }
-                                    Button(
-                                        onClick = {
-                                            isErrorBanner = false
-                                            statusBanner = "📄 Official GST Tax Invoice for Order #${activeOrder.orderId} downloaded!"
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryTeal),
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier.testTag("customer_download_gst_invoice_btn")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            text = "Download GST Invoice",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = Color.White
-                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = if (!activeOrder.assignedRiderName.isNullOrBlank()) {
+                                                    "Assigned Rider: ${activeOrder.assignedRiderName} • 4.9★"
+                                                } else {
+                                                    "Waiting for nearby Rider Partner to Accept..."
+                                                },
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color.White
+                                            )
+                                            Text(
+                                                text = "Pickup OTP: ${activeOrder.pickupOtp} • Drop OTP: ${activeOrder.deliveryOtp}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = BrightTeal
+                                            )
+                                        }
+                                        Button(
+                                            onClick = { showGstInvoiceDialogForOrder = activeOrder },
+                                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryTeal),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier.testTag("customer_download_gst_invoice_btn")
+                                        ) {
+                                            Text(
+                                                text = "View GST Invoice",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+
+                                    if (activeOrder.orderStatus == OrderStatus.SEARCHING_RIDER) {
+                                        OutlinedButton(
+                                            onClick = { orderPendingCancellation = activeOrder },
+                                            border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFECACA)),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("customer_cancel_searching_order_btn")
+                                        ) {
+                                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Cancel Booking Request", fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }

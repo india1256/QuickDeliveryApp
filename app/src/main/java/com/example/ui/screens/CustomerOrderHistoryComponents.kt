@@ -767,39 +767,42 @@ fun CustomerDeliveryHistoryTabSection(
         modifier = modifier
             .fillMaxWidth()
             .testTag("customer_delivery_history_tab_section"),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Summary Card of Past Completed Deliveries (Cost & Date Summary)
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.White),
-            shape = RoundedCornerShape(18.dp),
-            border = BorderStroke(1.5.dp, HistoryTeal.copy(alpha = 0.35f)),
-            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.2.dp, HistoryTeal.copy(alpha = 0.35f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("customer_delivery_history_summary_card")
         ) {
             Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Surface(
                             color = HistoryTeal.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(10.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.History,
                                 contentDescription = "Delivery History",
                                 tint = HistoryTeal,
                                 modifier = Modifier
-                                    .padding(10.dp)
-                                    .size(22.dp)
+                                    .padding(8.dp)
+                                    .size(20.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
@@ -808,27 +811,35 @@ fun CustomerDeliveryHistoryTabSection(
                                 text = "Delivery History",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = HistoryNavy
+                                color = HistoryNavy,
+                                maxLines = 1
                             )
                             Text(
                                 text = "Past Completed Deliveries • Cost & Date Summary",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF475569)
+                                color = Color(0xFF475569),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.width(8.dp))
 
                     OutlinedButton(
                         onClick = onOpenFullHistoryScreen,
                         shape = RoundedCornerShape(10.dp),
                         border = BorderStroke(1.dp, HistoryTeal),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         modifier = Modifier.testTag("customer_history_tab_full_screen_btn")
                     ) {
                         Text(
                             text = "Full View",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = HistoryTeal
+                            color = HistoryTeal,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -836,14 +847,14 @@ fun CustomerDeliveryHistoryTabSection(
                 // Cost & Date Summary Strip
                 Surface(
                     color = Color(0xFFF0FDFA),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, HistoryTeal.copy(alpha = 0.25f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -875,9 +886,11 @@ fun CustomerDeliveryHistoryTabSection(
                         onClick = { showOnlyCompleted = true },
                         label = {
                             Text(
-                                text = "Completed Deliveries ($totalCompletedCount)",
+                                text = "Completed ($totalCompletedCount)",
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
@@ -893,7 +906,9 @@ fun CustomerDeliveryHistoryTabSection(
                             Text(
                                 text = "All Orders (${orders.size + archivedCompletedDeliveries.size})",
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(

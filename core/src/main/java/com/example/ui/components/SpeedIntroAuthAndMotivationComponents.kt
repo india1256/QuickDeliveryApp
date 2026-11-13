@@ -1,6 +1,8 @@
 package com.example.ui.components
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -31,14 +33,17 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.LocalShipping
@@ -46,6 +51,8 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -60,6 +67,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -83,6 +91,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
@@ -159,7 +168,7 @@ object MotivationAndPromoManager {
     private val _lastDeliveredOrderBadge = MutableStateFlow<String?>(null)
     val lastDeliveredOrderBadge: StateFlow<String?> = _lastDeliveredOrderBadge.asStateFlow()
 
-    // Default to true so the Customer App and Rider App render immediately in the preview without blocking on intro/auth walls
+    // Customer renders smoothly while Rider checks persistent rider_logged_in flag on first launch
     @Volatile
     var customerIntroCompleted: Boolean = true
     @Volatile
@@ -167,7 +176,13 @@ object MotivationAndPromoManager {
     @Volatile
     var customerAuthenticatedInSession: Boolean = true
     @Volatile
-    var riderAuthenticatedInSession: Boolean = true
+    var riderAuthenticatedInSession: Boolean = false
+    @Volatile
+    var lastAuthWasNewSignUp: Boolean = false
+    @Volatile
+    var forceSignInTabNextOpen: Boolean = false
+    @Volatile
+    var riderApprovalBannerMessage: String? = null
     @Volatile
     var cachedCustomerName: String = ""
     @Volatile
@@ -236,6 +251,7 @@ object MotivationAndPromoManager {
                 ?: cachedRiderEmail
             val riderToken = prefs.getString("rider_session_token", null)
                 ?: riderBackup?.optString("sessionToken")?.takeIf { it.isNotBlank() }
+            val riderLoggedInSaved = prefs.getBoolean("rider_logged_in", false)
             if (riderToken == null || QuickDeliverySecurityGuard.verifyRoleSessionToken(
                     context = context,
                     token = riderToken,
@@ -248,6 +264,9 @@ object MotivationAndPromoManager {
                 cachedRiderName = QuickDeliverySecurityGuard.sanitizeText(rawRiderName, 80)
                 cachedRiderPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(rawRiderPhone)
                 cachedRiderEmail = QuickDeliverySecurityGuard.sanitizeEmail(rawRiderEmail)
+                riderAuthenticatedInSession = riderLoggedInSaved && (cachedRiderPhone.isNotBlank() || cachedRiderEmail.isNotBlank())
+            } else {
+                riderAuthenticatedInSession = false
             }
         }
     }
@@ -452,6 +471,42 @@ object MotivationAndPromoManager {
                     .apply()
             }
         }
+    }
+
+    fun deleteUserAccountData(context: Context, rolePrefix: String) {
+        val cleanRole = if (rolePrefix.trim().lowercase() == "rider") "rider" else "customer"
+        if (cleanRole == "rider") {
+            riderAuthenticatedInSession = false
+            _riderStoragePermissionGranted.value = false
+            cachedRiderName = ""
+            cachedRiderPhone = ""
+            cachedRiderEmail = ""
+        } else {
+            customerAuthenticatedInSession = false
+            _customerStoragePermissionGranted.value = false
+            cachedCustomerName = ""
+            cachedCustomerPhone = ""
+            cachedCustomerEmail = ""
+        }
+        runCatching {
+            context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove("${cleanRole}_name")
+                .remove("${cleanRole}_phone")
+                .remove("${cleanRole}_email")
+                .remove("${cleanRole}_logged_in")
+                .remove("${cleanRole}_storage_permission_granted")
+                .apply()
+        }
+        runCatching {
+            val internalFile = File(context.filesDir, "quick_delivery_${cleanRole}_login_backup.json")
+            if (internalFile.exists()) internalFile.delete()
+            context.getExternalFilesDir("login_backup")?.let { extDir ->
+                val extFile = File(extDir, "quick_delivery_${cleanRole}_login_backup.json")
+                if (extFile.exists()) extFile.delete()
+            }
+        }
+        runCatching { Firebase.auth.signOut() }
     }
 
     fun nextRiderPickupMotivation(): String {
@@ -1036,7 +1091,10 @@ fun QuickDeliveryUserAuthScreen(
     }
 
     // Toggle between New User (Sign Up) and Old User (Sign In)
-    var isNewUserSignUp by remember { mutableStateOf(true) }
+    val initialSignUp = remember(prefsKeyPrefix) {
+        if (prefsKeyPrefix == "rider" && MotivationAndPromoManager.forceSignInTabNextOpen) false else true
+    }
+    var isNewUserSignUp by remember { mutableStateOf(initialSignUp) }
 
     // New User Sign Up fields: Name, Mobile Number, Email ID
     var fullName by remember {
@@ -1057,6 +1115,14 @@ fun QuickDeliveryUserAuthScreen(
         mutableStateOf(prefs.getBoolean("${prefsKeyPrefix}_storage_permission_granted", true))
     }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
+
+    if (showPrivacyPolicyDialog) {
+        QuickDeliveryPrivacyPolicyDialog(
+            context = context,
+            onDismiss = { showPrivacyPolicyDialog = false }
+        )
+    }
 
     Box(
         modifier = modifier
@@ -1074,7 +1140,9 @@ fun QuickDeliveryUserAuthScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1098,16 +1166,16 @@ fun QuickDeliveryUserAuthScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "$roleTitle Welcome",
+                            text = "Quick Delivery • $roleTitle",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF0D1B2A)
                         )
                         Text(
                             text = if (isNewUserSignUp) {
-                                "New $roleTitle: Sign Up with Name, Mobile & Email"
+                                "Create your $roleTitle account with real details"
                             } else {
-                                "Existing $roleTitle: Sign In with Mobile or Email"
+                                "Sign in to your registered $roleTitle account"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF475569)
@@ -1115,7 +1183,26 @@ fun QuickDeliveryUserAuthScreen(
                     }
                 }
 
-                // Mode Switcher: New User (Sign Up) vs Old User (Sign In)
+                if (prefsKeyPrefix == "rider" && !MotivationAndPromoManager.riderApprovalBannerMessage.isNullOrBlank()) {
+                    Surface(
+                        color = Color(0xFFECFDF5),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color(0xFF10B981)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rider_auth_approval_notice_banner")
+                    ) {
+                        Text(
+                            text = MotivationAndPromoManager.riderApprovalBannerMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF065F46),
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+
+                // Mode Switcher: New User (Sign Up) vs Existing User (Sign In)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1126,7 +1213,7 @@ fun QuickDeliveryUserAuthScreen(
                             isNewUserSignUp = true
                             errorMessage = null
                         },
-                        label = { Text("New User (Sign Up)") },
+                        label = { Text("New User • Sign Up") },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("${prefsKeyPrefix}_tab_new_signup")
@@ -1137,7 +1224,7 @@ fun QuickDeliveryUserAuthScreen(
                             isNewUserSignUp = false
                             errorMessage = null
                         },
-                        label = { Text("Old User (Sign In)") },
+                        label = { Text("Existing • Sign In") },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("${prefsKeyPrefix}_tab_old_signin")
@@ -1145,11 +1232,15 @@ fun QuickDeliveryUserAuthScreen(
                 }
 
                 if (isNewUserSignUp) {
-                    // NEW USER SIGN UP: Name + Mobile Number + Email ID
+                    // NEW USER SIGN UP: Full Name + Mobile Number + Email Address
                     OutlinedTextField(
                         value = fullName,
-                        onValueChange = { fullName = it },
-                        label = { Text("Full Name (Naam)") },
+                        onValueChange = {
+                            fullName = it
+                            if (errorMessage != null) errorMessage = null
+                        },
+                        label = { Text("Full Name *") },
+                        placeholder = { Text("Enter your full name") },
                         leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                         singleLine = true,
                         modifier = Modifier
@@ -1159,8 +1250,12 @@ fun QuickDeliveryUserAuthScreen(
 
                     OutlinedTextField(
                         value = mobileNumber,
-                        onValueChange = { if (it.length <= 10) mobileNumber = it.filter(Char::isDigit) },
-                        label = { Text("Mobile Number (10 digits)") },
+                        onValueChange = {
+                            if (it.length <= 10) mobileNumber = it.filter(Char::isDigit)
+                            if (errorMessage != null) errorMessage = null
+                        },
+                        label = { Text("Mobile Number (10 digits) *") },
+                        placeholder = { Text("Enter 10-digit mobile number") },
                         leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         singleLine = true,
@@ -1171,8 +1266,12 @@ fun QuickDeliveryUserAuthScreen(
 
                     OutlinedTextField(
                         value = emailId,
-                        onValueChange = { emailId = it },
-                        label = { Text("Email ID (Mail ID)") },
+                        onValueChange = {
+                            emailId = it
+                            if (errorMessage != null) errorMessage = null
+                        },
+                        label = { Text("Email Address *") },
+                        placeholder = { Text("name@example.com") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true,
@@ -1181,11 +1280,15 @@ fun QuickDeliveryUserAuthScreen(
                             .testTag("${prefsKeyPrefix}_signup_email_input")
                     )
                 } else {
-                    // OLD USER SIGN IN: Only Mobile Number OR Email ID
+                    // EXISTING USER SIGN IN: Mobile Number or Email Address
                     OutlinedTextField(
                         value = existingMobileOrEmail,
-                        onValueChange = { existingMobileOrEmail = it },
-                        label = { Text("Enter Mobile Number OR Email ID") },
+                        onValueChange = {
+                            existingMobileOrEmail = it
+                            if (errorMessage != null) errorMessage = null
+                        },
+                        label = { Text("Mobile Number or Email Address *") },
+                        placeholder = { Text("Registered 10-digit phone or email") },
                         leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
                         singleLine = true,
                         modifier = Modifier
@@ -1215,14 +1318,14 @@ fun QuickDeliveryUserAuthScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Remember My Login",
+                                text = "Keep Me Signed In",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF0D1B2A)
                             )
                             Text(
                                 text = if (allowPhoneStoragePermission) {
-                                    "Your account will stay signed in on this device."
+                                    "Encrypted local session stays signed in on this device."
                                 } else {
                                     "Turn on to stay signed in on this device."
                                 },
@@ -1258,11 +1361,26 @@ fun QuickDeliveryUserAuthScreen(
                             return@Button
                         }
                         if (isNewUserSignUp) {
-                            val finalName = QuickDeliverySecurityGuard.sanitizeText(fullName, 80).ifBlank {
-                                if (prefsKeyPrefix == "rider") "Vikram Singh" else "Aarav Sharma"
+                            val finalName = QuickDeliverySecurityGuard.sanitizeText(fullName, 80)
+                            val finalPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(mobileNumber)
+                            val finalEmail = QuickDeliverySecurityGuard.sanitizeEmail(emailId)
+                            when {
+                                finalName.length < 2 -> {
+                                    errorMessage = "Please enter your valid Full Name (minimum 2 characters)."
+                                    return@Button
+                                }
+                                finalPhone.length != 10 -> {
+                                    errorMessage = "Please enter a valid 10-digit Mobile Number."
+                                    return@Button
+                                }
+                                !finalEmail.contains("@") || !finalEmail.contains(".") -> {
+                                    errorMessage = "Please enter a valid Email Address."
+                                    return@Button
+                                }
                             }
-                            val finalPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(mobileNumber).ifBlank { "9876543210" }
-                            val finalEmail = QuickDeliverySecurityGuard.sanitizeEmail(emailId).ifBlank { "${prefsKeyPrefix}@quickdelivery.in" }
+                            MotivationAndPromoManager.lastAuthWasNewSignUp = true
+                            MotivationAndPromoManager.forceSignInTabNextOpen = false
+                            MotivationAndPromoManager.riderApprovalBannerMessage = null
                             MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
                                 context = context,
                                 rolePrefix = prefsKeyPrefix,
@@ -1274,30 +1392,42 @@ fun QuickDeliveryUserAuthScreen(
                             onAuthenticated(finalName, finalPhone, finalEmail)
                         } else {
                             val identifier = QuickDeliverySecurityGuard.sanitizeText(existingMobileOrEmail, 120)
-                            if (identifier.isBlank()) {
-                                errorMessage = "Please enter your Mobile Number or Email ID to Sign In."
+                            val digitsOnly = identifier.filter(Char::isDigit)
+                            val looksLikePhone = digitsOnly.length == 10 && !identifier.contains("@")
+                            val looksLikeEmail = identifier.contains("@") && identifier.contains(".")
+                            if (!looksLikePhone && !looksLikeEmail) {
+                                errorMessage = "Please enter a valid 10-digit Mobile Number or Email Address."
                                 return@Button
                             }
+                            val savedPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(
+                                prefs.getString("${prefsKeyPrefix}_phone", "")
+                            )
+                            val savedEmail = QuickDeliverySecurityGuard.sanitizeEmail(
+                                prefs.getString("${prefsKeyPrefix}_email", "")
+                            )
                             val savedName = QuickDeliverySecurityGuard.sanitizeText(
                                 prefs.getString("${prefsKeyPrefix}_name", null),
                                 80
                             ).ifBlank {
-                                if (prefsKeyPrefix == "rider") "Vikram Singh" else "Aarav Sharma"
+                                if (looksLikeEmail) {
+                                    identifier.substringBefore("@").replaceFirstChar { it.uppercase() }
+                                } else {
+                                    roleTitle
+                                }
                             }
-                            val resolvedPhone = if (identifier.all { it.isDigit() } && identifier.length >= 10) {
-                                identifier.take(10)
+                            val resolvedPhone = if (looksLikePhone) {
+                                digitsOnly
                             } else {
-                                QuickDeliverySecurityGuard.sanitizePhoneNumber(
-                                    prefs.getString("${prefsKeyPrefix}_phone", "9876543210")
-                                ).ifBlank { "9876543210" }
+                                savedPhone
                             }
-                            val resolvedEmail = if (identifier.contains("@")) {
+                            val resolvedEmail = if (looksLikeEmail) {
                                 QuickDeliverySecurityGuard.sanitizeEmail(identifier)
                             } else {
-                                QuickDeliverySecurityGuard.sanitizeEmail(
-                                    prefs.getString("${prefsKeyPrefix}_email", "${prefsKeyPrefix}@quickdelivery.in")
-                                ).ifBlank { "${prefsKeyPrefix}@quickdelivery.in" }
+                                savedEmail
                             }
+                            MotivationAndPromoManager.lastAuthWasNewSignUp = false
+                            MotivationAndPromoManager.forceSignInTabNextOpen = false
+                            MotivationAndPromoManager.riderApprovalBannerMessage = null
                             MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
                                 context = context,
                                 rolePrefix = prefsKeyPrefix,
@@ -1329,13 +1459,15 @@ fun QuickDeliveryUserAuthScreen(
                 GoogleSignInButton(
                     onAuthSuccess = {
                         val user = runCatching { Firebase.auth.currentUser }.getOrNull()
-                        val googleName = QuickDeliverySecurityGuard.sanitizeText(user?.displayName, 80).ifBlank {
-                            if (prefsKeyPrefix == "rider") "Vikram Singh" else "Aarav Sharma"
-                        }
-                        val googleEmail = QuickDeliverySecurityGuard.sanitizeEmail(user?.email).ifBlank {
-                            "${prefsKeyPrefix}@quickdelivery.in"
-                        }
-                        val googlePhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(mobileNumber).ifBlank { "9876543210" }
+                        val googleEmail = QuickDeliverySecurityGuard.sanitizeEmail(user?.email)
+                        val googleName = QuickDeliverySecurityGuard.sanitizeText(user?.displayName, 80)
+                            .ifBlank {
+                                googleEmail.substringBefore("@").ifBlank { roleTitle }
+                            }
+                        val googlePhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(mobileNumber)
+                        MotivationAndPromoManager.lastAuthWasNewSignUp = isNewUserSignUp
+                        MotivationAndPromoManager.forceSignInTabNextOpen = false
+                        MotivationAndPromoManager.riderApprovalBannerMessage = null
                         MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
                             context = context,
                             rolePrefix = prefsKeyPrefix,
@@ -1351,9 +1483,171 @@ fun QuickDeliveryUserAuthScreen(
                     },
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showPrivacyPolicyDialog = true }
+                        .padding(vertical = 4.dp)
+                        .testTag("${prefsKeyPrefix}_privacy_policy_link"),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = "Privacy Policy",
+                        tint = accentColor,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Privacy Policy & Terms of Service",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = accentColor,
+                        textDecoration = TextDecoration.Underline
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+fun QuickDeliveryPrivacyPolicyDialog(
+    context: Context,
+    onDismiss: () -> Unit
+) {
+    val publicPrivacyUrl = "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/privacy-policy"
+    val publicTermsUrl = "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/terms"
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Shield,
+                    contentDescription = "Privacy Policy",
+                    tint = Color(0xFF008080),
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Privacy Policy & Terms",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF0D1B2A)
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Quick Delivery Logistics collects only data essential to fulfill parcel pickup and drop-off deliveries:",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF0D1B2A)
+                )
+                Text(
+                    text = "• Account & Identity: Name, 10-digit mobile number, and email for OTP & order receipts.\n" +
+                        "• Location (Foreground Only): Exact pickup/drop coordinates for fare calculation and live tracking while the app is active.\n" +
+                        "• Camera (On-Demand): Parcel condition photos and proof-of-delivery capture triggered only when you tap Camera.\n" +
+                        "• Data Safety: All traffic uses HTTPS/TLS encryption. We never sell personal data to third parties.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF334155)
+                )
+                Text(
+                    text = "Account & Data Deletion: You can permanently delete your account data anytime from the App Menu → Delete Account & Data, or by emailing ravindergupta141@gmail.com.",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF0F766E)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    runCatching {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(publicPrivacyUrl))
+                        context.startActivity(intent)
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
+            ) {
+                Text("View Online Policy", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(publicTermsUrl))
+                            context.startActivity(intent)
+                        }
+                    }
+                ) {
+                    Text("Terms")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Close", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    )
+}
+
+@Composable
+fun QuickDeliveryDeleteAccountDialog(
+    roleTitle: String,
+    accountIdentifier: String,
+    onConfirmDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete Account",
+                    tint = Color(0xFFDC2626),
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Delete $roleTitle Account?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF991B1B)
+                )
+            }
+        },
+        text = {
+            Text(
+                text = "This will permanently erase your saved profile, session tokens, and local login backup for \"$accountIdentifier\" from this device and sign you out. To request server log deletion as well, contact ravindergupta141@gmail.com.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF334155)
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirmDelete,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                modifier = Modifier.testTag("confirm_delete_account_btn")
+            ) {
+                Text("Delete Account & Data", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Keep Account")
+            }
+        }
+    )
 }
 
 /**
@@ -1842,7 +2136,7 @@ fun LiveRiderContinuousTrackingCard(
             }
 
             if (!isRiderAcceptedOrBeyond) {
-                // Waiting for Rider to Accept Order
+                // Waiting for Rider to Accept Order in Rider Partner App
                 Surface(
                     color = Color(0xFFFFFBEB),
                     shape = RoundedCornerShape(12.dp),
@@ -1851,36 +2145,24 @@ fun LiveRiderContinuousTrackingCard(
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "⏳ Auto-Assigning Nearest Online Rider Partner...",
+                            text = "⏳ Waiting for Rider Partner to Accept Order...",
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF92400E)
                         )
                         Text(
-                            text = "Live GPS map tracking starts automatically and shows every moment of your Rider's movement with live approximate arrival time.",
+                            text = "Your booking (#${order.orderId}) has been sent to nearby online Rider Partners. As soon as a Rider taps Accept in the Rider Partner App, live GPS map tracking and Rider contact details will appear here automatically.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF78350F)
                         )
-                        Button(
-                            onClick = onSimulateOrAdvanceStep,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF6B35)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("customer_advance_live_stage_btn")
-                        ) {
-                            Text("Accept Order as Rider & Start Live Tracking →", fontWeight = FontWeight.Bold)
-                        }
-                        DirectDialPadCallButton(
-                            orderId = order.orderId,
-                            callerRole = "CUSTOMER",
-                            callerName = order.customerName,
-                            receiverRole = "Rider",
-                            receiverName = order.assignedRiderName ?: "Vikram Rathore",
-                            phoneNumber = order.assignedRiderPhone ?: "+91 98450 67890",
-                            buttonTestTag = "customer_call_rider_dial_btn_${order.orderId}"
+                        Text(
+                            text = "Pickup OTP: ${order.pickupOtp} • Delivery OTP: ${order.deliveryOtp}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF0F766E)
                         )
                     }
                 }
@@ -2225,37 +2507,11 @@ fun LiveRiderContinuousTrackingCard(
                     }
                 }
 
-                if (!isDelivered) {
-                    val isPrepaidOrder = order.paymentMethod != CustomerPaymentMethod.CASH_ON_DELIVERY
-                    Button(
-                        onClick = onSimulateOrAdvanceStep,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00A896)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("customer_advance_live_stage_btn")
-                    ) {
-                        val nextActionLabel = when (order.orderStatus) {
-                            OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP ->
-                                if (isPrepaidOrder) {
-                                    "Next: Rider Picks Up Parcel (Prepaid OTP ${order.pickupOtp}) →"
-                                } else {
-                                    "Next: Rider Picks Up Parcel (COD — No OTP Required) →"
-                                }
-                            else ->
-                                if (isPrepaidOrder) {
-                                    "Next: Complete Delivery at Drop (Prepaid OTP ${order.deliveryOtp}) →"
-                                } else {
-                                    "Next: Complete COD Delivery at Drop (No OTP) →"
-                                }
-                        }
-                        Text(nextActionLabel, fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    // POST-DELIVERY STAR RATING & COMMENT SECTION FOR THE RIDER (Visible ONLY in Admin Web)
+                if (isDelivered) {
                     PostDeliveryRiderFeedbackSection(
                         orderId = order.orderId,
                         riderId = order.assignedRiderId ?: "RIDER-101",
-                        riderName = order.assignedRiderName ?: "Vikram Singh",
+                        riderName = order.assignedRiderName ?: "Rider Partner",
                         customerName = order.customerName
                     )
                 }

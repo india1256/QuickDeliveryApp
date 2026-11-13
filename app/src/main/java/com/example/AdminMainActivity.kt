@@ -63,12 +63,7 @@ class AdminMainActivity : ComponentActivity() {
                             .windowInsetsPadding(WindowInsets.statusBars)
                             .windowInsetsPadding(WindowInsets.navigationBars)
                     ) {
-                        AdminLivePermissionsAndTrackingBar(
-                            onClearAllOrders = {
-                                repository.resetOrdersAndStateForTesting()
-                                com.example.data.cloud.MultiPhoneLiveSyncManager.notifyOrdersReset(this@AdminMainActivity)
-                            }
-                        )
+                        AdminLivePermissionsAndTrackingBar()
                         Box(modifier = Modifier.weight(1f)) {
                             AdminEnterpriseControlCenter(
                                 repository = repository,

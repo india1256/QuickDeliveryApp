@@ -90,6 +90,8 @@ object MultiPhoneLiveSyncManager {
         return generated
     }
 
+    private val DEMO_ORDER_IDS = setOf("QD-7001", "QD-6204", "QD-5910", "QD-5402", "ORD-1001", "ORD-1002")
+
     fun resolveLockedPhoneRole(context: Context, buildConfigRole: String): String {
         val normalizedBuildRole = buildConfigRole.trim().uppercase()
         if (normalizedBuildRole == "CUSTOMER" || normalizedBuildRole == "RIDER" || normalizedBuildRole == "ADMIN") {
@@ -97,22 +99,21 @@ object MultiPhoneLiveSyncManager {
             return normalizedBuildRole
         }
         val pkg = context.packageName.lowercase()
-        if (pkg.endsWith(".customer")) {
+        if (pkg.endsWith(".customer") || pkg.endsWith(".cust01")) {
             _lockedPhoneRole.value = "CUSTOMER"
             return "CUSTOMER"
         }
-        if (pkg.endsWith(".rider")) {
+        if (pkg.endsWith(".rider") || pkg.endsWith(".ride02")) {
             _lockedPhoneRole.value = "RIDER"
             return "RIDER"
         }
-        if (pkg.endsWith(".admin")) {
+        if (pkg.endsWith(".admin") || pkg.endsWith(".admn03")) {
             _lockedPhoneRole.value = "ADMIN"
             return "ADMIN"
         }
-        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val saved = prefs.getString(KEY_LOCKED_ROLE, "UNIFIED")?.trim()?.uppercase() ?: "UNIFIED"
-        _lockedPhoneRole.value = saved
-        return saved
+        // In the unified preview APK, always start in UNIFIED mode so the 3-tab bottom bar is accessible
+        _lockedPhoneRole.value = "UNIFIED"
+        return "UNIFIED"
     }
 
     fun setLockedPhoneRole(context: Context, role: String) {
@@ -180,7 +181,9 @@ object MultiPhoneLiveSyncManager {
 
     private suspend fun performSingleSyncCycle(context: Context, forceResetServer: Boolean) = withContext(Dispatchers.IO) {
         val repo = SharedOrderRepository.getInstance(context)
-        val localOrders = repo.orders.value
+        AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
+        RiderRegistrationApprovalManager.ensureLoaded(context)
+        val localOrders = repo.orders.value.filterNot { it.orderId in DEMO_ORDER_IDS }
         val pickupProofs = OrderProofRegistry.pickupProofsByOrder.value
         val deliveryProofs = OrderProofRegistry.deliveryProofsByOrder.value
         val deviceId = getOrInitDeviceId(context)
@@ -199,6 +202,7 @@ object MultiPhoneLiveSyncManager {
                 ordersArray.put(serializeOrderToJson(order, pickupProofs[order.orderId], deliveryProofs[order.orderId]))
             }
             put("orders", ordersArray)
+            put("riderRegistrations", RiderRegistrationApprovalManager.exportAllToJsonArray())
         }
 
         var responseJson: JSONObject? = null
@@ -242,16 +246,21 @@ object MultiPhoneLiveSyncManager {
             localResetEpochMs = serverResetEpochMs
         }
 
+        RiderRegistrationApprovalManager.mergeFromServerJsonArray(
+            context,
+            root.optJSONArray("riderRegistrations")
+        )
+
         val remoteOrdersArr = root.optJSONArray("orders") ?: JSONArray()
         if (mutableOrdersFlow != null && remoteOrdersArr.length() > 0) {
-            val currentList = mutableOrdersFlow.value
+            val currentList = mutableOrdersFlow.value.filterNot { it.orderId in DEMO_ORDER_IDS }
             val currentById = currentList.associateBy { it.orderId }.toMutableMap()
             var listChanged = false
 
             for (i in 0 until remoteOrdersArr.length()) {
                 val itemObj = remoteOrdersArr.optJSONObject(i) ?: continue
                 val orderId = itemObj.optString("orderId", "").trim()
-                if (orderId.isEmpty()) continue
+                if (orderId.isEmpty() || orderId in DEMO_ORDER_IDS) continue
 
                 // Restore PickupProof & DeliveryProof into OrderProofRegistry across all 3 phones
                 itemObj.optJSONObject("pickupProof")?.let { ppObj ->
@@ -276,14 +285,11 @@ object MultiPhoneLiveSyncManager {
                     val effectiveRole = _lockedPhoneRole.value
                     if ((effectiveRole == "RIDER" || activeRole == "RIDER") &&
                         remoteOrder.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                        OrderAlertSoundManager.shouldAlertForOrder(orderId) &&
                         alertedOrderIds.add(orderId)
                     ) {
                         runCatching {
                             OrderAlertSoundManager.startLoudOrderAlert(context, orderId)
-                            syncScope.launch {
-                                delay(5000L)
-                                OrderAlertSoundManager.stopOrderAlert()
-                            }
                         }
                     }
                 } else {
@@ -311,12 +317,13 @@ object MultiPhoneLiveSyncManager {
             }
 
             if (listChanged) {
-                val mergedList = currentById.values.toList()
-                mutableOrdersFlow.value = mergedList
-                if (mergedList.none { it.orderStatus == OrderStatus.SEARCHING_RIDER }) {
-                    runCatching { OrderAlertSoundManager.stopOrderAlert() }
-                }
+                mutableOrdersFlow.value = currentById.values.toList()
             }
+        }
+
+        // Always stop order alert immediately if no SEARCHING_RIDER order remains locally
+        if (repo.orders.value.none { it.orderStatus == OrderStatus.SEARCHING_RIDER }) {
+            runCatching { OrderAlertSoundManager.stopOrderAlert() }
         }
 
         val connectedDevicesArr = root.optJSONArray("connectedDevices") ?: JSONArray()

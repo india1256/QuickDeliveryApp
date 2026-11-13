@@ -254,7 +254,11 @@ fun QuickDeliveryCloudSyncBar(
     val scope = rememberCoroutineScope()
     val firebaseReady = remember(context) { QuickDeliveryFirebaseInitializer.ensureInitialized(context) != null }
     val credentialManager = remember(context) { CredentialManager.create(context) }
-    val localRepo = remember(context) { SharedOrderRepository.getInstance(context) }
+    val localRepo = remember(context) {
+        SharedOrderRepository.getInstance(context).also { repo ->
+            com.example.data.delivery.AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
+        }
+    }
     val localOrders by localRepo.orders.collectAsState()
     val localRiders by localRepo.riders.collectAsState()
     val pickupProofs by com.example.data.model.OrderProofRegistry.pickupProofsByOrder.collectAsState()
@@ -429,6 +433,8 @@ fun QuickDeliveryCloudSyncBar(
 @Composable
 fun QuickDeliveryTopOptionsDialog(
     onDismiss: () -> Unit,
+    showMobileCloudApkCard: Boolean = true,
+    dialogTitle: String = "Menu & Options",
     extraTopContent: @Composable () -> Unit = {}
 ) {
     // Ensure background synchronization remains active using the user's logged-in account
@@ -458,7 +464,7 @@ fun QuickDeliveryTopOptionsDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "More Options (⋮)",
+                        text = dialogTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF0D1B2A)
@@ -480,7 +486,9 @@ fun QuickDeliveryTopOptionsDialog(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     extraTopContent()
-                    MobileCloudApkDownloadCard()
+                    if (showMobileCloudApkCard) {
+                        MobileCloudApkDownloadCard()
+                    }
                 }
             }
         }

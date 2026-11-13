@@ -150,12 +150,7 @@ class MainActivity : ComponentActivity() {
                                     .windowInsetsPadding(WindowInsets.statusBars)
                                     .windowInsetsPadding(WindowInsets.navigationBars)
                             ) {
-                                AdminLivePermissionsAndTrackingBar(
-                                    onClearAllOrders = {
-                                        repository.resetOrdersAndStateForTesting()
-                                        com.example.data.cloud.MultiPhoneLiveSyncManager.notifyOrdersReset(this@MainActivity)
-                                    }
-                                )
+                                AdminLivePermissionsAndTrackingBar()
                                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                                     AdminEnterpriseControlCenter(
                                         repository = repository,
@@ -179,19 +174,36 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AdminLivePermissionsAndTrackingBar(
-    onClearAllOrders: () -> Unit
+    onClearAllOrders: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val syncStatus by com.example.data.cloud.MultiPhoneLiveSyncManager.syncStatus.collectAsState()
     var permissionRefreshTick by remember { mutableIntStateOf(0) }
-    val permissionStatus = remember(permissionRefreshTick) {
-        AppPermissionManager.inspectPermissions(context)
-    }
-    val hasCallPerm = remember(permissionRefreshTick) {
+    val hasLocationPerm = remember(permissionRefreshTick) {
         androidx.core.content.ContextCompat.checkSelfPermission(
             context,
-            android.Manifest.permission.CALL_PHONE
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+    val hasCameraPerm = remember(permissionRefreshTick) {
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.CAMERA
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+    val hasNotificationPerm = remember(permissionRefreshTick) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
     }
 
     val allAdminPermsLauncher = rememberLauncherForActivityResult(
@@ -200,10 +212,9 @@ fun AdminLivePermissionsAndTrackingBar(
         permissionRefreshTick++
     }
 
-    val allGranted = permissionStatus.hasLocationPermission &&
-        permissionStatus.hasCameraPermission &&
-        permissionStatus.hasNotificationPermission &&
-        hasCallPerm
+    val allGranted = hasLocationPerm &&
+        hasCameraPerm &&
+        hasNotificationPerm
 
     Surface(
         color = Color(0xFF0F172A),
@@ -225,59 +236,40 @@ fun AdminLivePermissionsAndTrackingBar(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "📡 Admin Live Tracking (${syncStatus.connectedPhonesCount} Phones • ${syncStatus.syncedOrdersCount} Orders)",
+                        text = "Live Fleet Tracking (${syncStatus.connectedPhonesCount} Connected • ${syncStatus.syncedOrdersCount} Orders)",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color(0xFF38BDF8)
                     )
                     Text(
-                        text = "GPS: ${if (permissionStatus.hasLocationPermission) "✅" else "⚠️"} • Alerts: ${if (permissionStatus.hasNotificationPermission) "✅" else "⚠️"} • Cam: ${if (permissionStatus.hasCameraPermission) "✅" else "⚠️"} • Call: ${if (hasCallPerm) "✅" else "⚠️"}",
+                        text = "GPS: ${if (hasLocationPerm) "Active" else "Off"} • Alerts: ${if (hasNotificationPerm) "Active" else "Off"} • Camera: ${if (hasCameraPerm) "Ready" else "Off"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White.copy(alpha = 0.85f)
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (!allGranted) {
-                        OutlinedButton(
-                            onClick = {
-                                val perms = mutableListOf(
-                                    android.Manifest.permission.ACCESS_FINE_LOCATION,
-                                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
-                                    android.Manifest.permission.CAMERA,
-                                    android.Manifest.permission.CALL_PHONE
-                                )
-                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                                    perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
-                                }
-                                allAdminPermsLauncher.launch(perms.toTypedArray())
-                            },
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = Color(0xFF0284C7),
-                                contentColor = Color.White
-                            ),
-                            border = BorderStroke(1.dp, Color(0xFF7DD3FC)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.testTag("admin_grant_all_permissions_btn")
-                        ) {
-                            Text(
-                                "✅ Allow Permissions",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-                    }
+                if (!allGranted) {
                     OutlinedButton(
-                        onClick = onClearAllOrders,
+                        onClick = {
+                            val perms = mutableListOf(
+                                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                                android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                                android.Manifest.permission.CAMERA
+                            )
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            allAdminPermsLauncher.launch(perms.toTypedArray())
+                        },
                         colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = Color(0xFF7F1D1D),
-                            contentColor = Color(0xFFFECACA)
+                            containerColor = Color(0xFF0284C7),
+                            contentColor = Color.White
                         ),
-                        border = BorderStroke(1.dp, Color(0xFFF87171)),
+                        border = BorderStroke(1.dp, Color(0xFF7DD3FC)),
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.testTag("admin_fresh_clear_all_orders_btn")
+                        modifier = Modifier.testTag("admin_grant_all_permissions_btn")
                     ) {
                         Text(
-                            "🧹 Fresh Reset",
+                            "Allow Permissions",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold
                         )

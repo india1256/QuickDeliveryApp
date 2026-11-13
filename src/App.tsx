@@ -416,6 +416,11 @@ export default function App() {
   const [dropTag, setDropTag] = useState<AddressTag>('Office');
   const [pickupAddress, setPickupAddress] = useState('');
   const [dropAddress, setDropAddress] = useState('');
+  const [pickupExactLat, setPickupExactLat] = useState('');
+  const [pickupExactLng, setPickupExactLng] = useState('');
+  const [dropExactLat, setDropExactLat] = useState('');
+  const [dropExactLng, setDropExactLng] = useState('');
+  const [isFetchingCustomerGps, setIsFetchingCustomerGps] = useState<'PICKUP' | 'DROP' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<PackageCategory>('Documents');
   const [selectedWeightBracket, setSelectedWeightBracket] = useState<WeightBracket>('Up to 5kg');
   const [weightInput, setWeightInput] = useState('1.0');
@@ -1168,6 +1173,54 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
     setWeightInput(defaultKg);
   };
 
+  const handleCaptureCustomerLiveGps = (target: 'PICKUP' | 'DROP') => {
+    setIsFetchingCustomerGps(target);
+    const applyCoords = (latNum: number, lngNum: number) => {
+      const latStr = latNum.toFixed(6);
+      const lngStr = lngNum.toFixed(6);
+      const coordLabel = `Lat: ${latStr}, Lng: ${lngStr}`;
+      if (target === 'PICKUP') {
+        setPickupExactLat(latStr);
+        setPickupExactLng(lngStr);
+        setPickupAddress((prev) => {
+          const base = prev.replace(/\s*\[Lat:.*?\]/g, '').trim();
+          return base ? `${base} [${coordLabel}]` : `Live GPS Location [${coordLabel}]`;
+        });
+      } else {
+        setDropExactLat(latStr);
+        setDropExactLng(lngStr);
+        setDropAddress((prev) => {
+          const base = prev.replace(/\s*\[Lat:.*?\]/g, '').trim();
+          return base ? `${base} [${coordLabel}]` : `Live GPS Location [${coordLabel}]`;
+        });
+      }
+      setBookingBanner(`📍 Live GPS Captured (${target}): Exact ${coordLabel}`);
+      setIsFetchingCustomerGps(null);
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          applyCoords(pos.coords.latitude, pos.coords.longitude);
+        },
+        () => {
+          navigator.geolocation.getCurrentPosition(
+            (pos2) => applyCoords(pos2.coords.latitude, pos2.coords.longitude),
+            () => {
+              const fallback = gpsService.getCurrentLocation();
+              applyCoords(fallback.lat, fallback.lng);
+            },
+            { enableHighAccuracy: false, timeout: 4000, maximumAge: 60000 }
+          );
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      );
+    } else {
+      const fallback = gpsService.getCurrentLocation();
+      applyCoords(fallback.lat, fallback.lng);
+    }
+  };
+
   const handleCreateOrder = (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -1175,8 +1228,16 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
         setBookingBanner('Maximum allowed parcel weight is 20 kg. Parcels above 20 kg cannot be booked.');
         return;
       }
-      const cleanPickup = sanitizeText(pickupAddress, 300) || 'Pickup Location';
-      const cleanDrop = sanitizeText(dropAddress, 300) || 'Drop Location';
+      const rawPickup = sanitizeText(pickupAddress, 300) || 'Pickup Location';
+      const cleanPickup =
+        pickupExactLat.trim() && pickupExactLng.trim() && !rawPickup.includes('Lat:')
+          ? `${rawPickup} [Lat: ${pickupExactLat.trim()}, Lng: ${pickupExactLng.trim()}]`
+          : rawPickup;
+      const rawDrop = sanitizeText(dropAddress, 300) || 'Drop Location';
+      const cleanDrop =
+        dropExactLat.trim() && dropExactLng.trim() && !rawDrop.includes('Lat:')
+          ? `${rawDrop} [Lat: ${dropExactLat.trim()}, Lng: ${dropExactLng.trim()}]`
+          : rawDrop;
       const cleanCustName = sanitizeText(customerName, 80) || 'Customer';
       const cleanCustPhone = sanitizePhone(customerPhone) || '9876543210';
       const cleanRecvName = sanitizeText(receiverName, 80) || 'Receiver';
@@ -2338,8 +2399,51 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                         value={pickupAddress}
                         onChange={(e) => setPickupAddress(e.target.value)}
                         className="w-full px-3 py-2 text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#059669]"
-                        placeholder="Enter Pickup Address"
+                        placeholder="Enter Pickup Address or Tap Live GPS Below"
                       />
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleCaptureCustomerLiveGps('PICKUP')}
+                          className="px-3 py-1.5 rounded-lg bg-[#059669] hover:bg-emerald-600 text-white text-[11px] font-extrabold flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+                        >
+                          <Navigation className="w-3.5 h-3.5" />
+                          {isFetchingCustomerGps === 'PICKUP'
+                            ? 'Fetching Live GPS...'
+                            : '📍 Add My Live Location (Exact Lat & Lng)'}
+                        </button>
+                        {pickupExactLat && pickupExactLng && (
+                          <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200">
+                            ✓ Live GPS: {pickupExactLat}, {pickupExactLng}
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                            Exact Pickup Latitude
+                          </label>
+                          <input
+                            type="text"
+                            value={pickupExactLat}
+                            onChange={(e) => setPickupExactLat(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#059669]"
+                            placeholder="e.g. 12.971599"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                            Exact Pickup Longitude
+                          </label>
+                          <input
+                            type="text"
+                            value={pickupExactLng}
+                            onChange={(e) => setPickupExactLng(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#059669]"
+                            placeholder="e.g. 77.594563"
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     {/* Drop Address + Saved Tags (Home, Office, Other) */}
@@ -2374,8 +2478,51 @@ Open each link in mobile Chrome on that specific phone and tap 'Install App' or 
                         value={dropAddress}
                         onChange={(e) => setDropAddress(e.target.value)}
                         className="w-full px-3 py-2 text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-[#059669]"
-                        placeholder="Enter Drop-off Address"
+                        placeholder="Enter Drop-off Address or Exact Coordinates"
                       />
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleCaptureCustomerLiveGps('DROP')}
+                          className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-extrabold flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                        >
+                          <MapPin className="w-3 h-3" />
+                          {isFetchingCustomerGps === 'DROP'
+                            ? 'Fetching GPS...'
+                            : '📍 Use Current GPS for Drop (Lat & Lng)'}
+                        </button>
+                        {dropExactLat && dropExactLng && (
+                          <span className="text-[10px] font-extrabold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                            ✓ Drop GPS: {dropExactLat}, {dropExactLng}
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                            Exact Drop Latitude
+                          </label>
+                          <input
+                            type="text"
+                            value={dropExactLat}
+                            onChange={(e) => setDropExactLat(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-amber-600"
+                            placeholder="Optional Lat"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                            Exact Drop Longitude
+                          </label>
+                          <input
+                            type="text"
+                            value={dropExactLng}
+                            onChange={(e) => setDropExactLng(e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-amber-600"
+                            placeholder="Optional Lng"
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     {/* Route Distance Slider */}

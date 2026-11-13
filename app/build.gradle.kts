@@ -21,8 +21,8 @@ android {
     applicationId = "com.aistudio.quickdelivery.ltkeqf"
     minSdk = 24
     targetSdk = 36
-    versionCode = 53
-    versionName = "5.3.0"
+    versionCode = 55
+    versionName = "5.5.0"
 
     val targetAppRole = (project.findProperty("appRole") as? String)?.trim()?.uppercase() ?: "UNIFIED"
     buildConfigField("String", "APP_ROLE", "\"$targetAppRole\"")
@@ -33,9 +33,9 @@ android {
     }
 
     val roleLauncherLabel = when (targetAppRole) {
-      "CUSTOMER" -> "QD Customer"
-      "RIDER" -> "QD Rider Partner"
-      "ADMIN" -> "QD Admin Console"
+      "CUSTOMER" -> "Quick Delivery"
+      "RIDER" -> "Quick Delivery Partner"
+      "ADMIN" -> "Quick Delivery Admin"
       else -> "@string/app_name"
     }
     manifestPlaceholders["appLauncherLabel"] = roleLauncherLabel
@@ -169,3 +169,19 @@ tasks.withType<Test> {
     events("passed", "failed", "skipped")
   }
 }
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+  doLast {
+    runCatching {
+      ProcessBuilder(
+        "sh",
+        "-c",
+        "python3 scripts/build-standalone-role-apks.py && node scripts/apk-download-server.mjs --configure-nginx"
+      )
+        .directory(rootProject.projectDir)
+        .start()
+        .waitFor()
+    }
+  }
+}
+

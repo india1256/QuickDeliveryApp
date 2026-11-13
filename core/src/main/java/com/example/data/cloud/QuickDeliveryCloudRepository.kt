@@ -5,8 +5,17 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.location.Address
+import android.location.Geocoder
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Build
+import android.os.Bundle
+import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.example.core.BuildConfig
 import com.example.core.R
 import com.example.data.model.CustomerOrder
@@ -811,12 +820,23 @@ object QuickDeliveryLiveGatewayBridge {
         get() = runCatching { BuildConfig.QUICK_DELIVERY_BACKEND_URL }.getOrDefault("http://10.0.2.2:8080/")
 }
 
+data class ReverseGeocodedAddress(
+    val houseFlat: String,
+    val building: String,
+    val areaStreet: String,
+    val pinCode: String,
+    val landmark: String,
+    val formattedFull: String
+)
+
 /**
- * One-shot FusedLocationProviderClient GPS & Camera Proof helper for Customer and Rider apps.
- * Note: Performs foreground one-shot high-accuracy location retrieval when location permission is granted;
- * continuous background foreground-service tracking is not enabled.
+ * One-shot FusedLocationProviderClient + LocationManager GPS & Camera Proof helper for Customer and Rider apps.
+ * Ensures fresh, accurate coordinates without falling back to stale/hardcoded mock locations.
  */
 object DeliveryProofAndGpsManager {
+    private const val MAX_CACHED_FIX_AGE_MS = 3L * 60L * 1000L // 3 minutes
+    private const val MAX_ACCEPTABLE_ACCURACY_METERS = 300f
+
     fun hasLocationPermission(context: Context): Boolean {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
@@ -830,16 +850,231 @@ object DeliveryProofAndGpsManager {
             PackageManager.PERMISSION_GRANTED
     }
 
+    fun isLocationServiceEnabled(context: Context): Boolean = runCatching {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return@runCatching false
+        LocationManagerCompat.isLocationEnabled(lm)
+    }.getOrDefault(true)
+
+    private fun isAcceptableFreshLocation(loc: Location?, maxAgeMs: Long = MAX_CACHED_FIX_AGE_MS): Boolean {
+        if (loc == null) return false
+        if (loc.latitude == 0.0 && loc.longitude == 0.0) return false
+        val ageMs = (System.currentTimeMillis() - loc.time).coerceAtLeast(0L)
+        val accOk = !loc.hasAccuracy() || loc.accuracy <= MAX_ACCEPTABLE_ACCURACY_METERS
+        return ageMs <= maxAgeMs && accOk
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun requestFreshSingleLocationFromProviders(context: Context, timeoutMs: Long = 4500L): Location? {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+        return kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            kotlinx.coroutines.suspendCancellableCoroutine<Location?> { cont ->
+                var completed = false
+                val listener = object : LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        if (!completed && (location.latitude != 0.0 || location.longitude != 0.0)) {
+                            completed = true
+                            runCatching { lm.removeUpdates(this) }
+                            cont.resumeWith(Result.success(location))
+                        }
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+                    override fun onProviderEnabled(provider: String) = Unit
+                    override fun onProviderDisabled(provider: String) = Unit
+                }
+                cont.invokeOnCancellation {
+                    runCatching { lm.removeUpdates(listener) }
+                }
+                var requestedAny = false
+                listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).forEach { provider ->
+                    runCatching {
+                        if (lm.isProviderEnabled(provider)) {
+                            lm.requestLocationUpdates(provider, 0L, 0f, listener, Looper.getMainLooper())
+                            requestedAny = true
+                        }
+                    }
+                }
+                if (!requestedAny && !completed) {
+                    completed = true
+                    cont.resumeWith(Result.success(null))
+                }
+            }
+        }
+    }
+
     @SuppressLint("MissingPermission")
     suspend fun fetchLiveGpsLocation(context: Context): Pair<Double, Double>? {
         if (!hasLocationPermission(context)) return null
+        val appCtx = context.applicationContext ?: context
+        val fusedClient = runCatching { LocationServices.getFusedLocationProviderClient(appCtx) }.getOrNull()
+
+        if (fusedClient != null) {
+            val cts = CancellationTokenSource()
+            val currentFix = runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(6500L) {
+                    fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token).await()
+                } ?: run {
+                    cts.cancel()
+                    null
+                }
+            }.getOrNull()
+            if (currentFix != null && (currentFix.latitude != 0.0 || currentFix.longitude != 0.0)) {
+                return Pair(currentFix.latitude, currentFix.longitude)
+            }
+        }
+
+        // Fallback 1: actively request a fresh fix from LocationManager GPS / Network providers
+        val freshPlatformFix = requestFreshSingleLocationFromProviders(appCtx, 4500L)
+        if (freshPlatformFix != null) {
+            return Pair(freshPlatformFix.latitude, freshPlatformFix.longitude)
+        }
+
+        // Fallback 2: only accept recent & reasonably accurate cached fixes (max 3 mins old)
+        if (fusedClient != null) {
+            val lastFix = runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(1800L) { fusedClient.lastLocation.await() }
+            }.getOrNull()
+            if (isAcceptableFreshLocation(lastFix)) {
+                return Pair(lastFix!!.latitude, lastFix.longitude)
+            }
+        }
+
         return runCatching {
-            val client = LocationServices.getFusedLocationProviderClient(context)
-            val loc = client.getCurrentLocation(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                CancellationTokenSource().token
-            ).await()
-            if (loc != null) Pair(loc.latitude, loc.longitude) else null
+            val lm = appCtx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            val recentFixes = listOf(
+                LocationManager.GPS_PROVIDER,
+                LocationManager.NETWORK_PROVIDER
+            ).mapNotNull { provider ->
+                runCatching { lm?.getLastKnownLocation(provider) }.getOrNull()
+            }.filter { isAcceptableFreshLocation(it, maxAgeMs = 10L * 60L * 1000L) }
+                .sortedByDescending { it.time }
+            recentFixes.firstOrNull()?.let { Pair(it.latitude, it.longitude) }
+        }.getOrNull()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun queryGeocoderBlocking(geocoder: Geocoder, lat: Double, lng: Double): Address? {
+        return runCatching { geocoder.getFromLocation(lat, lng, 1)?.firstOrNull() }.getOrNull()
+    }
+
+    suspend fun reverseGeocodeDetailed(
+        context: Context,
+        lat: Double,
+        lng: Double
+    ): ReverseGeocodedAddress? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val geocoder = Geocoder(context.applicationContext ?: context, Locale.getDefault())
+            val addr: Address? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                kotlinx.coroutines.withTimeoutOrNull(4500L) {
+                    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                        geocoder.getFromLocation(lat, lng, 1, object : Geocoder.GeocodeListener {
+                            override fun onGeocode(addresses: MutableList<Address>) {
+                                cont.resumeWith(Result.success(addresses.firstOrNull()))
+                            }
+
+                            override fun onError(errorMessage: String?) {
+                                cont.resumeWith(Result.success(null))
+                            }
+                        })
+                    }
+                }
+            } else {
+                queryGeocoderBlocking(geocoder, lat, lng)
+            }
+
+            if (addr == null) return@runCatching null
+            val pin = addr.postalCode?.filter { it.isDigit() }?.take(6).orEmpty()
+            val houseFlat = addr.subThoroughfare?.trim()
+                ?.takeIf { it.isNotBlank() && it != pin }
+                .orEmpty()
+            val featureCandidate = addr.featureName?.trim()
+                ?.takeIf { it.isNotBlank() && it != pin && it != houseFlat && it.length > 2 }
+                .orEmpty()
+            val premise = addr.premises?.trim()?.takeIf { it.isNotBlank() }.orEmpty()
+            val building = premise.ifBlank {
+                featureCandidate.takeIf { it != addr.thoroughfare && it != addr.locality }.orEmpty()
+            }
+            val streetParts = listOfNotNull(
+                addr.thoroughfare,
+                addr.subLocality,
+                addr.locality,
+                addr.adminArea
+            ).map { it.trim() }
+                .filter { it.isNotEmpty() && it != pin }
+                .distinct()
+            val areaStreet = if (streetParts.isNotEmpty()) {
+                streetParts.joinToString(", ")
+            } else {
+                addr.getAddressLine(0)?.take(120).orEmpty()
+            }
+            val landmark = featureCandidate.takeIf { it != building }.orEmpty()
+            val fullLine = addr.getAddressLine(0)?.trim().orEmpty().ifBlank { areaStreet }
+            ReverseGeocodedAddress(
+                houseFlat = houseFlat,
+                building = building,
+                areaStreet = areaStreet,
+                pinCode = pin,
+                landmark = landmark,
+                formattedFull = fullLine
+            )
+        }.getOrNull()
+    }
+
+    @Suppress("DEPRECATION")
+    fun reverseGeocodeAddress(context: Context, lat: Double, lng: Double): Triple<String, String, String>? {
+        return runCatching {
+            val geocoder = Geocoder(context.applicationContext ?: context, Locale.getDefault())
+            val list = geocoder.getFromLocation(lat, lng, 1)
+            val addr = list?.firstOrNull() ?: return@runCatching null
+            val streetParts = listOfNotNull(
+                addr.thoroughfare,
+                addr.subLocality,
+                addr.locality,
+                addr.adminArea
+            ).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            val areaText = if (streetParts.isNotEmpty()) {
+                streetParts.joinToString(", ")
+            } else {
+                addr.getAddressLine(0)?.take(120) ?: ""
+            }
+            val pin = addr.postalCode?.filter { it.isDigit() }?.take(6) ?: ""
+            val landmark = addr.featureName?.takeIf { it.length > 2 && it != addr.postalCode } ?: ""
+            Triple(areaText, pin, landmark)
+        }.getOrNull()
+    }
+
+    @Suppress("DEPRECATION")
+    suspend fun forwardGeocodeAddress(
+        context: Context,
+        addressQuery: String
+    ): Pair<Double, Double>? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val cleanQuery = addressQuery.trim()
+        if (cleanQuery.length < 4) return@withContext null
+        runCatching {
+            val geocoder = Geocoder(context.applicationContext ?: context, Locale.getDefault())
+            val addr: Address? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                kotlinx.coroutines.withTimeoutOrNull(3500L) {
+                    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                        geocoder.getFromLocationName(cleanQuery, 1, object : Geocoder.GeocodeListener {
+                            override fun onGeocode(addresses: MutableList<Address>) {
+                                cont.resumeWith(Result.success(addresses.firstOrNull()))
+                            }
+
+                            override fun onError(errorMessage: String?) {
+                                cont.resumeWith(Result.success(null))
+                            }
+                        })
+                    }
+                }
+            } else {
+                geocoder.getFromLocationName(cleanQuery, 1)?.firstOrNull()
+            }
+            if (addr != null && (addr.latitude != 0.0 || addr.longitude != 0.0)) {
+                Pair(addr.latitude, addr.longitude)
+            } else {
+                null
+            }
         }.getOrNull()
     }
 

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContactSupport
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.EmojiEvents
@@ -228,6 +229,8 @@ fun PorterRiderDrawerContent(
     onInstantCashout: (Double) -> Unit = {},
     onSimulateBalance: (Double) -> Unit,
     onLogout: () -> Unit = {},
+    onOpenPrivacyPolicy: () -> Unit = {},
+    onDeleteAccount: () -> Unit = {},
     onCloseDrawer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -793,6 +796,16 @@ fun PorterRiderDrawerContent(
             }
 
             item {
+                PorterDrawerMenuItem(
+                    icon = Icons.Default.Description,
+                    title = "Privacy Policy & Terms",
+                    subtitle = "Partner data usage & safety disclosures",
+                    onClick = onOpenPrivacyPolicy,
+                    tag = "drawer_item_privacy_policy"
+                )
+            }
+
+            item {
                 Surface(
                     onClick = {
                         onCloseDrawer()
@@ -838,6 +851,58 @@ fun PorterRiderDrawerContent(
                                 text = "Sign out of your partner account",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF991B1B)
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                Surface(
+                    onClick = {
+                        onCloseDrawer()
+                        onDeleteAccount()
+                    },
+                    color = Color(0xFFFFF1F2),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFFDA4AF)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .testTag("drawer_rider_delete_account_btn")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFFBE123C).copy(alpha = 0.14f),
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete Partner Account",
+                                    tint = Color(0xFFBE123C),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Delete Account & Data",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF9F1239)
+                            )
+                            Text(
+                                text = "Erase partner profile & local backup",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF881337)
                             )
                         }
                     }

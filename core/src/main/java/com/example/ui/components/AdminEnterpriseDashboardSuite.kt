@@ -1346,6 +1346,11 @@ private fun EnterpriseDashboardOverviewPage(
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item(key = "enterprise_overview_pending_rider_approvals") {
+            com.example.data.cloud.RiderRegistrationApprovalManager.ensureLoaded(context)
+            com.example.ui.rider.AdminPendingRiderApprovalsSection()
+        }
+
         // 1. Executive KPI Cards Grid (2-Column Grid on Mobile, 3-Column Grid on Desktop — Zero "..." Text Truncation)
         item(key = "dashboard_kpi_cards_grid") {
             val kpiCard1: @Composable (Modifier) -> Unit = { mod ->
@@ -3066,6 +3071,10 @@ private fun EnterpriseRidersPage(
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item(key = "enterprise_riders_pending_approvals") {
+            com.example.ui.rider.AdminPendingRiderApprovalsSection()
+        }
+
         // Paginated Riders Table with .xlsx Export
         item(key = "riders_paginated_xlsx_table") {
             AdminEnterprisePaginatedTableCard(
@@ -3653,6 +3662,10 @@ private fun EnterpriseKycPage(
                     )
                 }
             }
+        }
+
+        item(key = "enterprise_kyc_pending_approvals") {
+            com.example.ui.rider.AdminPendingRiderApprovalsSection()
         }
 
         item(key = "kyc_paginated_table") {
@@ -4325,20 +4338,17 @@ private fun EnterpriseComplaintsAndSosPage(
                             )
                         }
 
-                        Button(
-                            onClick = {
-                                SosSafetySupportManager.triggerSosAlert(
-                                    context = context,
-                                    orderId = "ORD-SOS-TEST",
-                                    reporterRole = "RIDER",
-                                    reporterName = "Vikram Rathore (RIDER-101)",
-                                    gpsCoordinates = "12.97160, 77.59460",
-                                    routeSummary = "Indiranagar 100ft Rd → Koramangala"
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = DashCrimson)
+                        Surface(
+                            color = if (unresolvedCount > 0) DashCrimson else DashEmerald.copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Simulate Rider SOS", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (unresolvedCount > 0) "$unresolvedCount ACTIVE SOS" else "ALL CLEAR",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (unresolvedCount > 0) Color.White else DashEmerald,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
                         }
                     }
 
