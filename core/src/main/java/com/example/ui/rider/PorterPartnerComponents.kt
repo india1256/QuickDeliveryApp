@@ -289,7 +289,7 @@ fun PorterRiderDrawerContent(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Quick Delivery",
+                                text = "Partner Quick Delivery",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = Color.White,
@@ -593,7 +593,7 @@ fun PorterRiderDrawerContent(
                                     )
                                 }
                                 Text(
-                                    text = "Aadhaar: ${rider?.aadhaarNumber ?: "XXXX-XXXX-1101"} • PAN: ${rider?.panNumber ?: "ABCDE1101F"} • RC: ${rider?.vehicleNumber ?: "KA-01-QD-1101"}",
+                                    text = "Aadhaar: ${rider?.aadhaarNumber?.ifBlank { "Pending" } ?: "Pending"} • PAN: ${rider?.panNumber?.ifBlank { "Pending" } ?: "Pending"} • RC: ${rider?.vehicleNumber?.ifBlank { "Pending" } ?: "Pending"}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFF047857),
                                     maxLines = 2,
@@ -676,7 +676,7 @@ fun PorterRiderDrawerContent(
                 PorterDrawerMenuItem(
                     icon = Icons.Default.Help,
                     title = "Help Desk & Partner Support",
-                    subtitle = "Call 1800-QUICK-CARE / 1800-258-258 / Raise Ticket",
+                    subtitle = "Raise Support Ticket & View Admin Replies",
                     onClick = onOpenSupport,
                     tag = "drawer_item_support"
                 )
@@ -1061,7 +1061,7 @@ fun PorterIdSuspendedWarningCard(
             }
 
             Text(
-                text = "As per Quick Delivery Partner rules, when negative balance reaches -₹200, your ID is suspended. You cannot accept or receive deliveries until dues are cleared.",
+                text = "As per Partner Quick Delivery rules, when negative balance reaches -₹200, your ID is suspended. You cannot accept or receive deliveries until dues are cleared.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF7F1D1D)
             )
@@ -1674,7 +1674,7 @@ fun PorterGuidelinesDialog(
                         Icon(Icons.Default.Description, contentDescription = null, tint = PorterNavy)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Quick Delivery Partner Guidelines",
+                            text = "Partner Quick Delivery Guidelines",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = PorterNavy

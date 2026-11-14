@@ -1669,6 +1669,155 @@ fun AdminVehiclePricingAndWeightControlCard(
 }
 
 @Composable
+internal fun AdminPromoCouponManagerCard(
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    remember(context) { com.example.data.cloud.QuickDeliveryOperationsManager.ensureLoaded(context) }
+    val promoCoupons by com.example.data.cloud.QuickDeliveryOperationsManager.promoCoupons.collectAsState()
+    var codeInput by remember { mutableStateOf("") }
+    var pctInput by remember { mutableStateOf("15") }
+    var maxDiscInput by remember { mutableStateOf("60") }
+    var descInput by remember { mutableStateOf("Instant Saver Promo") }
+    var couponNotice by remember { mutableStateOf<String?>(null) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.5.dp, WebTeal),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("admin_promo_coupon_manager_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "🏷️ Dynamic Customer Promo Coupon Manager",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = WebNavy
+            )
+            Text(
+                text = "Create or pause promo codes synced live to Customer App checkout.",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF475569)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = codeInput,
+                    onValueChange = { codeInput = it.uppercase().filter(Char::isLetterOrDigit) },
+                    label = { Text("Code (e.g. SAVE20)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .weight(1.2f)
+                        .testTag("admin_coupon_code_input")
+                )
+                OutlinedTextField(
+                    value = pctInput,
+                    onValueChange = { pctInput = it.filter(Char::isDigit).take(2) },
+                    label = { Text("% Off") },
+                    singleLine = true,
+                    modifier = Modifier.weight(0.7f)
+                )
+                OutlinedTextField(
+                    value = maxDiscInput,
+                    onValueChange = { maxDiscInput = it.filter(Char::isDigit).take(3) },
+                    label = { Text("Max ₹") },
+                    singleLine = true,
+                    modifier = Modifier.weight(0.8f)
+                )
+            }
+            OutlinedTextField(
+                value = descInput,
+                onValueChange = { descInput = it },
+                label = { Text("Offer Description") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                onClick = {
+                    val created = com.example.data.cloud.QuickDeliveryOperationsManager.upsertPromoCouponFromAdmin(
+                        context = context,
+                        code = codeInput,
+                        discountPercent = pctInput.toIntOrNull() ?: 10,
+                        maxDiscountInr = maxDiscInput.toIntOrNull() ?: 50,
+                        flatDiscountInr = 0,
+                        description = descInput,
+                        isActive = true
+                    )
+                    if (created != null) {
+                        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                        couponNotice = "✅ Synced coupon ${created.code} (${created.discountPercent}% off up to ₹${created.maxDiscountInr})"
+                        codeInput = ""
+                    } else {
+                        couponNotice = "Enter a valid code (at least 3 alphanumeric letters)."
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = WebTeal),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_create_coupon_btn")
+            ) {
+                Text("Create & Sync Coupon to Customer App", fontWeight = FontWeight.Bold)
+            }
+            couponNotice?.let { msg ->
+                Text(
+                    text = msg,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (msg.startsWith("✅")) WebEmerald else WebCrimson
+                )
+            }
+            if (promoCoupons.isNotEmpty()) {
+                HorizontalDivider()
+                promoCoupons.forEach { coupon ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF8FAFC), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${coupon.code} • ${coupon.discountPercent}% OFF (Max ₹${coupon.maxDiscountInr})",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = WebNavy
+                            )
+                            Text(
+                                text = coupon.description,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF475569)
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                com.example.data.cloud.QuickDeliveryOperationsManager.togglePromoCouponStatus(context, coupon.code)
+                                com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (coupon.isActive) "Active (Pause)" else "Paused (Enable)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (coupon.isActive) WebEmerald else WebOrange
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun AdminVehicleToggleTile(
     title: String,
     subtitle: String,
@@ -1789,7 +1938,7 @@ fun AdminEnterpriseControlCenter(
                     repository = repository,
                     orderId = searchingOrder.orderId
                 )
-                lastAutoActionLog = "⚡ Auto-Assigned #${searchingOrder.orderId}: ${outcome.message}"
+                lastAutoActionLog = "⚡ Assigned #${searchingOrder.orderId}: ${outcome.message}"
                 autoSystemPulseCount += 1
             }
             assignedOrder != null -> {
@@ -1798,7 +1947,7 @@ fun AdminEnterpriseControlCenter(
                     assignedOrder.pickupOtp,
                     assignedOrder.assignedRiderId
                 )
-                lastAutoActionLog = "📦 Auto-Picked Up #${assignedOrder.orderId} by ${assignedOrder.assignedRiderName ?: "Rider"} • Live Map Active"
+                lastAutoActionLog = "📦 Marked Picked Up #${assignedOrder.orderId}"
                 autoSystemPulseCount += 1
             }
             inTransitOrder != null -> {
@@ -1812,80 +1961,25 @@ fun AdminEnterpriseControlCenter(
                     order = inTransitOrder.copy(orderStatus = OrderStatus.DELIVERED),
                     forceTrigger = true
                 )
-                lastAutoActionLog = "🎉 Auto-Delivered #${inTransitOrder.orderId} • 80/20 Split Settled + Rider & Customer Motivated!"
+                lastAutoActionLog = "🎉 Delivered #${inTransitOrder.orderId} • 80/20 Split Settled"
                 autoSystemPulseCount += 1
             }
             else -> {
                 AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
-                lastAutoActionLog = "✅ All active orders delivered • Fleet standing by for instant auto-dispatch"
+                lastAutoActionLog = "✅ All active orders synced • Fleet standing by for customer bookings"
             }
         }
     }
 
-    val spawnAndAutoDispatchLiveOrder: () -> Unit = {
-        AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
-        val sampleRoutes = listOf(
-            Triple("Indiranagar 100ft Rd, Bengaluru", "Koramangala 4th Block, Bengaluru", VehicleType.BIKE),
-            Triple("MG Road Metro Plaza, Bengaluru", "HSR Layout Sector 2, Bengaluru", VehicleType.SCOOTER),
-            Triple("Whitefield ITPL Main Rd, Bengaluru", "Bellandur EcoSpace, Bengaluru", VehicleType.AUTO)
-        )
-        val picked = sampleRoutes[autoSystemPulseCount % sampleRoutes.size]
-        val created = AutomatedFairRiderAssignmentEngine.createCustomerOrderWithBackendValidation(
-            repository = repository,
-            customerId = "CUST-AUTO-${100 + (autoSystemPulseCount % 899)}",
-            customerName = MotivationAndPromoManager.cachedCustomerName.ifBlank { "Aarav Sharma" },
-            customerPhone = MotivationAndPromoManager.cachedCustomerPhone.ifBlank { "+91 98765 43210" },
-            pickupAddress = AddressDetails(
-                fullAddress = picked.first,
-                landmark = "Express Hub Gate 1",
-                contactName = "Sender Desk",
-                contactPhone = "+91 98765 43210",
-                lat = 12.9784,
-                lng = 77.6408
-            ),
-            dropAddress = AddressDetails(
-                fullAddress = picked.second,
-                landmark = "Main Reception Tower",
-                contactName = "Receiver Desk",
-                contactPhone = "+91 98450 11223",
-                lat = 12.9352,
-                lng = 77.6245
-            ),
-            packageDetails = PackageDetails(
-                packageType = PackageType.DOCUMENTS,
-                weightKg = "1.5",
-                description = "Autonomous Express Parcel"
-            ),
-            vehicleType = picked.third,
-            paymentMethod = CustomerPaymentMethod.CASH_ON_DELIVERY
-        )
-        created.onSuccess { newOrder ->
-            val dispatch = AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
-                repository = repository,
-                orderId = newOrder.orderId
-            )
-            lastAutoActionLog = "🚀 Auto-Created & Assigned #${newOrder.orderId} (${picked.third.title}) → ${dispatch.assignedRider?.name ?: "Online Rider"}"
-            autoSystemPulseCount += 1
-        }
+    val syncCloudLiveNow: () -> Unit = {
+        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        lastAutoActionLog = "🔄 Live cloud sync triggered across Customer, Rider & Admin devices"
+        autoSystemPulseCount += 1
     }
 
-    // 100% Autonomous Order Lifecycle Loop (Assign -> Pickup -> In-Transit -> Delivered -> 80/20 Split + Dual Motivation + FCM)
     LaunchedEffect(orders) {
         MotivationAndPromoManager.observeOrdersForDeliveryMotivation(orders)
         FcmOrderNotificationManager.observeOrdersAndDispatchFcmNotifications(context, orders)
-    }
-
-    LaunchedEffect(isAutoPilotEnabled) {
-        while (isAutoPilotEnabled) {
-            delay(3200L)
-            val currentOrders = repository.orders.value
-            val hasPendingWork = currentOrders.any {
-                it.orderStatus != OrderStatus.DELIVERED && it.orderStatus != OrderStatus.CANCELLED
-            }
-            if (hasPendingWork) {
-                executeSingleAutonomousStep()
-            }
-        }
     }
 
     QuickDeliveryEnterpriseAdminSuite(
@@ -1903,11 +1997,11 @@ fun AdminEnterpriseControlCenter(
         overspeedState = overspeedState,
         batteryState = batteryState,
         weeklyTransfersUsed = weeklyTransfersUsed,
-        isAutoPilotEnabled = isAutoPilotEnabled,
-        onToggleAutoPilot = { isAutoPilotEnabled = it },
+        isAutoPilotEnabled = false,
+        onToggleAutoPilot = {},
         lastAutoActionLog = lastAutoActionLog,
         onExecuteAutoStepNow = executeSingleAutonomousStep,
-        onSpawnNewLiveOrder = spawnAndAutoDispatchLiveOrder,
+        onSpawnNewLiveOrder = syncCloudLiveNow,
         onResetOrders = onResetOrders,
         onExitToCustomer = onExitToCustomer,
         modifier = modifier
@@ -2800,7 +2894,7 @@ private fun AdminNextLevelAutoPilotAndRadarCard(
                         .testTag("admin_spawn_auto_order_btn")
                 ) {
                     Text(
-                        text = "➕ Auto-Dispatch New Order",
+                        text = "🔄 Sync Cloud Now",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White,
@@ -3423,47 +3517,46 @@ private fun AdminCustomersCompleteDataPage(
     val customerStorageSaved by MotivationAndPromoManager.customerStoragePermissionGranted.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
 
-    // Build complete Customer Master Directory combining active logged-in Customer, order customers & registered customers
+    // Build live Customer Master Directory strictly from actual orders & non-blank logged-in Customer (zero dummy users)
     val customerRecords = remember(orders, customerStorageSaved) {
         val list = mutableListOf<AdminCustomerMasterRecord>()
-        val activeName = MotivationAndPromoManager.cachedCustomerName.ifBlank { "Aarav Sharma" }
-        val activePhone = MotivationAndPromoManager.cachedCustomerPhone.ifBlank { "+91 98765 43210" }
-        val activeEmail = MotivationAndPromoManager.cachedCustomerEmail.ifBlank { "aarav.sharma@quickdelivery.in" }
+        val activeName = MotivationAndPromoManager.cachedCustomerName.trim()
+        val activePhone = MotivationAndPromoManager.cachedCustomerPhone.trim()
+        val activeEmail = MotivationAndPromoManager.cachedCustomerEmail.trim()
 
         val groupedByPhone = orders.groupBy { it.customerPhone.removePrefix("+91").trim() }
         val primaryPhoneClean = activePhone.removePrefix("+91").trim()
-        val primaryOrders = groupedByPhone[primaryPhoneClean] ?: orders
 
-        val firstOrder = primaryOrders.firstOrNull()
-        list.add(
-            AdminCustomerMasterRecord(
-                customerId = firstOrder?.customerId ?: "CUST-1001",
-                customerName = activeName,
-                customerPhone = "+91 $primaryPhoneClean",
-                customerEmail = activeEmail,
-                isLoggedInSession = true,
-                isStorageSaved = customerStorageSaved,
-                defaultPickupAddress = firstOrder?.pickupAddress?.fullAddress
-                    ?: "Flat 302, Emerald Residency, Indiranagar 100ft Road, Bengaluru - 560038",
-                defaultPickupLandmark = firstOrder?.pickupAddress?.landmark ?: "Near Metro Station Gate 2",
-                defaultDropAddress = firstOrder?.dropAddress?.fullAddress
-                    ?: "Office 204, Lotus Tech Tower, Koramangala 4th Block, Bengaluru - 560034",
-                defaultDropLandmark = firstOrder?.dropAddress?.landmark ?: "Sony World Signal",
-                pickupCoords = if (firstOrder != null) {
-                    String.format(Locale.US, "%.4f, %.4f", firstOrder.pickupAddress.lat, firstOrder.pickupAddress.lng)
-                } else {
-                    "12.9784, 77.6408"
-                },
-                dropCoords = if (firstOrder != null) {
-                    String.format(Locale.US, "%.4f, %.4f", firstOrder.dropAddress.lat, firstOrder.dropAddress.lng)
-                } else {
-                    "12.9352, 77.6245"
-                },
-                customerOrders = primaryOrders
+        if (activeName.isNotBlank() && primaryPhoneClean.isNotBlank()) {
+            val primaryOrders = groupedByPhone[primaryPhoneClean].orEmpty()
+            val firstOrder = primaryOrders.firstOrNull()
+            list.add(
+                AdminCustomerMasterRecord(
+                    customerId = firstOrder?.customerId ?: "CUST-LIVE",
+                    customerName = activeName,
+                    customerPhone = "+91 $primaryPhoneClean",
+                    customerEmail = activeEmail.ifBlank { "Not Provided" },
+                    isLoggedInSession = true,
+                    isStorageSaved = customerStorageSaved,
+                    defaultPickupAddress = firstOrder?.pickupAddress?.fullAddress ?: "No pickup booked yet",
+                    defaultPickupLandmark = firstOrder?.pickupAddress?.landmark.orEmpty(),
+                    defaultDropAddress = firstOrder?.dropAddress?.fullAddress ?: "No drop booked yet",
+                    defaultDropLandmark = firstOrder?.dropAddress?.landmark.orEmpty(),
+                    pickupCoords = if (firstOrder != null && firstOrder.pickupAddress.lat != 0.0) {
+                        String.format(Locale.US, "%.4f, %.4f", firstOrder.pickupAddress.lat, firstOrder.pickupAddress.lng)
+                    } else {
+                        "Captured at booking"
+                    },
+                    dropCoords = if (firstOrder != null && firstOrder.dropAddress.lat != 0.0) {
+                        String.format(Locale.US, "%.4f, %.4f", firstOrder.dropAddress.lat, firstOrder.dropAddress.lng)
+                    } else {
+                        "Captured at booking"
+                    },
+                    customerOrders = primaryOrders
+                )
             )
-        )
+        }
 
-        // Add any additional distinct customers from orders
         groupedByPhone.forEach { (phoneClean, custOrders) ->
             if (phoneClean != primaryPhoneClean && custOrders.isNotEmpty()) {
                 val sample = custOrders.first()
@@ -3471,8 +3564,8 @@ private fun AdminCustomersCompleteDataPage(
                     AdminCustomerMasterRecord(
                         customerId = sample.customerId,
                         customerName = sample.customerName,
-                        customerPhone = "+91 $phoneClean",
-                        customerEmail = "${sample.customerName.lowercase(Locale.US).replace(" ", ".")}@quickdelivery.in",
+                        customerPhone = if (phoneClean.isNotBlank()) "+91 $phoneClean" else sample.customerPhone,
+                        customerEmail = "Customer",
                         isLoggedInSession = true,
                         isStorageSaved = true,
                         defaultPickupAddress = sample.pickupAddress.fullAddress,
@@ -3486,42 +3579,6 @@ private fun AdminCustomersCompleteDataPage(
                 )
             }
         }
-
-        // Also include verified enterprise customer accounts in directory
-        list.add(
-            AdminCustomerMasterRecord(
-                customerId = "CUST-1002",
-                customerName = "Priya Nair",
-                customerPhone = "+91 98450 22334",
-                customerEmail = "priya.nair@quickdelivery.in",
-                isLoggedInSession = true,
-                isStorageSaved = true,
-                defaultPickupAddress = "Villa 14, Palm Meadows, Whitefield Main Rd, Bengaluru - 560066",
-                defaultPickupLandmark = "Near Forum Shantiniketan",
-                defaultDropAddress = "Tower B, RMZ EcoWorld, Bellandur, Bengaluru - 560103",
-                defaultDropLandmark = "Gate 3 Reception",
-                pickupCoords = "12.9698, 77.7499",
-                dropCoords = "12.9255, 77.6762",
-                customerOrders = emptyList()
-            )
-        )
-        list.add(
-            AdminCustomerMasterRecord(
-                customerId = "CUST-1003",
-                customerName = "Rohan Deshmukh",
-                customerPhone = "+91 98201 55667",
-                customerEmail = "rohan.deshmukh@quickdelivery.in",
-                isLoggedInSession = true,
-                isStorageSaved = true,
-                defaultPickupAddress = "18th Cross, Malleshwaram, Bengaluru - 560003",
-                defaultPickupLandmark = "Opposite CTR",
-                defaultDropAddress = "MG Road Metro Plaza, Bengaluru - 560001",
-                defaultDropLandmark = "Exit B",
-                pickupCoords = "13.0031, 77.5643",
-                dropCoords = "12.9756, 77.6066",
-                customerOrders = emptyList()
-            )
-        )
         list
     }
 
@@ -3994,11 +4051,11 @@ private fun AdminKycVerificationPage(
                         ) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("Aadhaar Card", style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
-                                Text(rider.aadhaarNumber.ifBlank { "XXXX-XXXX-1101" }, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                Text(rider.aadhaarNumber.ifBlank { "Not Uploaded" }, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("PAN Card", style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
-                                Text(rider.panNumber.ifBlank { "ABCDE1101F" }, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                Text(rider.panNumber.ifBlank { "Not Uploaded" }, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("Vehicle RC", style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B))
@@ -4007,16 +4064,28 @@ private fun AdminKycVerificationPage(
                         }
                     }
 
+                    val kycCtx = LocalContext.current
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = { },
+                            onClick = {
+                                val rec = com.example.data.cloud.RiderRegistrationApprovalManager.getRecordForIdentity(kycCtx, rider.mobile, null)
+                                if (rec != null) {
+                                    com.example.data.cloud.RiderRegistrationApprovalManager.rejectRiderByAdmin(
+                                        context = kycCtx,
+                                        riderKey = rec.riderKey,
+                                        reason = "Re-verification requested by Admin Console",
+                                        rejectedDocFields = emptyList()
+                                    )
+                                    com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(kycCtx)
+                                }
+                            },
                             colors = ButtonDefaults.buttonColors(containerColor = WebTeal),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Re-verify Docs", style = MaterialTheme.typography.labelSmall)
+                            Text("Flag Re-KYC Review", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -4124,7 +4193,7 @@ private fun AdminPaymentsAndSettlementsPage(
                         Text(rider.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = WebNavy)
                         Text(String.format(Locale.US, "₹%.0f", rider.walletBalanceInr), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = WebEmerald)
                     }
-                    Text("UPI Payout ID: ${rider.verifiedUpiId ?: "partner@okaxis"} • Commission Debt: ₹${rider.commissionDebtInr.toInt()}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                    Text("UPI Payout ID: ${rider.verifiedUpiId ?: "Not Linked"} • Commission Debt: ₹${rider.commissionDebtInr.toInt()}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
                 }
             }
         }
@@ -4359,7 +4428,7 @@ private fun AdminPlatformSettingsPage(
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Reset Simulation / Orders State", fontWeight = FontWeight.Bold)
+                        Text("Clear Active Orders Archive", fontWeight = FontWeight.Bold)
                     }
 
                     OutlinedButton(

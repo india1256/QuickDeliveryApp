@@ -1,8 +1,10 @@
 package com.example.ui.rider
 
 import android.Manifest
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,6 +12,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +58,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -329,7 +335,7 @@ fun RiderPartnerCompactScreen(
     // 1. Speeding Vehicle Intro Animation when Rider App opens
     if (showRiderSpeedIntro) {
         QuickDeliverySpeedingVehicleIntro(
-            appTitle = "Quick Delivery Partner",
+            appTitle = "Partner Quick Delivery",
             appSubtitle = "Fast Rider Dispatch • 80% Partner Earnings",
             accentColor = RiderOrange,
             onAnimationFinished = {
@@ -459,10 +465,13 @@ fun RiderPartnerCompactScreen(
     var showLiveSelfieOnlineGateDialog by rememberSaveable { mutableStateOf(false) }
     var showRiderPrivacyPolicyDialog by rememberSaveable { mutableStateOf(false) }
     var showRiderDeleteAccountDialog by rememberSaveable { mutableStateOf(false) }
+    var showPartnerSupportDialog by rememberSaveable { mutableStateOf(false) }
     val selfieCheckIns by RiderLiveSelfieCallAndExcelManager.selfieCheckIns.collectAsState()
+    val partnerSupportTickets by com.example.data.cloud.QuickDeliveryOperationsManager.supportTickets.collectAsState()
 
     val hasRiderSubNavigation = showRiderDeleteAccountDialog ||
         showRiderPrivacyPolicyDialog ||
+        showPartnerSupportDialog ||
         showLiveSelfieOnlineGateDialog ||
         showTopSosEmergencyDialog ||
         showRiderSuggestionDialog ||
@@ -482,6 +491,7 @@ fun RiderPartnerCompactScreen(
         when {
             showRiderDeleteAccountDialog -> showRiderDeleteAccountDialog = false
             showRiderPrivacyPolicyDialog -> showRiderPrivacyPolicyDialog = false
+            showPartnerSupportDialog -> showPartnerSupportDialog = false
             showLiveSelfieOnlineGateDialog -> showLiveSelfieOnlineGateDialog = false
             showTopSosEmergencyDialog -> showTopSosEmergencyDialog = false
             showRiderSuggestionDialog -> showRiderSuggestionDialog = false
@@ -593,6 +603,9 @@ fun RiderPartnerCompactScreen(
                     AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, newFleet)
                     statusMessage = "🟢 You are now ONLINE! Ready to receive live parcel orders."
                     isErrorBanner = false
+                } else if (hasOngoingActiveOrder) {
+                    isErrorBanner = true
+                    statusMessage = "⚠️ Cannot go OFFLINE while you have an active delivery! Complete delivery first."
                 } else {
                     val updatedRider = rider.copy(
                         isOnline = false,
@@ -647,8 +660,7 @@ fun RiderPartnerCompactScreen(
                     },
                     onOpenSupport = {
                         scope.launch { drawerState.close() }
-                        statusMessage = "📞 Quick Delivery Helpline: 1800-QUICK-CARE (+91 80 4410 0100)"
-                        isErrorBanner = false
+                        showPartnerSupportDialog = true
                     },
                     onOpenGuidelines = {
                         scope.launch { drawerState.close() }
@@ -699,7 +711,7 @@ fun RiderPartnerCompactScreen(
                         scope.launch { drawerState.close() }
                         MotivationAndPromoManager.logoutRider(context)
                         isRiderLoggedIn = false
-                        statusMessage = "Signed out of Quick Delivery Partner account"
+                        statusMessage = "Signed out of Partner Quick Delivery account"
                     },
                     onOpenPrivacyPolicy = {
                         scope.launch { drawerState.close() }
@@ -725,15 +737,19 @@ fun RiderPartnerCompactScreen(
                     shadowElevation = 4.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Box(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Left: Hamburger menu (☰) + Quick Delivery Branding
+                        // Left: Hamburger menu (☰) + Partner Quick Delivery Branding
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.align(Alignment.CenterStart)
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 6.dp)
                         ) {
                             IconButton(
                                 onClick = { scope.launch { drawerState.open() } },
@@ -743,20 +759,19 @@ fun RiderPartnerCompactScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Menu,
-                                    contentDescription = "Quick Delivery Menu (☰)",
+                                    contentDescription = "Partner Quick Delivery Menu (☰)",
                                     tint = Color.White
                                 )
                             }
                             QuickDeliveryOfficialLogo(size = 28.dp, borderColor = QuickDeliveryOrange)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Quick Delivery",
+                                    text = "Partner Quick Delivery",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = Color.White,
                                     maxLines = 1,
-                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
@@ -765,7 +780,6 @@ fun RiderPartnerCompactScreen(
                                     fontWeight = FontWeight.ExtraBold,
                                     color = QuickDeliveryOrange,
                                     maxLines = 1,
-                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -774,8 +788,7 @@ fun RiderPartnerCompactScreen(
                         // Right: Compact Emergency SOS Button + Duty Online/Offline Status & Switch
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.align(Alignment.CenterEnd)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Surface(
                                 onClick = { showTopSosEmergencyDialog = true },
@@ -869,7 +882,7 @@ fun RiderPartnerCompactScreen(
                         showRiderProfileDialog = false
                         MotivationAndPromoManager.logoutRider(context)
                         isRiderLoggedIn = false
-                        statusMessage = "Signed out of Quick Delivery Partner account"
+                        statusMessage = "Signed out of Partner Quick Delivery account"
                     },
                     onDismiss = { showRiderProfileDialog = false }
                 )
@@ -1019,15 +1032,29 @@ fun RiderPartnerCompactScreen(
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
-                                text = "Immediate 24×7 Emergency Assistance for Quick Delivery Partner $riderDisplayName:",
+                                text = "Immediate 24×7 Emergency Assistance for Partner Quick Delivery $riderDisplayName:",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = RiderNavy
                             )
                             Button(
                                 onClick = {
                                     showTopSosEmergencyDialog = false
+                                    com.example.data.cloud.QuickDeliveryOperationsManager.submitSupportTicket(
+                                        context = context,
+                                        senderRole = "RIDER",
+                                        senderName = riderDisplayName,
+                                        senderPhone = riderPhone,
+                                        orderId = orders.firstOrNull { it.assignedRiderId == currentRider?.riderId }?.orderId.orEmpty(),
+                                        category = "SOS Emergency",
+                                        message = "Partner triggered SOS emergency alert & requested Admin Safety assistance."
+                                    )
+                                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                                     isErrorBanner = true
-                                    statusMessage = "🚨 Emergency SOS Alert + Live GPS sent to Quick Delivery Safety Control Room & Police 112!"
+                                    statusMessage = "🚨 Emergency SOS ticket logged with Admin Safety Desk. Opening 112 dialer..."
+                                    runCatching {
+                                        val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:112"))
+                                        context.startActivity(dialIntent)
+                                    }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = PorterRed),
                                 modifier = Modifier
@@ -1035,7 +1062,7 @@ fun RiderPartnerCompactScreen(
                                     .testTag("rider_sos_dispatch_alert_btn")
                             ) {
                                 Text(
-                                    text = "Send Live GPS Alert to Safety Desk & 112",
+                                    text = "Call National Emergency 112 & Alert Admin",
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White
                                 )
@@ -1043,13 +1070,12 @@ fun RiderPartnerCompactScreen(
                             OutlinedButton(
                                 onClick = {
                                     showTopSosEmergencyDialog = false
-                                    isErrorBanner = false
-                                    statusMessage = "📞 Calling Quick Delivery 24×7 Partner Helpline: 1800-QUICK-CARE"
+                                    showPartnerSupportDialog = true
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
-                                    text = "Call Partner Support (1800-QUICK-CARE)",
+                                    text = "Open Partner Support Ticket (Admin Desk)",
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -1057,6 +1083,159 @@ fun RiderPartnerCompactScreen(
                     },
                     confirmButton = {
                         TextButton(onClick = { showTopSosEmergencyDialog = false }) {
+                            Text("Close", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                )
+            }
+
+            if (showPartnerSupportDialog) {
+                var ticketCategory by remember { mutableStateOf("Payout / Wallet") }
+                var ticketOrderId by remember {
+                    mutableStateOf(orders.firstOrNull { it.assignedRiderId == currentRider?.riderId }?.orderId.orEmpty())
+                }
+                var ticketMessage by remember { mutableStateOf("") }
+                val riderTickets = remember(partnerSupportTickets, riderPhone, riderDisplayName) {
+                    partnerSupportTickets.filter { t ->
+                        t.senderRole == "RIDER" &&
+                            (riderPhone.isBlank() || t.senderPhone == riderPhone || t.senderName == riderDisplayName)
+                    }
+                }
+                AlertDialog(
+                    onDismissRequest = { showPartnerSupportDialog = false },
+                    title = {
+                        Text(
+                            text = "Partner Support Desk",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = RiderNavy
+                        )
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Raise a support ticket directly to Quick Delivery Admin Ops & view live replies:",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF475569)
+                            )
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf("Payout / Wallet", "Order Issue", "KYC Review", "App / GPS").forEach { cat ->
+                                    FilterChip(
+                                        selected = ticketCategory == cat,
+                                        onClick = { ticketCategory = cat },
+                                        label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
+                                    )
+                                }
+                            }
+                            OutlinedTextField(
+                                value = ticketOrderId,
+                                onValueChange = { ticketOrderId = it },
+                                label = { Text("Order ID (optional)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = ticketMessage,
+                                onValueChange = { ticketMessage = it },
+                                label = { Text("Describe your issue *") },
+                                minLines = 2,
+                                maxLines = 4,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_support_ticket_input")
+                            )
+                            Button(
+                                onClick = {
+                                    val created = com.example.data.cloud.QuickDeliveryOperationsManager.submitSupportTicket(
+                                        context = context,
+                                        senderRole = "RIDER",
+                                        senderName = riderDisplayName,
+                                        senderPhone = riderPhone,
+                                        orderId = ticketOrderId,
+                                        category = ticketCategory,
+                                        message = ticketMessage
+                                    )
+                                    if (created != null) {
+                                        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                        ticketMessage = ""
+                                        statusMessage = "✅ Support ticket ${created.ticketId} sent to Admin Desk."
+                                        isErrorBanner = false
+                                    }
+                                },
+                                enabled = ticketMessage.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(containerColor = RiderOrange),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_submit_ticket_btn")
+                            ) {
+                                Text("Submit Support Ticket", fontWeight = FontWeight.Bold)
+                            }
+                            if (riderTickets.isNotEmpty()) {
+                                HorizontalDivider()
+                                Text(
+                                    text = "Your Tickets (${riderTickets.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = RiderNavy
+                                )
+                                riderTickets.take(5).forEach { ticket ->
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (ticket.isResolved) Color(0xFFECFDF5) else Color(0xFFF8FAFC)
+                                        ),
+                                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "${ticket.ticketId} • ${ticket.category}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = RiderNavy
+                                                )
+                                                Text(
+                                                    text = if (ticket.isResolved) "RESOLVED" else "OPEN",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = if (ticket.isResolved) Color(0xFF047857) else Color(0xFFB45309)
+                                                )
+                                            }
+                                            Text(
+                                                text = ticket.message,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFF334155)
+                                            )
+                                            if (ticket.adminReply.isNotBlank()) {
+                                                Text(
+                                                    text = "Admin Reply: ${ticket.adminReply}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color(0xFF047857)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showPartnerSupportDialog = false }) {
                             Text("Close", fontWeight = FontWeight.Bold)
                         }
                     }
@@ -1552,7 +1731,7 @@ fun RiderPartnerCompactScreen(
     }
     }
     QuickDeliveryNextLevelLaunchOverlay(
-        appTitle = "Quick Delivery Partner",
+        appTitle = "Partner Quick Delivery",
         appRoleBadge = "Superfast Rider Dispatch • 80% Partner Share + 100% Tips",
         accentColor = RiderTeal,
         secondaryAccentColor = RiderOrange

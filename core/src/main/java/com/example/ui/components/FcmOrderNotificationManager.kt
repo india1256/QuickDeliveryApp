@@ -176,7 +176,7 @@ class QuickDeliveryFirebaseMessagingService : FirebaseMessagingService() {
  */
 object FcmOrderNotificationManager {
 
-    const val CHANNEL_CUSTOMER_ORDER_UPDATES = "fcm_customer_order_updates"
+    const val CHANNEL_CUSTOMER_ORDER_UPDATES = "fcm_customer_order_updates_silent_v3"
     const val CHANNEL_RIDER_DISPATCH_UPDATES = "fcm_rider_dispatch_updates"
     const val CHANNEL_DELIVERY_COMPLETION = "fcm_delivery_completion_alerts"
 
@@ -286,11 +286,12 @@ object FcmOrderNotificationManager {
 
             val customerChannel = NotificationChannel(
                 CHANNEL_CUSTOMER_ORDER_UPDATES,
-                "Customer Live Order Status (FCM)",
-                NotificationManager.IMPORTANCE_HIGH
+                "Customer Live Order Status (Silent)",
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Real-time FCM push notifications for Customer order tracking & ETA updates"
-                enableVibration(true)
+                description = "Silent real-time order tracking & ETA updates for Customers"
+                setSound(null, null)
+                enableVibration(false)
             }
 
             val riderChannel = NotificationChannel(
@@ -531,14 +532,43 @@ object FcmOrderNotificationManager {
         _latestRiderBanner.value = null
     }
 
+    private fun resolveCurrentAppRole(context: Context): String {
+        val locked = com.example.data.cloud.MultiPhoneLiveSyncManager.lockedPhoneRole.value.uppercase()
+        if (locked == "CUSTOMER" || locked == "RIDER" || locked == "ADMIN") return locked
+        val pkg = context.packageName.lowercase()
+        return when {
+            pkg.endsWith(".cust01") || pkg.endsWith(".customer") -> "CUSTOMER"
+            pkg.endsWith(".ride02") || pkg.endsWith(".rider") -> "RIDER"
+            pkg.endsWith(".admn03") || pkg.endsWith(".admin") -> "ADMIN"
+            else -> "UNIFIED"
+        }
+    }
+
     private fun postAndroidSystemNotification(
         context: Context,
         record: FcmPushMessageRecord
     ) {
         if (!hasNotificationPermission(context)) return
 
+        val appRole = resolveCurrentAppRole(context)
+        // Strict role isolation so Customer app NEVER rings/vibrates for Rider dispatch or Order Confirm!
+        if (appRole == "CUSTOMER") {
+            if (record.targetRole == FcmTargetAppRole.RIDER) return
+            if (record.orderStatus == OrderStatus.SEARCHING_RIDER) return
+        } else if (appRole == "RIDER") {
+            if (record.targetRole == FcmTargetAppRole.CUSTOMER) return
+        } else if (appRole == "ADMIN") {
+            return
+        } else if (appRole == "UNIFIED" && record.orderStatus == OrderStatus.SEARCHING_RIDER && record.targetRole == FcmTargetAppRole.RIDER) {
+            // Avoid ringing when user clicks Confirm Order inside the Customer tab of Unified preview
+            return
+        }
+
+        val isCustomerNotification = record.targetRole == FcmTargetAppRole.CUSTOMER || appRole == "CUSTOMER"
+
         runCatching {
             val channelId = when {
+                isCustomerNotification -> CHANNEL_CUSTOMER_ORDER_UPDATES
                 record.isDeliveryCompletion -> CHANNEL_DELIVERY_COMPLETION
                 record.targetRole == FcmTargetAppRole.RIDER -> CHANNEL_RIDER_DISPATCH_UPDATES
                 else -> CHANNEL_CUSTOMER_ORDER_UPDATES
@@ -571,7 +601,8 @@ object FcmOrderNotificationManager {
                         .bigText(record.body)
                         .setSummaryText("FCM • ${record.targetRole.label} • #${record.orderId}")
                 )
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setPriority(if (isCustomerNotification) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_HIGH)
+                .setSilent(isCustomerNotification)
                 .setCategory(NotificationCompat.CATEGORY_STATUS)
                 .setAutoCancel(true)
 

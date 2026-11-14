@@ -111,6 +111,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.cloud.DeliveryProofAndGpsManager
+import com.example.data.cloud.QuickDeliveryOperationsManager
 import com.example.data.delivery.AutomatedFairRiderAssignmentEngine
 import com.example.data.model.AddressDetails
 import com.example.data.model.CustomerOrder
@@ -197,6 +198,10 @@ fun CustomerAppScreen(
     val customerMainListState = rememberLazyListState()
 
     remember(context) { MotivationAndPromoManager.restoreSavedLoginFromPhoneStorage(context) }
+    remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
+    val savedAddresses by QuickDeliveryOperationsManager.savedAddresses.collectAsState()
+    val adminPromoCoupons by QuickDeliveryOperationsManager.promoCoupons.collectAsState()
+    val customerSupportTickets by QuickDeliveryOperationsManager.supportTickets.collectAsState()
     val isCustomerStorageGranted by MotivationAndPromoManager.customerStoragePermissionGranted.collectAsState()
 
     // Customer profile & booking form state (preserved across back navigation & tab switches)
@@ -518,12 +523,34 @@ fun CustomerAppScreen(
         )
     }
 
+    var promoCodeInput by rememberSaveable { mutableStateOf("") }
+    var appliedPromoCode by rememberSaveable { mutableStateOf("") }
+    var promoFeedbackMessage by remember { mutableStateOf<String?>(null) }
+
+    val appliedCouponObj = remember(adminPromoCoupons, appliedPromoCode) {
+        if (appliedPromoCode.isBlank()) null
+        else adminPromoCoupons.firstOrNull { it.code.equals(appliedPromoCode, ignoreCase = true) && it.isActive }
+    }
+    val promoDiscountInr = remember(appliedCouponObj, liveDetailedFare.totalFareInr) {
+        appliedCouponObj?.computeDiscountInr(liveDetailedFare.totalFareInr) ?: 0.0
+    }
+
     val liveQuote = liveDetailedFare.quote
-    val liveFareAmountInr = liveDetailedFare.totalFareInr
+    val liveFareAmountInr = (liveDetailedFare.totalFareInr - promoDiscountInr).coerceAtLeast(15.0)
     val totalWithTipInr = liveFareAmountInr + selectedRiderTipInr
 
     val formattedDistanceKm = remember(liveDetailedFare.distanceKm) {
         String.format(Locale.US, "%.1f", liveDetailedFare.distanceKm)
+    }
+    val estimatedTripEtaMins = remember(liveDetailedFare.distanceKm, selectedVehicle) {
+        val avgSpeedKmPerHr = when (selectedVehicle) {
+            VehicleType.BIKE -> 24.0
+            VehicleType.SCOOTER -> 22.0
+            VehicleType.AUTO -> 18.0
+            VehicleType.MINI_TRUCK -> 16.0
+            VehicleType.BIG_TRUCK -> 14.0
+        }
+        ((liveDetailedFare.distanceKm / avgSpeedKmPerHr) * 60.0).toInt().coerceIn(8, 120)
     }
 
     var showCustomerTopOptionsDialog by remember { mutableStateOf(false) }
@@ -531,6 +558,7 @@ fun CustomerAppScreen(
     var attemptedStep1Next by rememberSaveable { mutableStateOf(false) }
     var showCustomerLogoutConfirmDialog by remember { mutableStateOf(false) }
     var showCustomerSuggestionDialog by remember { mutableStateOf(false) }
+    var showCustomerSupportTicketDialog by remember { mutableStateOf(false) }
     var showCustomerPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showCustomerDeleteAccountDialog by remember { mutableStateOf(false) }
     var showGstInvoiceDialogForOrder by remember { mutableStateOf<CustomerOrder?>(null) }
@@ -564,6 +592,7 @@ fun CustomerAppScreen(
         showGstInvoiceDialogForOrder != null ||
         showCustomerDeleteAccountDialog ||
         showCustomerPrivacyPolicyDialog ||
+        showCustomerSupportTicketDialog ||
         showCustomerLogoutConfirmDialog ||
         showCustomerSuggestionDialog ||
         showCustomerTopOptionsDialog ||
@@ -578,6 +607,7 @@ fun CustomerAppScreen(
             showGstInvoiceDialogForOrder != null -> showGstInvoiceDialogForOrder = null
             showCustomerDeleteAccountDialog -> showCustomerDeleteAccountDialog = false
             showCustomerPrivacyPolicyDialog -> showCustomerPrivacyPolicyDialog = false
+            showCustomerSupportTicketDialog -> showCustomerSupportTicketDialog = false
             showCustomerLogoutConfirmDialog -> showCustomerLogoutConfirmDialog = false
             showCustomerSuggestionDialog -> showCustomerSuggestionDialog = false
             showCustomerTopOptionsDialog -> showCustomerTopOptionsDialog = false
@@ -774,6 +804,7 @@ fun CustomerAppScreen(
                         )
                     }
                     // Keep order in SEARCHING_RIDER until a Rider Partner manually taps Accept in the Rider App
+                    com.example.security.OrderAlertSoundManager.stopOrderAlert()
                     com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                     val refreshedOrder = repository.orders.value.firstOrNull { it.orderId == newOrder.orderId }
                     if (refreshedOrder != null) {
@@ -781,8 +812,8 @@ fun CustomerAppScreen(
                     }
                     isErrorBanner = false
                     val tipNote = if (selectedRiderTipInr > 0) " + ₹$selectedRiderTipInr Rider Tip" else ""
-                    statusBanner = "Order #${newOrder.orderId} Confirmed$tipNote! Waiting for Rider Partner to Accept."
-                    customerPromoNotification = MotivationAndPromoManager.nextCustomerOrderPromoNotification()
+                    val promoNote = if (promoDiscountInr > 0.0 && appliedPromoCode.isNotBlank()) " ($appliedPromoCode -₹${promoDiscountInr.toInt()})" else ""
+                    statusBanner = "Order #${newOrder.orderId} Confirmed$tipNote$promoNote! Waiting for Rider Partner to Accept."
                     showBookingConfirmationScreen = false
                     currentStep = 3
                 },
@@ -826,6 +857,8 @@ fun CustomerAppScreen(
             tipInr = selectedRiderTipInr,
             selectedPaymentMethod = selectedPaymentMethod,
             selectedUpiApp = selectedUpiApp,
+            appliedPromoCode = appliedPromoCode,
+            promoDiscountInr = promoDiscountInr,
             onBack = { showBookingConfirmationScreen = false },
             onConfirmBooking = executeCustomerBooking,
             modifier = modifier
@@ -1098,8 +1131,7 @@ fun CustomerAppScreen(
                     Surface(
                         onClick = {
                             showCustomerTopOptionsDialog = false
-                            isErrorBanner = false
-                            statusBanner = "📞 Quick Delivery Support: 1800-QUICK-CARE (+91 80 4410 0100)"
+                            showCustomerSupportTicketDialog = true
                         },
                         shape = RoundedCornerShape(12.dp),
                         color = Color(0xFFF8FAFC),
@@ -1131,13 +1163,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "24×7 Help & Customer Support",
+                                    text = "Help & Support Desk",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepNavy
                                 )
                                 Text(
-                                    text = "Call 1800-QUICK-CARE • Parcel protection",
+                                    text = "Raise support ticket & track Admin replies",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SlateMuted
                                 )
@@ -1431,6 +1463,159 @@ fun CustomerAppScreen(
         )
     }
 
+    if (showCustomerSupportTicketDialog) {
+        var ticketCategory by remember { mutableStateOf("Order Delay") }
+        var ticketOrderId by remember {
+            mutableStateOf(orders.firstOrNull { it.orderStatus != OrderStatus.CANCELLED }?.orderId.orEmpty())
+        }
+        var ticketMessage by remember { mutableStateOf("") }
+        val myTickets = remember(customerSupportTickets, customerPhone, customerName) {
+            customerSupportTickets.filter { t ->
+                t.senderRole == "CUSTOMER" &&
+                    (customerPhone.isBlank() || t.senderPhone == customerPhone || t.senderName == customerName)
+            }
+        }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showCustomerSupportTicketDialog = false },
+            title = {
+                Text(
+                    text = "Help & Support Desk",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = DeepNavy
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Send an issue directly to Quick Delivery Ops & check Admin replies:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateMuted
+                    )
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("Order Delay", "Address / OTP", "Payment / Refund", "Damaged Item").forEach { cat ->
+                            FilterChip(
+                                selected = ticketCategory == cat,
+                                onClick = { ticketCategory = cat },
+                                label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = ticketOrderId,
+                        onValueChange = { ticketOrderId = it },
+                        label = { Text("Order ID (optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = ticketMessage,
+                        onValueChange = { ticketMessage = it },
+                        label = { Text("Describe your issue *") },
+                        minLines = 2,
+                        maxLines = 4,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_support_ticket_input")
+                    )
+                    Button(
+                        onClick = {
+                            val created = QuickDeliveryOperationsManager.submitSupportTicket(
+                                context = context,
+                                senderRole = "CUSTOMER",
+                                senderName = customerName.ifBlank { "Customer" },
+                                senderPhone = customerPhone,
+                                orderId = ticketOrderId,
+                                category = ticketCategory,
+                                message = ticketMessage
+                            )
+                            if (created != null) {
+                                com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                ticketMessage = ""
+                                isErrorBanner = false
+                                statusBanner = "✅ Support ticket ${created.ticketId} submitted to Admin Desk."
+                            }
+                        },
+                        enabled = ticketMessage.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryTeal),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_submit_support_ticket_btn")
+                    ) {
+                        Text("Submit Ticket", fontWeight = FontWeight.Bold)
+                    }
+                    if (myTickets.isNotEmpty()) {
+                        HorizontalDivider()
+                        Text(
+                            text = "Your Tickets (${myTickets.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = DeepNavy
+                        )
+                        myTickets.take(5).forEach { ticket ->
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (ticket.isResolved) Color(0xFFECFDF5) else Color(0xFFF8FAFC)
+                                ),
+                                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "${ticket.ticketId} • ${ticket.category}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = DeepNavy
+                                        )
+                                        Text(
+                                            text = if (ticket.isResolved) "RESOLVED" else "OPEN",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = if (ticket.isResolved) VerifiedGreen else BrandOrange
+                                        )
+                                    }
+                                    Text(
+                                        text = ticket.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF334155)
+                                    )
+                                    if (ticket.adminReply.isNotBlank()) {
+                                        Text(
+                                            text = "Admin Reply: ${ticket.adminReply}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = VerifiedGreen
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                OutlinedButton(onClick = { showCustomerSupportTicketDialog = false }) {
+                    Text("Close", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
     if (showCustomerPrivacyPolicyDialog) {
         QuickDeliveryPrivacyPolicyDialog(
             context = context,
@@ -1581,6 +1766,15 @@ fun CustomerAppScreen(
     }
 
     orderPendingCancellation?.let { cancelTarget ->
+        var selectedCancelReason by remember(cancelTarget.orderId) {
+            mutableStateOf("Rider taking too long")
+        }
+        val cancelReasons = listOf(
+            "Rider taking too long",
+            "Entered wrong address",
+            "Booked by mistake",
+            "Changed delivery plan"
+        )
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { orderPendingCancellation = null },
             title = {
@@ -1591,48 +1785,63 @@ fun CustomerAppScreen(
                 )
             },
             text = {
-                Text(
-                    text = "No rider has picked up this parcel yet. Cancelling now removes it from dispatch with zero cancellation fee.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = SlateMuted
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = if (cancelTarget.orderStatus == OrderStatus.SEARCHING_RIDER) {
+                            "No rider has picked up this parcel yet. Select a reason to cancel with zero fee:"
+                        } else {
+                            "Parcel is not picked up yet. Select a reason to cancel before rider pickup:"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateMuted
+                    )
+                    cancelReasons.forEach { reason ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedCancelReason = reason }
+                                .padding(vertical = 2.dp)
+                        ) {
+                            RadioButton(
+                                selected = selectedCancelReason == reason,
+                                onClick = { selectedCancelReason = reason },
+                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFDC2626))
+                            )
+                            Text(
+                                text = reason,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = DeepNavy,
+                                fontWeight = if (selectedCancelReason == reason) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        runCatching {
-                            val field = repository.javaClass.getDeclaredField("_orders")
-                            field.isAccessible = true
-                            @Suppress("UNCHECKED_CAST")
-                            val flow = field.get(repository) as? kotlinx.coroutines.flow.MutableStateFlow<List<CustomerOrder>>
-                            if (flow != null) {
-                                flow.value = flow.value.map { existing ->
-                                    if (existing.orderId == cancelTarget.orderId) {
-                                        existing.copy(
-                                            orderStatus = OrderStatus.CANCELLED,
-                                            latestRiderQuickNote = "Cancelled by Customer before pickup."
-                                        )
-                                    } else {
-                                        existing
-                                    }
-                                }
-                            }
-                        }
-                        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                        QuickDeliveryOperationsManager.cancelOrderWithReason(
+                            context = context,
+                            repository = repository,
+                            orderId = cancelTarget.orderId,
+                            reason = selectedCancelReason,
+                            cancelledByRole = "Customer"
+                        )
                         isErrorBanner = false
-                        statusBanner = "Order #${cancelTarget.orderId} cancelled."
+                        statusBanner = "Order #${cancelTarget.orderId} cancelled ($selectedCancelReason)."
                         orderPendingCancellation = null
                         currentStep = 1
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
                     modifier = Modifier.testTag("confirm_cancel_order_btn")
                 ) {
-                    Text("Cancel Order", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Confirm Cancel", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 OutlinedButton(onClick = { orderPendingCancellation = null }) {
-                    Text("Keep Searching")
+                    Text("Keep Order")
                 }
             }
         )
@@ -2134,22 +2343,41 @@ fun CustomerAppScreen(
                                             )
                                         }
 
-                                        // Saved Pickup Address Tags (Home, Office, Other)
+                                        // Saved Pickup Address Tags (Home, Office, Shop + Save Current)
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            listOf("Home", "Office", "Other").forEach { tag ->
+                                            listOf("Home", "Office", "Shop").forEach { tag ->
+                                                val savedMatch = savedAddresses.firstOrNull {
+                                                    it.label.equals(tag, ignoreCase = true)
+                                                }
                                                 val activeTag = selectedPickupSavedTag == tag
                                                 FilterChip(
                                                     selected = activeTag,
                                                     onClick = {
                                                         selectedPickupSavedTag = tag
+                                                        if (savedMatch != null) {
+                                                            pickupHouseFlat = savedMatch.houseFlat
+                                                            pickupBuilding = savedMatch.building
+                                                            pickupAddressText = savedMatch.areaStreet
+                                                            pickupPinCode = savedMatch.pinCode
+                                                            pickupLandmark = savedMatch.landmark
+                                                            if (savedMatch.lat != 0.0 && savedMatch.lng != 0.0) {
+                                                                pickupLat = savedMatch.lat
+                                                                pickupLng = savedMatch.lng
+                                                                pickupLiveGpsVerified = true
+                                                            }
+                                                            isErrorBanner = false
+                                                            statusBanner = "📍 Loaded saved $tag pickup address"
+                                                        }
                                                     },
                                                     label = {
                                                         Text(
-                                                            text = "📍 $tag",
+                                                            text = if (savedMatch != null) "📍 $tag ✓" else "📍 $tag",
                                                             style = MaterialTheme.typography.labelSmall,
                                                             fontWeight = FontWeight.Bold
                                                         )
@@ -2160,6 +2388,35 @@ fun CustomerAppScreen(
                                                     ),
                                                     modifier = Modifier.testTag("customer_pickup_tag_${tag.lowercase()}")
                                                 )
+                                            }
+                                            if (pickupAddressText.isNotBlank()) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        QuickDeliveryOperationsManager.saveCustomerAddress(
+                                                            context = context,
+                                                            label = selectedPickupSavedTag,
+                                                            houseFlat = pickupHouseFlat,
+                                                            building = pickupBuilding,
+                                                            areaStreet = pickupAddressText,
+                                                            pinCode = pickupPinCode,
+                                                            landmark = pickupLandmark,
+                                                            lat = pickupLat,
+                                                            lng = pickupLng
+                                                        )
+                                                        isErrorBanner = false
+                                                        statusBanner = "💾 Pickup address saved under $selectedPickupSavedTag"
+                                                    },
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.testTag("customer_save_pickup_address_btn")
+                                                ) {
+                                                    Text(
+                                                        text = "💾 Save",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = PrimaryTeal
+                                                    )
+                                                }
                                             }
                                         }
 
@@ -2367,22 +2624,41 @@ fun CustomerAppScreen(
                                             }
                                         }
 
-                                        // Saved Drop Address Tags (Home, Office, Other)
+                                        // Saved Drop Address Tags (Home, Office, Shop + Save Current)
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            listOf("Home", "Office", "Other").forEach { tag ->
+                                            listOf("Home", "Office", "Shop").forEach { tag ->
+                                                val savedMatch = savedAddresses.firstOrNull {
+                                                    it.label.equals(tag, ignoreCase = true)
+                                                }
                                                 val activeTag = selectedDropSavedTag == tag
                                                 FilterChip(
                                                     selected = activeTag,
                                                     onClick = {
                                                         selectedDropSavedTag = tag
+                                                        if (savedMatch != null) {
+                                                            dropHouseFlat = savedMatch.houseFlat
+                                                            dropBuilding = savedMatch.building
+                                                            dropAddressText = savedMatch.areaStreet
+                                                            dropPinCode = savedMatch.pinCode
+                                                            dropLandmark = savedMatch.landmark
+                                                            if (savedMatch.lat != 0.0 && savedMatch.lng != 0.0) {
+                                                                dropLat = savedMatch.lat
+                                                                dropLng = savedMatch.lng
+                                                                dropLiveGpsVerified = true
+                                                            }
+                                                            isErrorBanner = false
+                                                            statusBanner = "🏁 Loaded saved $tag drop address"
+                                                        }
                                                     },
                                                     label = {
                                                         Text(
-                                                            text = "🏁 $tag",
+                                                            text = if (savedMatch != null) "🏁 $tag ✓" else "🏁 $tag",
                                                             style = MaterialTheme.typography.labelSmall,
                                                             fontWeight = FontWeight.Bold
                                                         )
@@ -2393,6 +2669,35 @@ fun CustomerAppScreen(
                                                     ),
                                                     modifier = Modifier.testTag("customer_drop_tag_${tag.lowercase()}")
                                                 )
+                                            }
+                                            if (dropAddressText.isNotBlank()) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        QuickDeliveryOperationsManager.saveCustomerAddress(
+                                                            context = context,
+                                                            label = selectedDropSavedTag,
+                                                            houseFlat = dropHouseFlat,
+                                                            building = dropBuilding,
+                                                            areaStreet = dropAddressText,
+                                                            pinCode = dropPinCode,
+                                                            landmark = dropLandmark,
+                                                            lat = dropLat,
+                                                            lng = dropLng
+                                                        )
+                                                        isErrorBanner = false
+                                                        statusBanner = "💾 Drop address saved under $selectedDropSavedTag"
+                                                    },
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.testTag("customer_save_drop_address_btn")
+                                                ) {
+                                                    Text(
+                                                        text = "💾 Save",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = BrandOrange
+                                                    )
+                                                }
                                             }
                                         }
 
@@ -3043,7 +3348,7 @@ fun CustomerAppScreen(
                                                 }
                                                 Spacer(modifier = Modifier.height(4.dp))
                                                 Text(
-                                                    text = "${selectedVehicle.title} • $formattedDistanceKm km • ${liveDetailedFare.weightKg} kg (Max ${activeMaxWeightKg.toInt()} kg)",
+                                                    text = "${selectedVehicle.title} • 📍 $formattedDistanceKm km (~$estimatedTripEtaMins min ETA) • ${liveDetailedFare.weightKg} kg",
                                                     style = MaterialTheme.typography.titleSmall,
                                                     fontWeight = FontWeight.Bold,
                                                     color = Color.White
@@ -3054,7 +3359,7 @@ fun CustomerAppScreen(
                                                 shape = RoundedCornerShape(14.dp)
                                             ) {
                                                 Text(
-                                                    text = liveDetailedFare.formattedTotalFare,
+                                                    text = String.format(Locale.US, "₹%.0f", liveFareAmountInr),
                                                     style = MaterialTheme.typography.titleLarge,
                                                     fontWeight = FontWeight.ExtraBold,
                                                     color = Color.White,
@@ -3067,7 +3372,7 @@ fun CustomerAppScreen(
 
                                         HorizontalDivider(color = Color.White.copy(alpha = 0.14f))
 
-                                        // Itemized ₹ Rows: Base Fare + Distance + Weight + GST + Promo Discount
+                                        // Itemized ₹ Rows: Base Fare + Distance + Weight + GST + Interactive Promo Coupon
                                         CustomerFareLineRow(
                                             label = "${selectedVehicle.title} Base Fare",
                                             value = liveDetailedFare.formattedBaseFare
@@ -3084,10 +3389,111 @@ fun CustomerAppScreen(
                                             label = "5% GST & Safe Platform Fee",
                                             value = liveDetailedFare.formattedTaxesAndFees
                                         )
-                                        CustomerFareLineRow(
-                                            label = "Promo Code (QUICK15 Instant Saver)",
-                                            value = "Applied ✓"
-                                        )
+                                        if (promoDiscountInr > 0.0 && appliedPromoCode.isNotBlank()) {
+                                            CustomerFareLineRow(
+                                                label = "Promo Discount ($appliedPromoCode)",
+                                                value = String.format(Locale.US, "- ₹%.0f", promoDiscountInr)
+                                            )
+                                        }
+
+                                        HorizontalDivider(color = Color.White.copy(alpha = 0.14f))
+
+                                        // Interactive Promo Code Box backed by Admin Coupons
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            OutlinedTextField(
+                                                value = promoCodeInput,
+                                                onValueChange = { promoCodeInput = it.uppercase().filter(Char::isLetterOrDigit) },
+                                                placeholder = { Text("Enter Promo Code", color = Color.White.copy(alpha = 0.55f)) },
+                                                singleLine = true,
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    focusedTextColor = Color.White,
+                                                    unfocusedTextColor = Color.White,
+                                                    focusedBorderColor = BrightTeal,
+                                                    unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
+                                                ),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("customer_promo_code_input")
+                                            )
+                                            if (appliedPromoCode.isNotBlank()) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        appliedPromoCode = ""
+                                                        promoCodeInput = ""
+                                                        promoFeedbackMessage = null
+                                                    },
+                                                    border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                                                    shape = RoundedCornerShape(10.dp)
+                                                ) {
+                                                    Text("Remove", color = Color(0xFFFECACA), fontWeight = FontWeight.Bold)
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = {
+                                                        val match = QuickDeliveryOperationsManager.findActiveCoupon(promoCodeInput)
+                                                        if (match != null) {
+                                                            appliedPromoCode = match.code
+                                                            val est = match.computeDiscountInr(liveDetailedFare.totalFareInr)
+                                                            promoFeedbackMessage = "✅ Applied ${match.code}: Saved ₹${est.toInt()}"
+                                                        } else {
+                                                            promoFeedbackMessage = "Invalid or paused promo code. Check active Admin offers."
+                                                        }
+                                                    },
+                                                    enabled = promoCodeInput.length >= 3,
+                                                    colors = ButtonDefaults.buttonColors(containerColor = BrightTeal),
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.testTag("customer_apply_promo_btn")
+                                                ) {
+                                                    Text("Apply", fontWeight = FontWeight.Bold, color = Color.White)
+                                                }
+                                            }
+                                        }
+                                        val activeCoupons = remember(adminPromoCoupons) {
+                                            adminPromoCoupons.filter { it.isActive }
+                                        }
+                                        if (activeCoupons.isNotEmpty() && appliedPromoCode.isBlank()) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .horizontalScroll(rememberScrollState()),
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                activeCoupons.take(4).forEach { coupon ->
+                                                    Surface(
+                                                        onClick = {
+                                                            promoCodeInput = coupon.code
+                                                            appliedPromoCode = coupon.code
+                                                            val est = coupon.computeDiscountInr(liveDetailedFare.totalFareInr)
+                                                            promoFeedbackMessage = "✅ Applied ${coupon.code}: Saved ₹${est.toInt()}"
+                                                        },
+                                                        color = BrightTeal.copy(alpha = 0.22f),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        border = BorderStroke(1.dp, BrightTeal.copy(alpha = 0.5f))
+                                                    ) {
+                                                        Text(
+                                                            text = "🏷️ ${coupon.code} (${if (coupon.discountPercent > 0) "${coupon.discountPercent}% OFF" else "₹${coupon.flatDiscountInr} OFF"})",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White,
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        promoFeedbackMessage?.let { msg ->
+                                            Text(
+                                                text = msg,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (msg.startsWith("✅")) Color(0xFF6EE7B7) else Color(0xFFFCA5A5),
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
                                     }
                                 }
 
@@ -3629,7 +4035,6 @@ fun CustomerAppScreen(
                                                 activeOrder.pickupOtp,
                                                 activeOrder.assignedRiderId
                                             )
-                                            customerPromoNotification = MotivationAndPromoManager.nextCustomerOrderPromoNotification()
                                         }
                                         OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> {
                                             repository.verifyDeliveryOtpByRider(
@@ -3638,7 +4043,6 @@ fun CustomerAppScreen(
                                                 activeOrder.assignedRiderId
                                             )
                                             AutomatedFairRiderAssignmentEngine.retryAllSearchingOrdersFairly(repository)
-                                            customerPromoNotification = MotivationAndPromoManager.nextCustomerOrderPromoNotification()
                                             MotivationAndPromoManager.notifySuccessfulDeliveryMotivationForBoth(
                                                 order = activeOrder.copy(orderStatus = OrderStatus.DELIVERED),
                                                 forceTrigger = true
@@ -3650,7 +4054,6 @@ fun CustomerAppScreen(
                                 onBookNewOrder = {
                                     statusBanner = null
                                     currentBookingPhotoSummary = null
-                                    customerPromoNotification = MotivationAndPromoManager.nextCustomerOrderPromoNotification()
                                     currentStep = 1
                                 }
                             )
@@ -3705,7 +4108,9 @@ fun CustomerAppScreen(
                                         }
                                     }
 
-                                    if (activeOrder.orderStatus == OrderStatus.SEARCHING_RIDER) {
+                                    if (activeOrder.orderStatus == OrderStatus.SEARCHING_RIDER ||
+                                        activeOrder.orderStatus == OrderStatus.RIDER_ASSIGNED
+                                    ) {
                                         OutlinedButton(
                                             onClick = { orderPendingCancellation = activeOrder },
                                             border = BorderStroke(1.dp, Color(0xFFFCA5A5)),

@@ -3,7 +3,6 @@ package com.example
 import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -23,7 +22,7 @@ import com.example.ui.rider.RiderPartnerCompactScreen
 import com.example.ui.theme.QuickDeliveryTheme
 
 /**
- * Standalone Rider Partner Application Activity ("QD Rider Partner").
+ * Standalone Rider Partner Application Activity ("Partner Quick Delivery").
  */
 class RiderMainActivity : ComponentActivity() {
     override fun attachBaseContext(newBase: Context) {
@@ -37,14 +36,12 @@ class RiderMainActivity : ComponentActivity() {
         QuickDeliveryFirebaseInitializer.ensureInitialized(this)
         OrderAlertSoundManager.ensureChannels(this)
         AppPermissionManager.inspectPermissions(this)
+        com.example.data.cloud.MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, "RIDER")
         com.example.data.cloud.MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(this, "RIDER")
         enableEdgeToEdge()
         setContent {
             QuickDeliveryTheme {
                 LocalizedContextProvider {
-                    BackHandler(enabled = true) {
-                        OrderAlertSoundManager.stopOrderAlert()
-                    }
                     QuickDeliveryCloudSyncBar(showCardUi = false)
                     Box(
                         modifier = Modifier

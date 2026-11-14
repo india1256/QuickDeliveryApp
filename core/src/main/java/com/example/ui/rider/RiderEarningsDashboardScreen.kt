@@ -47,6 +47,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -69,6 +70,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.cloud.MultiPhoneLiveSyncManager
+import com.example.data.cloud.QuickDeliveryOperationsManager
+import com.example.data.cloud.WithdrawalStatus
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
 import com.example.data.model.OrderStatus
@@ -129,7 +133,12 @@ fun RiderEarningsDashboardScreen(
     val context = LocalContext.current
     remember(context) { RiderFeedbackManager.ensureLoaded(context) }
     remember(context) { RiderThemeManager.ensureLoaded(context) }
+    remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
     val isDarkMode by RiderThemeManager.isDarkMode.collectAsState()
+    val allWithdrawals by QuickDeliveryOperationsManager.withdrawalRequests.collectAsState()
+    val riderWithdrawals = remember(allWithdrawals, rider.riderId) {
+        allWithdrawals.filter { it.riderId == rider.riderId || it.riderPhone == rider.mobile }
+    }
 
     BackHandler(onBack = onNavigateBack)
 
@@ -143,10 +152,21 @@ fun RiderEarningsDashboardScreen(
     var showOnlinePaymentOptions by remember { mutableStateOf(false) }
     var selectedOnlineMethod by remember { mutableStateOf(CustomerPaymentMethod.GATEWAY_UPI) }
     var selectedUpiApp by remember { mutableStateOf(UpiAppOption.GOOGLE_PAY) }
+    var withdrawAmountInput by remember { mutableStateOf("") }
+    var withdrawDestinationInput by remember { mutableStateOf(rider.verifiedUpiId.orEmpty()) }
+    var withdrawFeedback by remember { mutableStateOf<String?>(null) }
 
     // Calculate live today's metrics from active/delivered orders + rider profile
     val deliveredOrders = remember(orders) {
         orders.filter { it.orderStatus == OrderStatus.DELIVERED }
+    }
+    val codCollectedTodayInr = remember(deliveredOrders) {
+        deliveredOrders.filter { it.paymentMethod == CustomerPaymentMethod.CASH_ON_DELIVERY }
+            .sumOf { parseInrString(it.totalAmount) }
+    }
+    val onlineOrdersEarningsInr = remember(deliveredOrders) {
+        deliveredOrders.filter { it.paymentMethod != CustomerPaymentMethod.CASH_ON_DELIVERY }
+            .sumOf { parseInrString(it.riderEarning) }
     }
     val liveDeliveredBaseInr = remember(deliveredOrders) {
         deliveredOrders.sumOf { parseInrString(it.riderEarning) }
@@ -1093,6 +1113,171 @@ fun RiderEarningsDashboardScreen(
                                         fontWeight = FontWeight.ExtraBold,
                                         color = Color(0xFF9A3412)
                                     )
+                                }
+                            }
+                        }
+
+                        // COD Cash Collected vs Online Prepaid Payout Split
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                color = Color(0xFFF0F9FF),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "Online Earnings (Payout)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF0369A1)
+                                    )
+                                    Text(
+                                        text = String.format(Locale.US, "₹%.0f", onlineOrdersEarningsInr),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF0C4A6E)
+                                    )
+                                }
+                            }
+                            Surface(
+                                color = Color(0xFFFEFCE8),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "COD Cash Collected",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF854D0E)
+                                    )
+                                    Text(
+                                        text = String.format(Locale.US, "₹%.0f", codCollectedTodayInr),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF713F12)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Withdraw Available Balance to Bank / UPI
+                        val withdrawableInr = (rider.walletBalanceInr + liveTipsFromOrdersInr - rider.commissionDebtInr)
+                            .coerceAtLeast(0.0)
+                        Surface(
+                            color = Color(0xFFF8FAFC),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Withdraw Payout to UPI / Bank (Min ₹50 • Available: ₹${withdrawableInr.toInt()})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DashNavy
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = withdrawAmountInput,
+                                        onValueChange = { withdrawAmountInput = it.filter(Char::isDigit).take(5) },
+                                        label = { Text("Amount ₹") },
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .weight(0.9f)
+                                            .testTag("rider_withdraw_amount_input")
+                                    )
+                                    OutlinedTextField(
+                                        value = withdrawDestinationInput,
+                                        onValueChange = { withdrawDestinationInput = it },
+                                        label = { Text("UPI ID / Bank A/C") },
+                                        placeholder = { Text("yourname@upi") },
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .weight(1.3f)
+                                            .testTag("rider_withdraw_upi_input")
+                                    )
+                                }
+                                if (withdrawFeedback != null) {
+                                    Text(
+                                        text = withdrawFeedback.orEmpty(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (withdrawFeedback!!.startsWith("✅")) Color(0xFF065F46) else Color(0xFFB91C1C)
+                                    )
+                                }
+                                Button(
+                                    onClick = {
+                                        val amt = withdrawAmountInput.toDoubleOrNull() ?: 0.0
+                                        when {
+                                            amt < 50.0 -> withdrawFeedback = "⚠️ Minimum withdrawal is ₹50."
+                                            amt > withdrawableInr -> withdrawFeedback = "⚠️ Amount exceeds available ₹${withdrawableInr.toInt()}."
+                                            withdrawDestinationInput.trim().length < 5 -> withdrawFeedback = "⚠️ Enter a valid UPI ID or Bank Account."
+                                            else -> {
+                                                val req = QuickDeliveryOperationsManager.submitRiderWithdrawalRequest(
+                                                    context = context,
+                                                    riderId = rider.riderId,
+                                                    riderName = rider.name,
+                                                    riderPhone = rider.mobile,
+                                                    amountInr = amt,
+                                                    payoutDestination = withdrawDestinationInput
+                                                )
+                                                if (req != null) {
+                                                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                                    withdrawAmountInput = ""
+                                                    withdrawFeedback = "✅ Payout request #${req.requestId} (₹${amt.toInt()}) sent to Admin!"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = DashEmerald),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("rider_submit_withdraw_btn")
+                                ) {
+                                    Text("Request Payout Withdrawal", fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+
+                                if (riderWithdrawals.isNotEmpty()) {
+                                    HorizontalDivider(color = Color(0xFFE2E8F0))
+                                    Text(
+                                        text = "Withdrawal Requests (${riderWithdrawals.size})",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = DashNavy
+                                    )
+                                    riderWithdrawals.take(4).forEach { wd ->
+                                        val statusColor = when (wd.status) {
+                                            WithdrawalStatus.PAID -> Color(0xFF059669)
+                                            WithdrawalStatus.REJECTED -> Color(0xFFDC2626)
+                                            WithdrawalStatus.PENDING -> Color(0xFFD97706)
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "₹${wd.amountInr.toInt()} → ${wd.payoutDestination} (${wd.createdAtLabel})",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFF334155),
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Text(
+                                                text = wd.status.name,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = statusColor
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

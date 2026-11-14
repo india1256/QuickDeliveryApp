@@ -81,7 +81,7 @@ def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
     2. <application android:label="..."> and the single MAIN/LAUNCHER <activity>
        point directly to the role's standalone Activity and Label:
        - CUSTOMER -> com.example.CustomerMainActivity ("QD Customer App")
-       - RIDER    -> com.example.RiderMainActivity ("QD Rider Partner")
+       - RIDER    -> com.example.RiderMainActivity ("Partner Quick Delivery")
        - ADMIN    -> com.example.AdminMainActivity ("QD Admin Console")
     """
     axml = bytearray(raw_axml)
@@ -117,7 +117,7 @@ def patch_axml_manifest(raw_axml: bytes, target_role: str) -> bytes:
     idx_admin_act = strings.index("com.example.AdminMainActivity")
 
     idx_cust_lbl = strings.index("Quick Delivery")
-    idx_rider_lbl = strings.index("Quick Delivery Partner")
+    idx_rider_lbl = strings.index("Partner Quick Delivery")
     idx_admin_lbl = strings.index("Quick Delivery Admin")
 
     role_target = {

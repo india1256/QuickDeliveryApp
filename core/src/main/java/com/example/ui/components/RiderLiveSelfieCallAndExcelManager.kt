@@ -255,33 +255,7 @@ object RiderLiveSelfieCallAndExcelManager {
         )
     }
 
-    private fun defaultInitialCallLogs(): List<DirectCallLogEntry> {
-        val nowStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date())
-        return listOf(
-            DirectCallLogEntry(
-                callId = "CALL-501",
-                orderId = "ORD-1001",
-                callerRole = "CUSTOMER",
-                callerName = "Aarav Sharma",
-                receiverRole = "RIDER",
-                receiverName = "Vikram Rathore",
-                dialedPhoneNumber = "+91 98450 67890",
-                timestamp = nowStr,
-                cloudStatus = "ONLINE_CLOUD_SYNCED"
-            ),
-            DirectCallLogEntry(
-                callId = "CALL-502",
-                orderId = "ORD-1001",
-                callerRole = "RIDER",
-                callerName = "Vikram Rathore",
-                receiverRole = "CUSTOMER",
-                receiverName = "Aarav Sharma",
-                dialedPhoneNumber = "+91 98765 43210",
-                timestamp = nowStr,
-                cloudStatus = "ONLINE_CLOUD_SYNCED"
-            )
-        )
-    }
+    private fun defaultInitialCallLogs(): List<DirectCallLogEntry> = emptyList()
 
     fun ensureLoaded(context: Context) {
         if (isLoaded) return
@@ -330,12 +304,12 @@ object RiderLiveSelfieCallAndExcelManager {
                     parsed.add(
                         DirectCallLogEntry(
                             callId = obj.optString("callId", "CALL-$i"),
-                            orderId = obj.optString("orderId", "ORD-1001"),
+                            orderId = obj.optString("orderId", ""),
                             callerRole = obj.optString("callerRole", "CUSTOMER"),
-                            callerName = obj.optString("callerName", "Aarav Sharma"),
+                            callerName = obj.optString("callerName", "Customer"),
                             receiverRole = obj.optString("receiverRole", "RIDER"),
-                            receiverName = obj.optString("receiverName", "Vikram Rathore"),
-                            dialedPhoneNumber = obj.optString("dialedPhoneNumber", "+91 98450 67890"),
+                            receiverName = obj.optString("receiverName", "Partner"),
+                            dialedPhoneNumber = obj.optString("dialedPhoneNumber", ""),
                             timestamp = obj.optString("timestamp", ""),
                             cloudStatus = "ONLINE_CLOUD_SYNCED"
                         )
@@ -1147,67 +1121,41 @@ fun AdminOnlineExcelSpreadsheetPage(
                 "N: Tips Given (₹)",
                 "O: Preferred Payment"
             )
-            val activeCustName = MotivationAndPromoManager.cachedCustomerName.ifBlank { "Aarav Sharma" }
-            val activeCustPhone = MotivationAndPromoManager.cachedCustomerPhone.ifBlank { "9876543210" }
-            val activeCustEmail = MotivationAndPromoManager.cachedCustomerEmail.ifBlank { "aarav.sharma@quickdelivery.in" }
-            val firstOrd = orders.firstOrNull()
-            val totalSpend = orders.filter { it.orderStatus != OrderStatus.CANCELLED }
-                .sumOf { it.totalAmount.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0 }
-            val baseCustomerRows = listOf(
+            val groupedCustomers = orders.groupBy {
+                it.customerPhone.removePrefix("+91").trim().ifBlank { it.customerId }
+            }
+            val baseCustomerRows = groupedCustomers.values.map { custOrders ->
+                val sample = custOrders.first()
+                val custSpend = custOrders.filter { it.orderStatus != OrderStatus.CANCELLED }
+                    .sumOf { it.totalAmount.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0 }
+                val custTips = custOrders.sumOf { tipsByOrder[it.orderId] ?: 0 }
+                val cleanPhone = sample.customerPhone.removePrefix("+91").trim()
+                val activeCachedPhone = MotivationAndPromoManager.cachedCustomerPhone.removePrefix("+91").trim()
+                val emailValue = if (activeCachedPhone.isNotBlank() && activeCachedPhone == cleanPhone && MotivationAndPromoManager.cachedCustomerEmail.isNotBlank()) {
+                    MotivationAndPromoManager.cachedCustomerEmail
+                } else {
+                    "Not Shared"
+                }
                 listOf(
-                    firstOrd?.customerId ?: "CUST-1001",
-                    activeCustName,
-                    "+91 ${activeCustPhone.removePrefix("+91").trim()}",
-                    activeCustEmail,
-                    "100% ONLINE SYNCED",
-                    firstOrd?.pickupAddress?.fullAddress ?: "Flat 302, Emerald Residency, Indiranagar - 560038",
-                    firstOrd?.pickupAddress?.landmark ?: "Near Metro Station Gate 2",
-                    "12.9784, 77.6408",
-                    firstOrd?.dropAddress?.fullAddress ?: "Office 204, Lotus Tech Tower, Koramangala - 560034",
-                    firstOrd?.dropAddress?.landmark ?: "Sony World Signal",
-                    "12.9352, 77.6245",
-                    "${orders.size}",
-                    String.format(Locale.US, "₹%.0f", totalSpend),
-                    "₹${tipsByOrder.values.sum()}",
-                    "UPI / Online Prepaid & COD"
-                ),
-                listOf(
-                    "CUST-1002",
-                    "Priya Nair",
-                    "+91 98450 22334",
-                    "priya.nair@quickdelivery.in",
-                    "100% ONLINE SYNCED",
-                    "Villa 14, Palm Meadows, Whitefield Main Rd, Bengaluru - 560066",
-                    "Near Forum Shantiniketan",
-                    "12.9698, 77.7499",
-                    "Tower B, RMZ EcoWorld, Bellandur, Bengaluru - 560103",
-                    "Gate 3 Reception",
-                    "12.9255, 77.6762",
-                    "4",
-                    "₹860",
-                    "₹50",
-                    "UPI Prepaid"
-                ),
-                listOf(
-                    "CUST-1003",
-                    "Rohan Deshmukh",
-                    "+91 98201 55667",
-                    "rohan.deshmukh@quickdelivery.in",
-                    "100% ONLINE SYNCED",
-                    "18th Cross, Malleshwaram, Bengaluru - 560003",
-                    "Opposite CTR",
-                    "13.0031, 77.5643",
-                    "MG Road Metro Plaza, Bengaluru - 560001",
-                    "Exit B",
-                    "12.9756, 77.6066",
-                    "3",
-                    "₹640",
-                    "₹30",
-                    "Card / UPI"
+                    sample.customerId,
+                    sample.customerName.ifBlank { "Customer" },
+                    if (cleanPhone.isNotBlank()) "+91 $cleanPhone" else "Not Provided",
+                    emailValue,
+                    "LIVE CLOUD SYNCED",
+                    sample.pickupAddress.fullAddress,
+                    sample.pickupAddress.landmark.ifBlank { "-" },
+                    String.format(Locale.US, "%.5f, %.5f", sample.pickupAddress.lat, sample.pickupAddress.lng),
+                    sample.dropAddress.fullAddress,
+                    sample.dropAddress.landmark.ifBlank { "-" },
+                    String.format(Locale.US, "%.5f, %.5f", sample.dropAddress.lat, sample.dropAddress.lng),
+                    "${custOrders.size}",
+                    String.format(Locale.US, "₹%.0f", custSpend),
+                    "₹$custTips",
+                    sample.paymentMethod.name.replace("_", " ")
                 )
-            )
+            }
             val customForSheet = customExcelRows.filter { it.sheetName == "Customers" }.map {
-                listOf(it.rowId, it.col1, it.col2, it.col3, "100% ONLINE SYNCED", it.col4, "Landmark Verified", "12.9716, 77.5946", it.col5, "Drop Verified", "12.9352, 77.6245", "1", "₹180", "₹20", "UPI Online")
+                listOf(it.rowId, it.col1, it.col2, it.col3, "LIVE CLOUD SYNCED", it.col4, "-", "-", it.col5, "-", "-", "1", "₹0", "₹0", "Custom Entry")
             }
             allRows = customForSheet + baseCustomerRows
         }

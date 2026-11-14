@@ -106,9 +106,6 @@ class MainActivity : ComponentActivity() {
 
                     when (effectiveRole) {
                         "CUSTOMER" -> {
-                            BackHandler(enabled = true) {
-                                OrderAlertSoundManager.stopOrderAlert()
-                            }
                             QuickDeliveryCloudSyncBar(showCardUi = false)
                             Box(
                                 modifier = Modifier
@@ -120,9 +117,6 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         "RIDER" -> {
-                            BackHandler(enabled = true) {
-                                OrderAlertSoundManager.stopOrderAlert()
-                            }
                             QuickDeliveryCloudSyncBar(showCardUi = false)
                             Box(
                                 modifier = Modifier
@@ -140,9 +134,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             val orders by repository.orders.collectAsState()
-                            BackHandler(enabled = true) {
-                                OrderAlertSoundManager.stopOrderAlert()
-                            }
                             QuickDeliveryCloudSyncBar(showCardUi = false)
                             Column(
                                 modifier = Modifier
@@ -423,10 +414,9 @@ fun QuickDeliveryUnifiedHub() {
         }
     }
 
-    // Root-level BackHandler: pops tab history stack smoothly and prevents Activity finish/recreation at the root screen.
-    // Child composables (CustomerAppScreen, RiderPartnerCompactScreen, AdminEnterpriseControlCenter) register their own
-    // inner BackHandlers after this one, so inner sub-screens/dialogs/steps always pop first in LIFO order.
-    BackHandler(enabled = true) {
+    // Root-level BackHandler: pops tab history stack smoothly when non-empty or on secondary tab;
+    // when already on root tab with empty stack, allows normal Android Back press to exit cleanly.
+    BackHandler(enabled = tabHistoryStack.isNotEmpty() || selectedAppTab != 0) {
         OrderAlertSoundManager.stopOrderAlert()
         if (tabHistoryStack.isNotEmpty()) {
             selectedAppTab = tabHistoryStack.removeAt(tabHistoryStack.lastIndex)

@@ -21,8 +21,8 @@ android {
     applicationId = "com.aistudio.quickdelivery.ltkeqf"
     minSdk = 24
     targetSdk = 36
-    versionCode = 56
-    versionName = "5.6.0"
+    versionCode = 58
+    versionName = "5.8.0"
 
     val targetAppRole = (project.findProperty("appRole") as? String)?.trim()?.uppercase() ?: "UNIFIED"
     buildConfigField("String", "APP_ROLE", "\"$targetAppRole\"")
@@ -34,7 +34,7 @@ android {
 
     val roleLauncherLabel = when (targetAppRole) {
       "CUSTOMER" -> "Quick Delivery"
-      "RIDER" -> "Quick Delivery Partner"
+      "RIDER" -> "Partner Quick Delivery"
       "ADMIN" -> "Quick Delivery Admin"
       else -> "@string/app_name"
     }

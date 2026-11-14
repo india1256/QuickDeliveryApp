@@ -149,31 +149,31 @@ object RiderKycManager {
             val dateStr = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date())
             scannedDocsMap["${riderKey}_${KycDocumentType.AADHAAR.name}"] = ScannedKycRecord(
                 type = KycDocumentType.AADHAAR,
-                documentNumber = rider.aadhaarNumber.ifBlank { "XXXX-XXXX-1101" },
-                isVerified = true,
+                documentNumber = rider.aadhaarNumber.ifBlank { "Pending" },
+                isVerified = rider.aadhaarNumber.isNotBlank(),
                 timestamp = dateStr,
-                scanNote = "UIDAI Verified ✓"
+                scanNote = if (rider.aadhaarNumber.isNotBlank()) "UIDAI Verified ✓" else "Upload Aadhaar in KYC"
             )
             scannedDocsMap["${riderKey}_${KycDocumentType.DRIVING_LICENCE.name}"] = ScannedKycRecord(
                 type = KycDocumentType.DRIVING_LICENCE,
-                documentNumber = "DL-042021008819",
-                isVerified = true,
+                documentNumber = "Pending",
+                isVerified = false,
                 timestamp = dateStr,
-                scanNote = "RTO Verified ✓"
+                scanNote = "Upload Driving Licence in KYC"
             )
             scannedDocsMap["${riderKey}_${KycDocumentType.PAN_CARD.name}"] = ScannedKycRecord(
                 type = KycDocumentType.PAN_CARD,
-                documentNumber = rider.panNumber.ifBlank { "ABCDE1101F" },
-                isVerified = true,
+                documentNumber = rider.panNumber.ifBlank { "Pending" },
+                isVerified = rider.panNumber.isNotBlank(),
                 timestamp = dateStr,
-                scanNote = "NSDL Verified ✓"
+                scanNote = if (rider.panNumber.isNotBlank()) "NSDL Verified ✓" else "Upload PAN in KYC"
             )
             scannedDocsMap["${riderKey}_${KycDocumentType.VEHICLE_RC.name}"] = ScannedKycRecord(
                 type = KycDocumentType.VEHICLE_RC,
-                documentNumber = rider.vehicleNumber.ifBlank { "KA-01-EQ-4421" },
-                isVerified = true,
+                documentNumber = rider.vehicleNumber.ifBlank { "Pending" },
+                isVerified = rider.vehicleNumber.isNotBlank(),
                 timestamp = dateStr,
-                scanNote = "Parivahan Verified ✓"
+                scanNote = if (rider.vehicleNumber.isNotBlank()) "Parivahan Verified ✓" else "Upload Vehicle RC in KYC"
             )
         }
     }
@@ -253,7 +253,7 @@ fun RiderKycDocumentCenterDialog(
                                 color = PorterNavy
                             )
                             Text(
-                                text = "Quick Delivery Partner Verification Console",
+                                text = "Partner Quick Delivery Verification Console",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color(0xFF64748B)
                             )

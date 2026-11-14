@@ -183,6 +183,7 @@ object MultiPhoneLiveSyncManager {
         val repo = SharedOrderRepository.getInstance(context)
         AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
         RiderRegistrationApprovalManager.ensureLoaded(context)
+        QuickDeliveryOperationsManager.ensureLoaded(context)
         val localOrders = repo.orders.value.filterNot { it.orderId in DEMO_ORDER_IDS }
         val pickupProofs = OrderProofRegistry.pickupProofsByOrder.value
         val deliveryProofs = OrderProofRegistry.deliveryProofsByOrder.value
@@ -203,6 +204,10 @@ object MultiPhoneLiveSyncManager {
             }
             put("orders", ordersArray)
             put("riderRegistrations", RiderRegistrationApprovalManager.exportAllToJsonArray())
+            val opsJson = QuickDeliveryOperationsManager.exportOpsPayloadJson()
+            put("promoCoupons", opsJson.optJSONArray("promoCoupons"))
+            put("withdrawalRequests", opsJson.optJSONArray("withdrawalRequests"))
+            put("supportTickets", opsJson.optJSONArray("supportTickets"))
         }
 
         var responseJson: JSONObject? = null
@@ -250,6 +255,7 @@ object MultiPhoneLiveSyncManager {
             context,
             root.optJSONArray("riderRegistrations")
         )
+        QuickDeliveryOperationsManager.mergeFromServerPayload(context, root)
 
         val remoteOrdersArr = root.optJSONArray("orders") ?: JSONArray()
         if (mutableOrdersFlow != null && remoteOrdersArr.length() > 0) {

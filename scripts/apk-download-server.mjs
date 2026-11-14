@@ -78,6 +78,9 @@ function loadSyncState() {
           ordersById: cleanOrders,
           devicesById: parsed.devicesById || {},
           riderRegistrationsByKey: parsed.riderRegistrationsByKey || {},
+          promoCouponsByCode: parsed.promoCouponsByCode || {},
+          withdrawalRequestsById: parsed.withdrawalRequestsById || {},
+          supportTicketsById: parsed.supportTicketsById || {},
         };
       }
     }
@@ -87,6 +90,9 @@ function loadSyncState() {
     ordersById: {},
     devicesById: {},
     riderRegistrationsByKey: {},
+    promoCouponsByCode: {},
+    withdrawalRequestsById: {},
+    supportTicketsById: {},
   };
 }
 
@@ -111,7 +117,7 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     roleUpper === 'CUSTOMER'
       ? 'Quick Delivery — Customer App'
       : roleUpper === 'RIDER'
-      ? 'Quick Delivery Partner — Rider App'
+      ? 'Partner Quick Delivery — Rider App'
       : roleUpper === 'ADMIN'
       ? 'Quick Delivery Admin — Console App'
       : 'Quick Delivery — Standalone App Downloads (1 Link = 1 App)';
@@ -133,10 +139,10 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
   const riderCardHtml = showRider
     ? `
       <div class="apk-card" style="border-color: #F59E0B;">
-        <div class="apk-title" style="color: #FCD34D;">Quick Delivery Partner (Rider App) • ${getApkSizeMb('QuickDelivery-Rider-Partner.apk')}</div>
-        <div class="apk-desc">Installs ONLY the <b>Quick Delivery Partner</b> app. Accept/Reject delivery requests, OTP-verified pickup/drop, same-day earnings &amp; partner wallet.</div>
+        <div class="apk-title" style="color: #FCD34D;">Partner Quick Delivery (Rider App) • ${getApkSizeMb('QuickDelivery-Rider-Partner.apk')}</div>
+        <div class="apk-desc">Installs ONLY the <b>Partner Quick Delivery</b> app. Accept/Reject delivery requests, OTP-verified pickup/drop, same-day earnings &amp; partner wallet.</div>
         <a class="dl-btn" style="background: #D97706;" href="/dl/QuickDelivery-Rider-Partner.apk" download="QuickDelivery-Rider-Partner.apk" onclick="onDirectApkClick('QuickDelivery-Rider-Partner.apk')">
-          Download Quick Delivery Partner (Rider APK)
+          Download Partner Quick Delivery (Rider APK)
         </a>
         <a class="direct-link" href="/dl/QuickDelivery-Rider-Partner.apk" download="QuickDelivery-Rider-Partner.apk">
           Direct Download: /dl/QuickDelivery-Rider-Partner.apk
@@ -344,11 +350,11 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     </div>
 
     <div class="guide-box">
-      <h2>📍 New Feature: Customer Live Location (Exact Lat &amp; Lng)</h2>
+      <h2>✨ v5.7.0 Highlights: Play Store-Ready Clean Experience</h2>
       <ol class="step-list">
-        <li><b>QD Customer App</b> open karein aur Pickup Location ke pass <b>"Use GPS"</b> button dabayein.</li>
-        <li>Phone ka live GPS on hokar aapka <b>exact 6-decimal Latitude &amp; Longitude</b> (jaise <code>12.971599, 77.594563</code>) seedha Pickup Area box me aa jayega!</li>
-        <li>Aap chahein toh exact Latitude aur Longitude khud bhi type ya edit kar sakte hain.</li>
+        <li><b>Customer App:</b> Auto-Capture exact Pickup/Drop address via GPS, Save <b>Home / Office / Shop</b> addresses, apply Admin Promo Coupons, cancel with reason &amp; In-App Helpdesk Tickets.</li>
+        <li><b>Rider Partner App:</b> Clean Accept/Reject top popup (auto-stops ring on action), Clear KYC document check, Same-Day vs Total earnings, Online/COD split &amp; UPI/Bank Payout Requests.</li>
+        <li><b>Admin Console:</b> Allowlist Google Sign-In Gate, Reassign/Cancel active orders, KYC zoom &amp; doc-specific rejection, Dynamic Promo Coupon Manager, Payout &amp; Support Ticket Approvals.</li>
       </ol>
     </div>
 
@@ -428,11 +434,11 @@ function renderLegalPageHtml(kind = 'privacy') {
   const bodyContent = isDelete
     ? `
       <h1>Account &amp; Data Deletion</h1>
-      <p><b>Applies to:</b> Quick Delivery, Quick Delivery Partner, and Quick Delivery Admin (com.aistudio.quickdelivery.*)</p>
+      <p><b>Applies to:</b> Quick Delivery, Partner Quick Delivery, and Quick Delivery Admin (com.aistudio.quickdelivery.*)</p>
       <div class="card">
         <h2>Option 1: Instant In-App Deletion</h2>
         <ol>
-          <li>Open <b>Quick Delivery</b> (Customer) or <b>Quick Delivery Partner</b> (Rider).</li>
+          <li>Open <b>Quick Delivery</b> (Customer) or <b>Partner Quick Delivery</b> (Rider).</li>
           <li>Open the top-left <b>Menu (☰)</b> drawer.</li>
           <li>Tap <b>Delete Account &amp; Data</b> and confirm.</li>
           <li>All local profile information, authentication tokens, and session backups are permanently erased immediately.</li>
@@ -724,6 +730,9 @@ function buildSyncResponsePayload() {
     connectedDevices,
     orders: Object.values(syncState.ordersById),
     riderRegistrations: Object.values(syncState.riderRegistrationsByKey || {}),
+    promoCoupons: Object.values(syncState.promoCouponsByCode || {}),
+    withdrawalRequests: Object.values(syncState.withdrawalRequestsById || {}),
+    supportTickets: Object.values(syncState.supportTicketsById || {}),
   };
 }
 
@@ -782,6 +791,42 @@ const server = http.createServer((req, res) => {
                   ...(existingReg || {}),
                   ...reg,
                 };
+              }
+            }
+          }
+
+          if (Array.isArray(payload.promoCoupons)) {
+            if (!syncState.promoCouponsByCode) syncState.promoCouponsByCode = {};
+            for (const c of payload.promoCoupons) {
+              if (!c || !c.code) continue;
+              const code = String(c.code).trim().toUpperCase();
+              const prev = syncState.promoCouponsByCode[code];
+              if (!prev || Number(c.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.promoCouponsByCode[code] = c;
+              }
+            }
+          }
+
+          if (Array.isArray(payload.withdrawalRequests)) {
+            if (!syncState.withdrawalRequestsById) syncState.withdrawalRequestsById = {};
+            for (const w of payload.withdrawalRequests) {
+              if (!w || !w.requestId) continue;
+              const wid = String(w.requestId);
+              const prev = syncState.withdrawalRequestsById[wid];
+              if (!prev || Number(w.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.withdrawalRequestsById[wid] = w;
+              }
+            }
+          }
+
+          if (Array.isArray(payload.supportTickets)) {
+            if (!syncState.supportTicketsById) syncState.supportTicketsById = {};
+            for (const t of payload.supportTickets) {
+              if (!t || !t.ticketId) continue;
+              const tid = String(t.ticketId);
+              const prev = syncState.supportTicketsById[tid];
+              if (!prev || Number(t.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.supportTicketsById[tid] = t;
               }
             }
           }

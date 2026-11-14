@@ -34,7 +34,7 @@ enum class MobileApkVariant(
     ),
     RIDER(
         fileName = "QuickDelivery-Rider-Partner.apk",
-        title = "2. Rider Partner App",
+        title = "2. Partner Quick Delivery (Rider)",
         subtitle = "80% Rider share dispatch, live route & digital signature",
         badgeText = "Rider.apk"
     ),
@@ -327,8 +327,8 @@ object MobileApkDownloadHelper {
         val riderCard = if (showAllThree || showOnlyRider) {
             """
             <div class="card" style="border-color:#D97706;">
-              <div style="font-weight:800;font-size:16px;color:#FCD34D;">🛵 2. Rider Partner App Only — QuickDelivery-Rider-Partner.apk ($sizeMb)</div>
-              <div style="font-size:12px;color:#94A3B8;margin-top:4px;">Sirf 1 App Install Hoga (QD Rider Partner) • Order Accept, Pickup/Drop OTP & Earnings</div>
+              <div style="font-weight:800;font-size:16px;color:#FCD34D;">🛵 2. Partner Quick Delivery — QuickDelivery-Rider-Partner.apk ($sizeMb)</div>
+              <div style="font-size:12px;color:#94A3B8;margin-top:4px;">Sirf 1 App Install Hoga (Partner Quick Delivery) • Order Accept, Pickup/Drop OTP & Earnings</div>
               <a class="btn" style="background:#D97706;color:#FFFFFF;" href="/apks/QuickDelivery-Rider-Partner.apk" download="QuickDelivery-Rider-Partner.apk">
                 📥 Download Only Rider-Partner.apk
               </a>

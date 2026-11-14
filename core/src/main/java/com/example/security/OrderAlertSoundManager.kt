@@ -59,7 +59,7 @@ data class AlertCapabilityStatus(
  */
 object OrderAlertSoundManager {
     private const val CHANNEL_ID_RIDER_ALARM = "quick_delivery_rider_order_alarm_v2"
-    private const val CHANNEL_ID_CUSTOMER_UPDATES = "quick_delivery_customer_updates_v2"
+    private const val CHANNEL_ID_CUSTOMER_UPDATES = "quick_delivery_customer_updates_silent_v3"
     private const val CHANNEL_ID_ADMIN_SECURITY_SIREN = "quick_delivery_admin_security_siren_v2"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -181,9 +181,11 @@ object OrderAlertSoundManager {
             val custChannel = NotificationChannel(
                 CHANNEL_ID_CUSTOMER_UPDATES,
                 "Delivery Updates",
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Live delivery status notifications."
+                description = "Silent delivery status notifications."
+                setSound(null, null)
+                enableVibration(false)
             }
             val adminChannel = NotificationChannel(
                 CHANNEL_ID_ADMIN_SECURITY_SIREN,
@@ -269,6 +271,18 @@ object OrderAlertSoundManager {
     fun startLoudOrderAlert(context: Context, orderId: String) {
         if (orderId.isBlank() || handledOrMutedOrderIds.contains(orderId)) return
         val appCtx = context.applicationContext ?: context
+        val pkg = appCtx.packageName.lowercase()
+        val lockedRole = com.example.data.cloud.MultiPhoneLiveSyncManager.lockedPhoneRole.value.uppercase()
+        if (lockedRole == "CUSTOMER" ||
+            lockedRole == "ADMIN" ||
+            pkg.endsWith(".cust01") ||
+            pkg.endsWith(".customer") ||
+            pkg.endsWith(".admn03") ||
+            pkg.endsWith(".admin")
+        ) {
+            stopOrderAlert()
+            return
+        }
         appContextRef = appCtx
         _activeRingingOrderId.value = orderId
 
@@ -402,7 +416,8 @@ object OrderAlertSoundManager {
                 .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-                .setPriority(if (urgent) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+                .setPriority(if (urgent) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
+                .setSilent(!urgent)
                 .setAutoCancel(true)
             nm.notify(notificationId, builder.build())
         }

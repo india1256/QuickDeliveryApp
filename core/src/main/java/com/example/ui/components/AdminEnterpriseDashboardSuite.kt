@@ -63,6 +63,7 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -80,6 +81,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -111,6 +113,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.cloud.MultiPhoneLiveSyncManager
+import com.example.data.cloud.QuickDeliveryOperationsManager
+import com.example.data.cloud.RiderRegistrationApprovalManager
+import com.example.data.cloud.WithdrawalStatus
 import com.example.data.delivery.AdminVehicleAndWeightPolicy
 import com.example.data.delivery.AutomatedFairRiderAssignmentEngine
 import com.example.data.model.CustomerOrder
@@ -252,9 +258,15 @@ fun QuickDeliveryEnterpriseAdminSuite(
     var hasSensitivePiiPermission by remember { mutableStateOf(true) }
     var adminPermissionBanner by remember { mutableStateOf<String?>(null) }
 
-    // Filter orders & riders by Global City Filter, Date Range, and Global Search
+    // Filter orders & riders by Dynamic City/Area Filter, Date Range, and Global Search
     val cityOptions = remember(orders) {
-        listOf("All Cities", "Bengaluru", "Indiranagar", "Koramangala", "Whitefield", "HSR Layout", "MG Road")
+        val dynamicAreas = orders.mapNotNull { order ->
+            val parts = order.pickupAddress.fullAddress.split(",")
+                .map { it.trim() }
+                .filter { it.length in 3..24 && !it.all(Char::isDigit) }
+            parts.lastOrNull() ?: parts.firstOrNull()
+        }.distinct().take(6)
+        listOf("All Cities") + dynamicAreas
     }
     val dateRangeOptions = remember {
         listOf("Today", "Last 7 Days", "Last 30 Days", "Custom Range", "All Time")
@@ -263,7 +275,6 @@ fun QuickDeliveryEnterpriseAdminSuite(
     val filteredOrdersByGlobal = remember(orders, selectedCityFilter, selectedDateRange, globalSearchQuery) {
         orders.filter { order ->
             val matchesCity = selectedCityFilter == "All Cities" ||
-                selectedCityFilter == "Bengaluru" ||
                 order.pickupAddress.fullAddress.contains(selectedCityFilter, ignoreCase = true) ||
                 order.dropAddress.fullAddress.contains(selectedCityFilter, ignoreCase = true)
 
@@ -619,19 +630,19 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                 }
                             }
 
-                            // Auto-Pilot Status Pill
+                            // Live Cloud Sync Pill
                             Surface(
-                                color = if (isAutoPilotEnabled) DashEmerald.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f),
+                                color = DashEmerald.copy(alpha = 0.25f),
                                 shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, if (isAutoPilotEnabled) DashEmerald else Color.White.copy(alpha = 0.3f)),
-                                onClick = { onToggleAutoPilot(!isAutoPilotEnabled) },
+                                border = BorderStroke(1.dp, DashEmerald),
+                                onClick = { onSpawnNewLiveOrder() },
                                 modifier = Modifier.testTag("admin_header_autopilot_badge")
                             ) {
                                 Text(
-                                    text = if (isAutoPilotEnabled) "⚡ AUTO ON" else "⏸ PAUSED",
+                                    text = "🔄 Sync Live",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = if (isAutoPilotEnabled) SidebarMintText else Color.White,
+                                    color = SidebarMintText,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
                                 )
                             }
@@ -1496,6 +1507,7 @@ private fun EnterpriseDashboardOverviewPage(
         item(key = "dashboard_live_dispatch_cards") {
             DashboardEnterpriseDispatchCardsSection(
                 orders = filteredRecentOrders.take(5),
+                riders = riders,
                 tipsByOrder = tipsByOrder,
                 hasSensitivePiiPermission = hasSensitivePiiPermission,
                 repository = repository,
@@ -1904,6 +1916,7 @@ private fun OrderStageProgressBar(
 @Composable
 private fun DashboardEnterpriseDispatchCardsSection(
     orders: List<CustomerOrder>,
+    riders: List<RiderProfile>,
     tipsByOrder: Map<String, Int>,
     hasSensitivePiiPermission: Boolean,
     repository: SharedOrderRepository,
@@ -1912,6 +1925,115 @@ private fun DashboardEnterpriseDispatchCardsSection(
     onSpawnNewLiveOrder: () -> Unit,
     onViewAllOrders: () -> Unit
 ) {
+    var orderToReassign by remember { mutableStateOf<CustomerOrder?>(null) }
+    var orderToForceCancel by remember { mutableStateOf<CustomerOrder?>(null) }
+    var cancelReasonText by remember { mutableStateOf("Cancelled by Admin Dispatch Control") }
+
+    orderToReassign?.let { targetOrder ->
+        AlertDialog(
+            onDismissRequest = { orderToReassign = null },
+            title = { Text("Reassign Order #${targetOrder.orderId}", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Select an available partner to assign this delivery:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF475569)
+                    )
+                    if (riders.isEmpty()) {
+                        Text("No riders registered yet.", style = MaterialTheme.typography.bodySmall, color = DashCrimson)
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            riders.forEach { r ->
+                                Surface(
+                                    color = if (r.isOnline) Color(0xFFECFDF5) else Color(0xFFF8FAFC),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, if (r.isOnline) DashEmerald else Color(0xFFCBD5E1)),
+                                    onClick = {
+                                        QuickDeliveryOperationsManager.reassignOrderToRider(
+                                            context = context,
+                                            repository = repository,
+                                            orderId = targetOrder.orderId,
+                                            targetRider = r
+                                        )
+                                        orderToReassign = null
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("${r.name} (${r.riderId})", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                            Text("${r.vehicleType.title} • ${r.vehicleNumber} • ${if (r.isOnline) "ONLINE" else "OFFLINE"}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                        }
+                                        Text("Assign", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold, color = SidebarActiveTeal)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { orderToReassign = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    orderToForceCancel?.let { targetOrder ->
+        AlertDialog(
+            onDismissRequest = { orderToForceCancel = null },
+            title = { Text("Force Cancel #${targetOrder.orderId}?", fontWeight = FontWeight.ExtraBold, color = DashCrimson) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "This immediately cancels the active delivery and syncs across Customer & Rider apps.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = cancelReasonText,
+                        onValueChange = { cancelReasonText = it },
+                        label = { Text("Cancellation Reason") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        QuickDeliveryOperationsManager.cancelOrderWithReason(
+                            context = context,
+                            repository = repository,
+                            orderId = targetOrder.orderId,
+                            reason = cancelReasonText,
+                            cancelledByRole = "Admin"
+                        )
+                        orderToForceCancel = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DashCrimson)
+                ) {
+                    Text("Force Cancel", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { orderToForceCancel = null }) {
+                    Text("Keep Active")
+                }
+            }
+        )
+    }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -1944,13 +2066,6 @@ private fun DashboardEnterpriseDispatchCardsSection(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(
-                        onClick = onSpawnNewLiveOrder,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Text("+ Spawn Order", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                    }
                     Button(
                         onClick = onViewAllOrders,
                         colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
@@ -2132,56 +2247,73 @@ private fun DashboardEnterpriseDispatchCardsSection(
                             }
 
                             if (order.orderStatus != OrderStatus.DELIVERED && order.orderStatus != OrderStatus.CANCELLED) {
-                                Button(
-                                    onClick = {
-                                        when (order.orderStatus) {
-                                            OrderStatus.SEARCHING_RIDER -> {
-                                                AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
-                                                AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
-                                                    repository = repository,
-                                                    orderId = order.orderId
-                                                )
-                                                val updatedOrder = repository.orders.value.firstOrNull { it.orderId == order.orderId } ?: order
-                                                FcmOrderNotificationManager.dispatchOrderStatusPair(
-                                                    context = context,
-                                                    order = updatedOrder,
-                                                    postToSystemTray = true
-                                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedButton(
+                                        onClick = { orderToReassign = order },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("🔄 Reassign", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { orderToForceCancel = order },
+                                        border = BorderStroke(1.dp, DashCrimson),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("✕ Cancel", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = DashCrimson)
+                                    }
+                                    Button(
+                                        onClick = {
+                                            when (order.orderStatus) {
+                                                OrderStatus.SEARCHING_RIDER -> {
+                                                    AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
+                                                    AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
+                                                        repository = repository,
+                                                        orderId = order.orderId
+                                                    )
+                                                    val updatedOrder = repository.orders.value.firstOrNull { it.orderId == order.orderId } ?: order
+                                                    FcmOrderNotificationManager.dispatchOrderStatusPair(
+                                                        context = context,
+                                                        order = updatedOrder,
+                                                        postToSystemTray = true
+                                                    )
+                                                }
+                                                OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP -> {
+                                                    repository.verifyPickupOtpByRider(order.orderId, order.pickupOtp, order.assignedRiderId)
+                                                    val updatedOrder = repository.orders.value.firstOrNull { it.orderId == order.orderId } ?: order
+                                                    FcmOrderNotificationManager.dispatchOrderStatusPair(
+                                                        context = context,
+                                                        order = updatedOrder,
+                                                        postToSystemTray = true
+                                                    )
+                                                }
+                                                OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> {
+                                                    repository.verifyDeliveryOtpByRider(order.orderId, order.deliveryOtp, order.assignedRiderId)
+                                                    val delivered = order.copy(orderStatus = OrderStatus.DELIVERED)
+                                                    MotivationAndPromoManager.notifySuccessfulDeliveryMotivationForBoth(
+                                                        order = delivered,
+                                                        forceTrigger = true
+                                                    )
+                                                    FcmOrderNotificationManager.dispatchOrderStatusPair(
+                                                        context = context,
+                                                        order = delivered,
+                                                        postToSystemTray = true
+                                                    )
+                                                }
+                                                else -> onExecuteAutoStepNow()
                                             }
-                                            OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP -> {
-                                                repository.verifyPickupOtpByRider(order.orderId, order.pickupOtp, order.assignedRiderId)
-                                                val updatedOrder = repository.orders.value.firstOrNull { it.orderId == order.orderId } ?: order
-                                                FcmOrderNotificationManager.dispatchOrderStatusPair(
-                                                    context = context,
-                                                    order = updatedOrder,
-                                                    postToSystemTray = true
-                                                )
-                                            }
-                                            OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> {
-                                                repository.verifyDeliveryOtpByRider(order.orderId, order.deliveryOtp, order.assignedRiderId)
-                                                val delivered = order.copy(orderStatus = OrderStatus.DELIVERED)
-                                                MotivationAndPromoManager.notifySuccessfulDeliveryMotivationForBoth(
-                                                    order = delivered,
-                                                    forceTrigger = true
-                                                )
-                                                FcmOrderNotificationManager.dispatchOrderStatusPair(
-                                                    context = context,
-                                                    order = delivered,
-                                                    postToSystemTray = true
-                                                )
-                                            }
-                                            else -> onExecuteAutoStepNow()
-                                        }
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(30.dp)
-                                ) {
-                                    Text(
-                                        text = "⚡ Advance",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text(
+                                            text = "⚡ Advance",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2245,7 +2377,7 @@ private fun DashboardLiveOrdersRidersMapCard(
                         color = Color.White
                     )
                     Text(
-                        text = "${onlineRiders.size} Online Riders • ${activeOrders.size} Active Delivery Routes • Auto-Pilot ${if (isAutoPilotEnabled) "ON" else "MANUAL"}",
+                        text = "${onlineRiders.size} Online Riders • ${activeOrders.size} Active Delivery Routes • Live Sync Active",
                         style = MaterialTheme.typography.labelSmall,
                         color = SidebarMintText
                     )
@@ -2263,15 +2395,6 @@ private fun DashboardLiveOrdersRidersMapCard(
                     ) {
                         Text("Full Map →", style = MaterialTheme.typography.labelSmall, color = Color.White)
                     }
-                    Switch(
-                        checked = isAutoPilotEnabled,
-                        onCheckedChange = onToggleAutoPilot,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = DashEmerald
-                        ),
-                        modifier = Modifier.testTag("admin_autopilot_switch")
-                    )
                 }
             }
 
@@ -2370,7 +2493,7 @@ private fun DashboardLiveOrdersRidersMapCard(
                         .testTag("admin_spawn_auto_order_btn")
                 ) {
                     Text(
-                        text = "➕ Auto-Dispatch New Order",
+                        text = "🔄 Sync Cloud Orders",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White
@@ -2539,6 +2662,111 @@ private fun EnterpriseOrdersPage(
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     var statusFilter by remember { mutableStateOf("ALL") }
+    var orderToReassign by remember { mutableStateOf<CustomerOrder?>(null) }
+    var orderToForceCancel by remember { mutableStateOf<CustomerOrder?>(null) }
+    var cancelReasonText by remember { mutableStateOf("Cancelled by Admin Orders Desk") }
+
+    orderToReassign?.let { targetOrder ->
+        AlertDialog(
+            onDismissRequest = { orderToReassign = null },
+            title = { Text("Reassign Order #${targetOrder.orderId}", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Choose a registered partner to assign this active delivery:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF475569)
+                    )
+                    if (riders.isEmpty()) {
+                        Text("No riders available.", style = MaterialTheme.typography.bodySmall, color = DashCrimson)
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            riders.forEach { r ->
+                                Surface(
+                                    color = if (r.isOnline) Color(0xFFECFDF5) else Color(0xFFF8FAFC),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, if (r.isOnline) DashEmerald else Color(0xFFCBD5E1)),
+                                    onClick = {
+                                        QuickDeliveryOperationsManager.reassignOrderToRider(
+                                            context = context,
+                                            repository = repository,
+                                            orderId = targetOrder.orderId,
+                                            targetRider = r
+                                        )
+                                        orderToReassign = null
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("${r.name} (${r.riderId})", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                            Text("${r.vehicleType.title} • ${r.vehicleNumber} • ${if (r.isOnline) "ONLINE" else "OFFLINE"}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                        }
+                                        Text("Assign", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold, color = SidebarActiveTeal)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { orderToReassign = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    orderToForceCancel?.let { targetOrder ->
+        AlertDialog(
+            onDismissRequest = { orderToForceCancel = null },
+            title = { Text("Force Cancel #${targetOrder.orderId}?", fontWeight = FontWeight.ExtraBold, color = DashCrimson) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("This immediately cancels the order and updates Customer & Rider apps.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = cancelReasonText,
+                        onValueChange = { cancelReasonText = it },
+                        label = { Text("Cancellation Reason") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        QuickDeliveryOperationsManager.cancelOrderWithReason(
+                            context = context,
+                            repository = repository,
+                            orderId = targetOrder.orderId,
+                            reason = cancelReasonText,
+                            cancelledByRole = "Admin"
+                        )
+                        orderToForceCancel = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DashCrimson)
+                ) {
+                    Text("Force Cancel", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { orderToForceCancel = null }) {
+                    Text("Keep Active")
+                }
+            }
+        )
+    }
 
     val filteredOrders = remember(orders, searchQuery, statusFilter) {
         orders.filter { o ->
@@ -2592,7 +2820,7 @@ private fun EnterpriseOrdersPage(
                 o.customerName,
                 maskPhoneForAdmin(o.customerPhone, hasSensitivePiiPermission),
                 o.assignedRiderName ?: "Searching Rider",
-                maskPhoneForAdmin(o.assignedRiderPhone ?: "+91 98450 67890", hasSensitivePiiPermission),
+                o.assignedRiderPhone?.let { maskPhoneForAdmin(it, hasSensitivePiiPermission) } ?: "Unassigned",
                 o.vehicleType.title,
                 "${o.packageDetails.weightKg} kg",
                 String.format(Locale.US, "%.1f km", o.distanceKm),
@@ -2652,7 +2880,7 @@ private fun EnterpriseOrdersPage(
                             onClick = onSpawnNewLiveOrder,
                             colors = ButtonDefaults.buttonColors(containerColor = DashOrange)
                         ) {
-                            Text("➕ New Order", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text("🔄 Sync Live", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -2739,8 +2967,21 @@ private fun EnterpriseOrdersPage(
                     if (order.orderStatus != OrderStatus.DELIVERED && order.orderStatus != OrderStatus.CANCELLED) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            OutlinedButton(
+                                onClick = { orderToReassign = order },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text("🔄 Reassign", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = { orderToForceCancel = order },
+                                border = BorderStroke(1.dp, DashCrimson),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text("✕ Cancel", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = DashCrimson)
+                            }
                             Button(
                                 onClick = {
                                     when (order.orderStatus) {
@@ -2786,7 +3027,7 @@ private fun EnterpriseOrdersPage(
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Text(
-                                    text = "⚡ Advance Status (${order.orderStatus.name} → Next)",
+                                    text = "⚡ Advance",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold
                                 )
@@ -3343,81 +3584,35 @@ private fun EnterpriseCustomersPage(
 
     val customerDirectory = remember(orders, tipsByOrder) {
         val list = mutableListOf<CustomerDirectoryRow>()
-        val activeName = MotivationAndPromoManager.cachedCustomerName.ifBlank { "Aarav Sharma" }
-        val activePhone = MotivationAndPromoManager.cachedCustomerPhone.ifBlank { "+91 98765 43210" }
-        val activeEmail = MotivationAndPromoManager.cachedCustomerEmail.ifBlank { "aarav.sharma@quickdelivery.in" }
-
-        val grouped = orders.groupBy { it.customerPhone.removePrefix("+91").trim() }
-        val primaryClean = activePhone.removePrefix("+91").trim()
-        val primaryOrders = grouped[primaryClean] ?: orders
-        val firstOrd = primaryOrders.firstOrNull()
-        val primarySpend = primaryOrders.filter { it.orderStatus != OrderStatus.CANCELLED }
-            .sumOf { parseOrderFareDouble(it.totalAmount) }
-        val primaryTips = primaryOrders.sumOf { tipsByOrder[it.orderId] ?: 0 }
-
-        list.add(
-            CustomerDirectoryRow(
-                customerId = firstOrd?.customerId ?: "CUST-1001",
-                name = activeName,
-                phone = "+91 $primaryClean",
-                email = activeEmail,
-                pickupAddress = firstOrd?.pickupAddress?.fullAddress ?: "Indiranagar 100ft Road, Bengaluru - 560038",
-                dropAddress = firstOrd?.dropAddress?.fullAddress ?: "Koramangala 4th Block, Bengaluru - 560034",
-                orderCount = primaryOrders.size,
-                totalSpendInr = primarySpend,
-                tipsInr = primaryTips,
-                paymentPreference = "UPI / Prepaid & COD"
-            )
-        )
+        val grouped = orders.groupBy { it.customerPhone.removePrefix("+91").trim().ifBlank { it.customerId } }
 
         grouped.forEach { (phoneClean, custOrders) ->
-            if (phoneClean != primaryClean && custOrders.isNotEmpty()) {
+            if (custOrders.isNotEmpty()) {
                 val sample = custOrders.first()
+                val displayPhone = if (phoneClean.all(Char::isDigit) && phoneClean.length >= 10) "+91 $phoneClean" else sample.customerPhone.ifBlank { "Not Provided" }
+                val activeCachedPhone = MotivationAndPromoManager.cachedCustomerPhone.removePrefix("+91").trim()
+                val emailValue = if (activeCachedPhone.isNotBlank() && activeCachedPhone == phoneClean && MotivationAndPromoManager.cachedCustomerEmail.isNotBlank()) {
+                    MotivationAndPromoManager.cachedCustomerEmail
+                } else {
+                    "Not Shared"
+                }
                 list.add(
                     CustomerDirectoryRow(
                         customerId = sample.customerId,
-                        name = sample.customerName,
-                        phone = "+91 $phoneClean",
-                        email = "${sample.customerName.lowercase(Locale.US).replace(" ", ".")}@quickdelivery.in",
+                        name = sample.customerName.ifBlank { "Customer" },
+                        phone = displayPhone,
+                        email = emailValue,
                         pickupAddress = sample.pickupAddress.fullAddress,
                         dropAddress = sample.dropAddress.fullAddress,
                         orderCount = custOrders.size,
-                        totalSpendInr = custOrders.sumOf { parseOrderFareDouble(it.totalAmount) },
+                        totalSpendInr = custOrders.filter { it.orderStatus != OrderStatus.CANCELLED }
+                            .sumOf { parseOrderFareDouble(it.totalAmount) },
                         tipsInr = custOrders.sumOf { tipsByOrder[it.orderId] ?: 0 },
                         paymentPreference = sample.paymentMethod.name.replace("_", " ")
                     )
                 )
             }
         }
-
-        list.add(
-            CustomerDirectoryRow(
-                customerId = "CUST-1002",
-                name = "Priya Nair",
-                phone = "+91 98450 22334",
-                email = "priya.nair@quickdelivery.in",
-                pickupAddress = "Villa 14, Palm Meadows, Whitefield Main Rd, Bengaluru - 560066",
-                dropAddress = "Tower B, RMZ EcoWorld, Bellandur, Bengaluru - 560103",
-                orderCount = 4,
-                totalSpendInr = 860.0,
-                tipsInr = 50,
-                paymentPreference = "UPI Prepaid"
-            )
-        )
-        list.add(
-            CustomerDirectoryRow(
-                customerId = "CUST-1003",
-                name = "Rohan Deshmukh",
-                phone = "+91 98201 55667",
-                email = "rohan.deshmukh@quickdelivery.in",
-                pickupAddress = "18th Cross, Malleshwaram, Bengaluru - 560003",
-                dropAddress = "MG Road Metro Plaza, Bengaluru - 560001",
-                orderCount = 3,
-                totalSpendInr = 640.0,
-                tipsInr = 30,
-                paymentPreference = "Card / UPI"
-            )
-        )
         list
     }
 
@@ -3504,6 +3699,24 @@ private fun EnterpriseCustomersPage(
             )
         }
 
+        if (filteredCustomers.isEmpty()) {
+            item(key = "customers_empty_state") {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "No customer records yet — live customer details appear automatically once real orders are placed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF475569),
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            }
+        }
+
         items(filteredCustomers, key = { it.customerId }) { cust ->
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -3584,6 +3797,9 @@ private fun EnterpriseKycPage(
     cityFilterLabel: String,
     isLoading: Boolean
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { RiderRegistrationApprovalManager.ensureLoaded(context) }
+    val regRecords by RiderRegistrationApprovalManager.registrationsByKey.collectAsState()
     var kycSearch by remember { mutableStateOf("") }
     var kycFilter by remember { mutableStateOf("ALL") }
     var statusBanner by remember { mutableStateOf<String?>(null) }
@@ -3765,7 +3981,32 @@ private fun EnterpriseKycPage(
                         }
                         OutlinedButton(
                             onClick = {
-                                statusBanner = "🔄 Triggered instant UIDAI Aadhaar & NSDL PAN re-verification for ${rider.name}"
+                                val updated = riders.map {
+                                    if (it.riderId == rider.riderId) {
+                                        it.copy(
+                                            verificationStatus = RiderVerificationStatus.PENDING,
+                                            accountStatus = "RE_KYC_REQUIRED",
+                                            isOnline = false
+                                        )
+                                    } else {
+                                        it
+                                    }
+                                }
+                                AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, updated)
+                                val matchingReg = regRecords.values.firstOrNull {
+                                    it.riderId == rider.riderId ||
+                                        (rider.mobile.isNotBlank() && it.phone == rider.mobile.filter(Char::isDigit).takeLast(10))
+                                }
+                                if (matchingReg != null) {
+                                    RiderRegistrationApprovalManager.rejectRiderByAdmin(
+                                        context = context,
+                                        riderKey = matchingReg.riderKey,
+                                        reason = "Admin requested fresh e-KYC document verification.",
+                                        rejectedDocFields = listOf("AADHAAR", "PAN", "DL", "RC", "SELFIE")
+                                    )
+                                }
+                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                statusBanner = "🔄 Flagged ${rider.name} (${rider.riderId}) for Re-KYC verification and paused duty until re-approved."
                             },
                             modifier = Modifier.weight(1f)
                         ) {
@@ -3796,6 +4037,9 @@ private fun EnterprisePaymentsSettlementsPage(
     cityFilterLabel: String,
     isLoading: Boolean
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { QuickDeliveryOperationsManager.ensureLoaded(context) }
+    val withdrawalRequests by QuickDeliveryOperationsManager.withdrawalRequests.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var paymentFilter by remember { mutableStateOf("ALL") }
     var settlementNotice by remember { mutableStateOf<String?>(null) }
@@ -3838,7 +4082,7 @@ private fun EnterprisePaymentsSettlementsPage(
                 o.totalAmount,
                 String.format(Locale.US, "₹%.0f", earn80),
                 String.format(Locale.US, "₹%.0f", comm20),
-                maskDocForAdmin("UPI: partner@okaxis", hasSensitivePiiPermission),
+                riders.firstOrNull { it.riderId == o.assignedRiderId }?.verifiedUpiId?.takeIf { it.isNotBlank() }?.let { maskDocForAdmin(it, hasSensitivePiiPermission) } ?: "Not Linked",
                 if (o.orderStatus == OrderStatus.DELIVERED) "SETTLED" else "IN_ESCROW",
                 o.createdAt
             )
@@ -3931,6 +4175,126 @@ private fun EnterprisePaymentsSettlementsPage(
             }
         }
 
+        // Rider Payout Withdrawal Requests Queue
+        item(key = "payments_withdrawal_requests_card") {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.5.dp, SidebarActiveTeal),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val pendingWithdrawals = withdrawalRequests.count { it.status == WithdrawalStatus.PENDING }
+                    Text(
+                        text = "💸 Rider Payout Withdrawal Requests ($pendingWithdrawals Pending)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = SidebarDarkTeal
+                    )
+                    if (withdrawalRequests.isEmpty()) {
+                        Text(
+                            text = "No rider payout withdrawal requests submitted yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF64748B)
+                        )
+                    } else {
+                        withdrawalRequests.take(10).forEach { req ->
+                            Surface(
+                                color = Color(0xFFF8FAFC),
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "${req.riderName} (${req.riderId}) • ₹${String.format(Locale.US, "%.0f", req.amountInr)}",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = DashNavy
+                                            )
+                                            Text(
+                                                text = "UPI/Bank: ${req.payoutDestination} • ${req.createdAtLabel}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFF475569)
+                                            )
+                                        }
+                                        Surface(
+                                            color = when (req.status) {
+                                                WithdrawalStatus.PAID -> Color(0xFFECFDF5)
+                                                WithdrawalStatus.REJECTED -> Color(0xFFFEF2F2)
+                                                WithdrawalStatus.PENDING -> Color(0xFFFFF7ED)
+                                            },
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = req.status.name,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = when (req.status) {
+                                                    WithdrawalStatus.PAID -> DashEmerald
+                                                    WithdrawalStatus.REJECTED -> DashCrimson
+                                                    WithdrawalStatus.PENDING -> DashOrange
+                                                },
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
+                                    if (req.status == WithdrawalStatus.PENDING) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Button(
+                                                onClick = {
+                                                    QuickDeliveryOperationsManager.updateWithdrawalStatusByAdmin(
+                                                        context = context,
+                                                        requestId = req.requestId,
+                                                        status = WithdrawalStatus.PAID,
+                                                        note = "Paid to ${req.payoutDestination}"
+                                                    )
+                                                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                                    settlementNotice = "✅ Approved & marked PAID: ₹${String.format(Locale.US, "%.0f", req.amountInr)} to ${req.riderName} (${req.payoutDestination})"
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = DashEmerald),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text("✓ Approve & Mark Paid", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                            }
+                                            OutlinedButton(
+                                                onClick = {
+                                                    QuickDeliveryOperationsManager.updateWithdrawalStatusByAdmin(
+                                                        context = context,
+                                                        requestId = req.requestId,
+                                                        status = WithdrawalStatus.REJECTED,
+                                                        note = "Verification mismatch — contact Admin support"
+                                                    )
+                                                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                                    settlementNotice = "❌ Rejected withdrawal ${req.requestId} for ${req.riderName}"
+                                                },
+                                                border = BorderStroke(1.dp, DashCrimson),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text("✕ Reject", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = DashCrimson)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Paginated Payments & Settlements Table with .xlsx Export
         item(key = "payments_paginated_xlsx_table") {
             AdminEnterprisePaginatedTableCard(
@@ -4002,11 +4366,12 @@ private fun EnterprisePaymentsSettlementsPage(
                     Button(
                         onClick = {
                             repository.setRiderCommissionDebt(rider.riderId, 0.0)
-                            settlementNotice = "✅ Settled payout & cleared COD commission debt for ${rider.name} (${vault.upiId})"
+                            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                            settlementNotice = "✅ Cleared COD commission debt for ${rider.name} (${vault.upiId})"
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal)
                     ) {
-                        Text("Settle Payout", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        Text("Mark COD Settled", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -4296,6 +4661,8 @@ private fun EnterpriseComplaintsAndSosPage(
     batteryState: RiderBatteryPowerState
 ) {
     val context = LocalContext.current
+    LaunchedEffect(Unit) { QuickDeliveryOperationsManager.ensureLoaded(context) }
+    val supportTickets by QuickDeliveryOperationsManager.supportTickets.collectAsState()
     val unresolvedCount = sosAlerts.count { !it.isResolved }
 
     LazyColumn(
@@ -4402,6 +4769,101 @@ private fun EnterpriseComplaintsAndSosPage(
                                             fontWeight = FontWeight.ExtraBold,
                                             color = DashEmerald
                                         )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Customer & Rider In-App Support Tickets Queue
+        item(key = "complaints_support_tickets_card") {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.5.dp, SidebarActiveTeal),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    val openTickets = supportTickets.count { !it.isResolved }
+                    Text(
+                        text = "🎧 Customer & Rider Helpdesk Tickets ($openTickets Open)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = SidebarDarkTeal
+                    )
+                    if (supportTickets.isEmpty()) {
+                        Text(
+                            text = "No support tickets filed yet. Tickets submitted from Customer or Rider Help screens appear here.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF64748B)
+                        )
+                    } else {
+                        supportTickets.forEach { ticket ->
+                            var replyDraft by remember(ticket.ticketId) {
+                                mutableStateOf(ticket.adminReply.ifBlank { "Issue checked & resolved by Quick Delivery Support." })
+                            }
+                            Surface(
+                                color = if (ticket.isResolved) Color(0xFFF8FAFC) else Color(0xFFFFFBEB),
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, if (ticket.isResolved) Color(0xFFCBD5E1) else DashGold),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${ticket.ticketId} • ${ticket.senderRole}: ${ticket.senderName}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = DashNavy
+                                        )
+                                        Text(
+                                            text = if (ticket.isResolved) "✓ RESOLVED" else ticket.category,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (ticket.isResolved) DashEmerald else DashOrange
+                                        )
+                                    }
+                                    if (ticket.orderId.isNotBlank()) {
+                                        Text("Order #${ticket.orderId} • ${ticket.createdAtLabel}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                    }
+                                    Text(ticket.message, style = MaterialTheme.typography.bodySmall, color = DashNavy)
+                                    if (!ticket.isResolved) {
+                                        OutlinedTextField(
+                                            value = replyDraft,
+                                            onValueChange = { replyDraft = it },
+                                            label = { Text("Admin Reply to ${ticket.senderRole}") },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        Button(
+                                            onClick = {
+                                                QuickDeliveryOperationsManager.resolveSupportTicketByAdmin(
+                                                    context = context,
+                                                    ticketId = ticket.ticketId,
+                                                    adminReply = replyDraft
+                                                )
+                                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = DashEmerald),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("✓ Resolve Ticket & Send Reply", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                        }
+                                    } else if (ticket.adminReply.isNotBlank()) {
+                                        Text("Admin Reply: ${ticket.adminReply}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = Color(0xFF065F46))
                                     }
                                 }
                             }
@@ -4871,6 +5333,11 @@ private fun EnterpriseSettingsPage(
             )
         }
 
+        // 2B. Dynamic Customer Promo Coupon Manager (Synced Live to Customer Checkout)
+        item(key = "settings_promo_coupon_manager") {
+            AdminPromoCouponManagerCard()
+        }
+
         // 3. System Automation, Safety Guards & Administrative Actions
         item(key = "settings_system_guards_and_reset") {
             Card(
@@ -4925,13 +5392,13 @@ private fun EnterpriseSettingsPage(
                             colors = ButtonDefaults.buttonColors(containerColor = DashCrimson),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Reset Orders & State", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text("Clear Orders Archive", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
                         OutlinedButton(
                             onClick = onExitToCustomer,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Exit to Customer App", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text("Sign Out Admin", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

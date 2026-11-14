@@ -58,6 +58,7 @@ data class RiderRegistrationRecord(
     val clarityScoresSummary: String = "",
     val approvalStatus: RiderApprovalWorkflowStatus = RiderApprovalWorkflowStatus.NEEDS_KYC,
     val rejectionReason: String = "",
+    val rejectedDocFields: List<String> = emptyList(),
     val submittedAtEpochMs: Long = 0L,
     val submittedAtLabel: String = "",
     val approvedAtEpochMs: Long = 0L,
@@ -88,6 +89,7 @@ data class RiderRegistrationRecord(
         put("clarityScoresSummary", clarityScoresSummary)
         put("approvalStatus", approvalStatus.name)
         put("rejectionReason", rejectionReason)
+        put("rejectedDocFields", JSONArray(rejectedDocFields))
         put("submittedAtEpochMs", submittedAtEpochMs)
         put("submittedAtLabel", submittedAtLabel)
         put("approvedAtEpochMs", approvedAtEpochMs)
@@ -127,6 +129,9 @@ data class RiderRegistrationRecord(
                 clarityScoresSummary = obj.optString("clarityScoresSummary", ""),
                 approvalStatus = RiderApprovalWorkflowStatus.fromString(obj.optString("approvalStatus")),
                 rejectionReason = obj.optString("rejectionReason", ""),
+                rejectedDocFields = obj.optJSONArray("rejectedDocFields")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { idx -> arr.optString(idx)?.takeIf { s -> s.isNotBlank() } }
+                } ?: emptyList(),
                 submittedAtEpochMs = obj.optLong("submittedAtEpochMs", 0L),
                 submittedAtLabel = obj.optString("submittedAtLabel", ""),
                 approvedAtEpochMs = obj.optLong("approvedAtEpochMs", 0L),
@@ -314,6 +319,7 @@ object RiderRegistrationApprovalManager {
                 clarityScoresSummary = clarityScoresSummary,
                 approvalStatus = RiderApprovalWorkflowStatus.PENDING_APPROVAL,
                 rejectionReason = "",
+                rejectedDocFields = emptyList(),
                 submittedAtEpochMs = now,
                 submittedAtLabel = label,
                 approvedAtEpochMs = 0L,
@@ -356,9 +362,14 @@ object RiderRegistrationApprovalManager {
     }
 
     /**
-     * Called from Admin Console App to reject a pending Rider with reason.
+     * Called from Admin Console App to reject a pending Rider with specific reason & rejected document slots.
      */
-    fun rejectRiderByAdmin(context: Context, riderKey: String, reason: String): RiderRegistrationRecord? {
+    fun rejectRiderByAdmin(
+        context: Context,
+        riderKey: String,
+        reason: String,
+        rejectedDocFields: List<String> = emptyList()
+    ): RiderRegistrationRecord? {
         ensureLoaded(context)
         val now = System.currentTimeMillis()
         synchronized(lock) {
@@ -366,6 +377,7 @@ object RiderRegistrationApprovalManager {
             val next = existing.copy(
                 approvalStatus = RiderApprovalWorkflowStatus.REJECTED,
                 rejectionReason = reason.trim().ifBlank { "Please upload clearer KYC document photos." },
+                rejectedDocFields = rejectedDocFields.distinct(),
                 reLoggedInAfterApproval = false,
                 updatedAtEpochMs = now
             )

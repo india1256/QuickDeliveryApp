@@ -282,7 +282,7 @@ object MotivationAndPromoManager {
         runCatching {
             val cleanRole = if (rolePrefix.trim().lowercase() == "rider") "rider" else "customer"
             val cleanName = QuickDeliverySecurityGuard.sanitizeText(name, 80).ifBlank {
-                if (cleanRole == "rider") "Vikram Singh" else "Aarav Sharma"
+                if (cleanRole == "rider") "Partner User" else "Customer User"
             }
             val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone).ifBlank { "9876543210" }
             val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email).ifBlank { "$cleanRole@quickdelivery.in" }
@@ -1166,7 +1166,11 @@ fun QuickDeliveryUserAuthScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "Quick Delivery • $roleTitle",
+                            text = if (prefsKeyPrefix == "rider") {
+                                "Partner Quick Delivery"
+                            } else {
+                                "Quick Delivery • $roleTitle"
+                            },
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF0D1B2A)

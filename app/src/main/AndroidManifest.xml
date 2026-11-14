@@ -64,7 +64,7 @@
             android:name=".RiderMainActivity"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
-            android:label="Quick Delivery Partner"
+            android:label="Partner Quick Delivery"
             android:theme="@style/Theme.MyApplication" />
         <activity
             android:name=".AdminMainActivity"

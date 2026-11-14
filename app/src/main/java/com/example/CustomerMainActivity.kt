@@ -3,7 +3,6 @@ package com.example
 import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -47,15 +46,14 @@ class CustomerMainActivity : ComponentActivity() {
         AppPermissionManager.installCrashPreventionGuard()
         QuickDeliveryFirebaseInitializer.ensureInitialized(this)
         OrderAlertSoundManager.ensureChannels(this)
+        OrderAlertSoundManager.stopOrderAlert()
         AppPermissionManager.inspectPermissions(this)
+        com.example.data.cloud.MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, "CUSTOMER")
         com.example.data.cloud.MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(this, "CUSTOMER")
         enableEdgeToEdge()
         setContent {
             QuickDeliveryTheme {
                 LocalizedContextProvider {
-                    BackHandler(enabled = true) {
-                        OrderAlertSoundManager.stopOrderAlert()
-                    }
                     QuickDeliveryCloudSyncBar(showCardUi = false)
                     Box(modifier = Modifier.fillMaxSize()) {
                         CustomerAppScreen()
