@@ -1,8 +1,14 @@
 package com.example.ui.components
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -19,6 +25,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,12 +48,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
@@ -57,7 +66,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -69,6 +81,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -76,6 +89,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -86,12 +103,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import com.example.ui.i18n.LanguageSwitcherPill
+import com.example.ui.i18n.rememberDynamicUiStrings
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
@@ -174,7 +197,7 @@ object MotivationAndPromoManager {
     @Volatile
     var riderIntroCompleted: Boolean = true
     @Volatile
-    var customerAuthenticatedInSession: Boolean = true
+    var customerAuthenticatedInSession: Boolean = false
     @Volatile
     var riderAuthenticatedInSession: Boolean = false
     @Volatile
@@ -225,6 +248,7 @@ object MotivationAndPromoManager {
                 ?: cachedCustomerEmail
             val custToken = prefs.getString("customer_session_token", null)
                 ?: customerBackup?.optString("sessionToken")?.takeIf { it.isNotBlank() }
+            val custLoggedInSaved = prefs.getBoolean("customer_logged_in", false)
             if (custToken == null || QuickDeliverySecurityGuard.verifyRoleSessionToken(
                     context = context,
                     token = custToken,
@@ -237,6 +261,9 @@ object MotivationAndPromoManager {
                 cachedCustomerName = QuickDeliverySecurityGuard.sanitizeText(rawCustName, 80)
                 cachedCustomerPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(rawCustPhone)
                 cachedCustomerEmail = QuickDeliverySecurityGuard.sanitizeEmail(rawCustEmail)
+                customerAuthenticatedInSession = custLoggedInSaved && (cachedCustomerPhone.isNotBlank() || cachedCustomerEmail.isNotBlank())
+            } else {
+                customerAuthenticatedInSession = false
             }
 
             val riderBackup = readBackupJsonFromPhoneStorage(context, "rider")
@@ -284,7 +311,9 @@ object MotivationAndPromoManager {
             val cleanName = QuickDeliverySecurityGuard.sanitizeText(name, 80).ifBlank {
                 if (cleanRole == "rider") "Partner User" else "Customer User"
             }
-            val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone).ifBlank { "9876543210" }
+            val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone).ifBlank {
+                if (cleanRole == "customer" && email.isNotBlank()) "" else "9876543210"
+            }
             val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email).ifBlank { "$cleanRole@quickdelivery.in" }
             val signedToken = QuickDeliverySecurityGuard.issueRoleSessionToken(
                 context = context,
@@ -1089,6 +1118,7 @@ fun QuickDeliveryUserAuthScreen(
     val prefs = remember(context) {
         context.getSharedPreferences("quick_delivery_user_auth_prefs", Context.MODE_PRIVATE)
     }
+    val uiStrings = rememberDynamicUiStrings()
 
     // Toggle between New User (Sign Up) and Old User (Sign In)
     val initialSignUp = remember(prefsKeyPrefix) {
@@ -1096,15 +1126,19 @@ fun QuickDeliveryUserAuthScreen(
     }
     var isNewUserSignUp by remember { mutableStateOf(initialSignUp) }
 
-    // New User Sign Up fields: Name, Mobile Number, Email ID
+    val hasSavedLoggedOutProfile = remember(prefsKeyPrefix) {
+        prefs.getBoolean("${prefsKeyPrefix}_logged_in", false)
+    }
+
+    // New User Sign Up fields start completely fresh unless already logged in
     var fullName by remember {
-        mutableStateOf(prefs.getString("${prefsKeyPrefix}_name", "") ?: "")
+        mutableStateOf(if (hasSavedLoggedOutProfile) prefs.getString("${prefsKeyPrefix}_name", "") ?: "" else "")
     }
     var mobileNumber by remember {
-        mutableStateOf(prefs.getString("${prefsKeyPrefix}_phone", "") ?: "")
+        mutableStateOf(if (hasSavedLoggedOutProfile) prefs.getString("${prefsKeyPrefix}_phone", "") ?: "" else "")
     }
     var emailId by remember {
-        mutableStateOf(prefs.getString("${prefsKeyPrefix}_email", "") ?: "")
+        mutableStateOf(if (hasSavedLoggedOutProfile) prefs.getString("${prefsKeyPrefix}_email", "") ?: "" else "")
     }
 
     // Old User Sign In field: Mobile Number OR Email ID
@@ -1114,13 +1148,28 @@ fun QuickDeliveryUserAuthScreen(
     var allowPhoneStoragePermission by remember {
         mutableStateOf(prefs.getBoolean("${prefsKeyPrefix}_storage_permission_granted", true))
     }
+    var acceptedPrivacyTerms by remember(prefsKeyPrefix, isNewUserSignUp) {
+        mutableStateOf(
+            if (isNewUserSignUp) false
+            else prefs.getBoolean("${prefsKeyPrefix}_privacy_terms_accepted", false)
+        )
+    }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
 
     if (showPrivacyPolicyDialog) {
         QuickDeliveryPrivacyPolicyDialog(
             context = context,
-            onDismiss = { showPrivacyPolicyDialog = false }
+            onDismiss = { showPrivacyPolicyDialog = false },
+            onAcceptAndAgree = {
+                acceptedPrivacyTerms = true
+                prefs.edit()
+                    .putBoolean("${prefsKeyPrefix}_privacy_terms_accepted", true)
+                    .putLong("${prefsKeyPrefix}_privacy_terms_accepted_at", System.currentTimeMillis())
+                    .apply()
+                errorMessage = null
+                showPrivacyPolicyDialog = false
+            }
         )
     }
 
@@ -1145,45 +1194,57 @@ fun QuickDeliveryUserAuthScreen(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        color = accentColor,
-                        shape = CircleShape,
-                        modifier = Modifier.size(42.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = if (prefsKeyPrefix == "rider") {
-                                    Icons.AutoMirrored.Filled.DirectionsBike
+                        Surface(
+                            color = accentColor,
+                            shape = CircleShape,
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (prefsKeyPrefix == "rider") {
+                                        Icons.AutoMirrored.Filled.DirectionsBike
+                                    } else {
+                                        Icons.Default.Person
+                                    },
+                                    contentDescription = null,
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = if (prefsKeyPrefix == "rider") {
+                                    "Partner Quick Delivery"
                                 } else {
-                                    Icons.Default.Person
+                                    "Quick Delivery • $roleTitle"
                                 },
-                                contentDescription = null,
-                                tint = Color.White
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF0D1B2A)
+                            )
+                            Text(
+                                text = if (isNewUserSignUp) {
+                                    String.format(uiStrings.createAccountSubtitle, roleTitle)
+                                } else {
+                                    String.format(uiStrings.signInSubtitle, roleTitle)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF475569)
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = if (prefsKeyPrefix == "rider") {
-                                "Partner Quick Delivery"
-                            } else {
-                                "Quick Delivery • $roleTitle"
-                            },
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF0D1B2A)
-                        )
-                        Text(
-                            text = if (isNewUserSignUp) {
-                                "Create your $roleTitle account with real details"
-                            } else {
-                                "Sign in to your registered $roleTitle account"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF475569)
-                        )
+                    if (prefsKeyPrefix == "customer") {
+                        LanguageSwitcherPill(accentColor = accentColor)
                     }
                 }
 
@@ -1217,7 +1278,7 @@ fun QuickDeliveryUserAuthScreen(
                             isNewUserSignUp = true
                             errorMessage = null
                         },
-                        label = { Text("New User • Sign Up") },
+                        label = { Text(uiStrings.newUserSignUpTab) },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("${prefsKeyPrefix}_tab_new_signup")
@@ -1228,7 +1289,7 @@ fun QuickDeliveryUserAuthScreen(
                             isNewUserSignUp = false
                             errorMessage = null
                         },
-                        label = { Text("Existing • Sign In") },
+                        label = { Text(uiStrings.existingSignInTab) },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("${prefsKeyPrefix}_tab_old_signin")
@@ -1243,8 +1304,8 @@ fun QuickDeliveryUserAuthScreen(
                             fullName = it
                             if (errorMessage != null) errorMessage = null
                         },
-                        label = { Text("Full Name *") },
-                        placeholder = { Text("Enter your full name") },
+                        label = { Text(uiStrings.fullNameLabel) },
+                        placeholder = { Text(uiStrings.fullNamePlaceholder) },
                         leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                         singleLine = true,
                         modifier = Modifier
@@ -1258,8 +1319,8 @@ fun QuickDeliveryUserAuthScreen(
                             if (it.length <= 10) mobileNumber = it.filter(Char::isDigit)
                             if (errorMessage != null) errorMessage = null
                         },
-                        label = { Text("Mobile Number (10 digits) *") },
-                        placeholder = { Text("Enter 10-digit mobile number") },
+                        label = { Text(uiStrings.mobileNumberLabel) },
+                        placeholder = { Text(uiStrings.mobileNumberPlaceholder) },
                         leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         singleLine = true,
@@ -1274,7 +1335,7 @@ fun QuickDeliveryUserAuthScreen(
                             emailId = it
                             if (errorMessage != null) errorMessage = null
                         },
-                        label = { Text("Email Address *") },
+                        label = { Text(uiStrings.emailAddressLabel) },
                         placeholder = { Text("name@example.com") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
@@ -1291,8 +1352,8 @@ fun QuickDeliveryUserAuthScreen(
                             existingMobileOrEmail = it
                             if (errorMessage != null) errorMessage = null
                         },
-                        label = { Text("Mobile Number or Email Address *") },
-                        placeholder = { Text("Registered 10-digit phone or email") },
+                        label = { Text(uiStrings.mobileOrEmailLabel) },
+                        placeholder = { Text(uiStrings.mobileOrEmailPlaceholder) },
                         leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
                         singleLine = true,
                         modifier = Modifier
@@ -1322,16 +1383,16 @@ fun QuickDeliveryUserAuthScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Keep Me Signed In",
+                                text = uiStrings.keepMeSignedIn,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF0D1B2A)
                             )
                             Text(
                                 text = if (allowPhoneStoragePermission) {
-                                    "Encrypted local session stays signed in on this device."
+                                    uiStrings.keepMeSignedInDescOn
                                 } else {
-                                    "Turn on to stay signed in on this device."
+                                    uiStrings.keepMeSignedInDescOff
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF475569)
@@ -1345,6 +1406,87 @@ fun QuickDeliveryUserAuthScreen(
                     }
                 }
 
+                // MANDATORY PRIVACY POLICY & TERMS CONSENT CHECKBOX — SHOWN ONLY ON NEW USER SIGN UP!
+                if (isNewUserSignUp) {
+                    Surface(
+                        color = if (acceptedPrivacyTerms) Color(0xFFECFDF5) else Color(0xFFFFF7ED),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(
+                            1.2.dp,
+                            if (acceptedPrivacyTerms) Color(0xFF10B981) else Color(0xFFF97316)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val next = !acceptedPrivacyTerms
+                                acceptedPrivacyTerms = next
+                                if (next) {
+                                    prefs.edit()
+                                        .putBoolean("${prefsKeyPrefix}_privacy_terms_accepted", true)
+                                        .putLong("${prefsKeyPrefix}_privacy_terms_accepted_at", System.currentTimeMillis())
+                                        .apply()
+                                    errorMessage = null
+                                }
+                            }
+                            .testTag("${prefsKeyPrefix}_privacy_terms_consent_box")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = acceptedPrivacyTerms,
+                                onCheckedChange = { checked ->
+                                    acceptedPrivacyTerms = checked
+                                    if (checked) {
+                                        prefs.edit()
+                                            .putBoolean("${prefsKeyPrefix}_privacy_terms_accepted", true)
+                                            .putLong("${prefsKeyPrefix}_privacy_terms_accepted_at", System.currentTimeMillis())
+                                            .apply()
+                                        errorMessage = null
+                                    }
+                                },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = accentColor,
+                                    uncheckedColor = Color(0xFFEA580C)
+                                ),
+                                modifier = Modifier.testTag("${prefsKeyPrefix}_privacy_terms_checkbox")
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = uiStrings.acceptPrivacyTermsTitle,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0D1B2A)
+                                )
+                                Text(
+                                    text = uiStrings.tapToReadPrivacyTerms,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = accentColor,
+                                    textDecoration = TextDecoration.Underline,
+                                    modifier = Modifier
+                                        .padding(top = 2.dp)
+                                        .clickable { showPrivacyPolicyDialog = true }
+                                        .testTag("${prefsKeyPrefix}_privacy_policy_read_link")
+                                )
+                            }
+                        }
+                    }
+
+                    if (!acceptedPrivacyTerms) {
+                        Text(
+                            text = uiStrings.privacyCheckboxHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFC2410C)
+                        )
+                    }
+                }
+
                 if (errorMessage != null) {
                     Text(
                         text = errorMessage.orEmpty(),
@@ -1354,8 +1496,15 @@ fun QuickDeliveryUserAuthScreen(
                     )
                 }
 
+                val isAuthButtonEnabled = if (isNewUserSignUp) acceptedPrivacyTerms else true
+
                 Button(
+                    enabled = isAuthButtonEnabled,
                     onClick = {
+                        if (isNewUserSignUp && !acceptedPrivacyTerms) {
+                            errorMessage = "Please accept Privacy Policy & Terms first."
+                            return@Button
+                        }
                         val rateCheck = QuickDeliverySecurityGuard.checkAndRecordEndpointCall(
                             endpoint = QuickDeliverySecurityGuard.ENDPOINT_AUTH_ATTEMPT,
                             actorKey = prefsKeyPrefix
@@ -1364,6 +1513,10 @@ fun QuickDeliveryUserAuthScreen(
                             errorMessage = rateCheck.exceptionOrNull()?.message
                             return@Button
                         }
+                        prefs.edit()
+                            .putBoolean("${prefsKeyPrefix}_privacy_terms_accepted", true)
+                            .putLong("${prefsKeyPrefix}_privacy_terms_accepted_at", System.currentTimeMillis())
+                            .apply()
                         if (isNewUserSignUp) {
                             val finalName = QuickDeliverySecurityGuard.sanitizeText(fullName, 80)
                             val finalPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(mobileNumber)
@@ -1412,22 +1565,29 @@ fun QuickDeliveryUserAuthScreen(
                             val savedName = QuickDeliverySecurityGuard.sanitizeText(
                                 prefs.getString("${prefsKeyPrefix}_name", null),
                                 80
-                            ).ifBlank {
-                                if (looksLikeEmail) {
-                                    identifier.substringBefore("@").replaceFirstChar { it.uppercase() }
-                                } else {
-                                    roleTitle
-                                }
+                            )
+                            val isSameSavedUser = (looksLikePhone && digitsOnly == savedPhone) ||
+                                (looksLikeEmail && identifier.equals(savedEmail, ignoreCase = true))
+                            val resolvedName = if (isSameSavedUser && savedName.isNotBlank()) {
+                                savedName
+                            } else if (looksLikeEmail) {
+                                identifier.substringBefore("@").replaceFirstChar { it.uppercase() }
+                            } else {
+                                "$roleTitle (${digitsOnly.takeLast(4)})"
                             }
                             val resolvedPhone = if (looksLikePhone) {
                                 digitsOnly
-                            } else {
+                            } else if (isSameSavedUser) {
                                 savedPhone
+                            } else {
+                                ""
                             }
                             val resolvedEmail = if (looksLikeEmail) {
                                 QuickDeliverySecurityGuard.sanitizeEmail(identifier)
-                            } else {
+                            } else if (isSameSavedUser) {
                                 savedEmail
+                            } else {
+                                ""
                             }
                             MotivationAndPromoManager.lastAuthWasNewSignUp = false
                             MotivationAndPromoManager.forceSignInTabNextOpen = false
@@ -1435,15 +1595,19 @@ fun QuickDeliveryUserAuthScreen(
                             MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
                                 context = context,
                                 rolePrefix = prefsKeyPrefix,
-                                name = savedName,
+                                name = resolvedName,
                                 phone = resolvedPhone,
                                 email = resolvedEmail,
                                 storageAllowed = allowPhoneStoragePermission
                             )
-                            onAuthenticated(savedName, resolvedPhone, resolvedEmail)
+                            onAuthenticated(resolvedName, resolvedPhone, resolvedEmail)
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accentColor,
+                        disabledContainerColor = Color(0xFFCBD5E1),
+                        disabledContentColor = Color(0xFF64748B)
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp)
@@ -1451,9 +1615,9 @@ fun QuickDeliveryUserAuthScreen(
                 ) {
                     Text(
                         text = if (isNewUserSignUp) {
-                            "Create Account & Continue →"
+                            uiStrings.createAccountContinueBtn
                         } else {
-                            "Sign In & Continue →"
+                            uiStrings.signInContinueBtn
                         },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
@@ -1461,7 +1625,12 @@ fun QuickDeliveryUserAuthScreen(
                 }
 
                 GoogleSignInButton(
+                    enabled = isAuthButtonEnabled,
                     onAuthSuccess = {
+                        prefs.edit()
+                            .putBoolean("${prefsKeyPrefix}_privacy_terms_accepted", true)
+                            .putLong("${prefsKeyPrefix}_privacy_terms_accepted_at", System.currentTimeMillis())
+                            .apply()
                         val user = runCatching { Firebase.auth.currentUser }.getOrNull()
                         val googleEmail = QuickDeliverySecurityGuard.sanitizeEmail(user?.email)
                         val googleName = QuickDeliverySecurityGuard.sanitizeText(user?.displayName, 80)
@@ -1505,7 +1674,7 @@ fun QuickDeliveryUserAuthScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Privacy Policy & Terms of Service",
+                        text = uiStrings.viewPrivacyTermsFooter,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = accentColor,
@@ -1517,10 +1686,352 @@ fun QuickDeliveryUserAuthScreen(
     }
 }
 
+fun hasAllMandatoryAppPermissions(context: Context): Boolean {
+    val fineGranted = ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+    val coarseGranted = ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+    val cameraGranted = ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+    val notificationsGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+    } else {
+        true
+    }
+    return (fineGranted || coarseGranted) && cameraGranted && notificationsGranted
+}
+
+/**
+ * Mandatory Post-Login Permission Gate for both Customer & Partner Rider Apps.
+ * Ensures Location, Camera & Notification permissions are granted before proceeding to the dashboard.
+ */
+@Composable
+fun QuickDeliveryMandatoryPermissionsGateScreen(
+    roleTitle: String,
+    prefsKeyPrefix: String,
+    accentColor: Color,
+    onAllPermissionsGranted: () -> Unit,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val uiStrings = rememberDynamicUiStrings()
+
+    fun checkLocationGranted(): Boolean {
+        val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
+    fun checkCameraGranted(): Boolean {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    }
+
+    fun checkNotificationsGranted(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    var locationGranted by remember { mutableStateOf(checkLocationGranted()) }
+    var cameraGranted by remember { mutableStateOf(checkCameraGranted()) }
+    var notificationsGranted by remember { mutableStateOf(checkNotificationsGranted()) }
+    var attemptedRequest by remember { mutableStateOf(false) }
+
+    val refreshPermissions = {
+        locationGranted = checkLocationGranted()
+        cameraGranted = checkCameraGranted()
+        notificationsGranted = checkNotificationsGranted()
+    }
+
+    val allGranted = locationGranted && cameraGranted && notificationsGranted
+
+    LaunchedEffect(allGranted) {
+        if (allGranted) {
+            onAllPermissionsGranted()
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshPermissions()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val permissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        attemptedRequest = true
+        refreshPermissions()
+    }
+
+    val launchMissingPermissionsRequest = {
+        val missing = buildList {
+            if (!locationGranted) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            }
+            if (!cameraGranted) {
+                add(Manifest.permission.CAMERA)
+            }
+            if (!notificationsGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.toTypedArray()
+        if (missing.isEmpty()) {
+            onAllPermissionsGranted()
+        } else {
+            permissionsLauncher.launch(missing)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFFF4F9F9))
+            .padding(18.dp)
+            .testTag("${prefsKeyPrefix}_mandatory_permissions_gate"),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            shape = RoundedCornerShape(22.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+            border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = accentColor,
+                        shape = CircleShape,
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Required App Permissions",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = uiStrings.permissionsRequiredTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF0D1B2A)
+                        )
+                        Text(
+                            text = String.format(uiStrings.permissionsRequiredSubtitle, roleTitle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF475569)
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = Color(0xFFE2E8F0))
+
+                PermissionGateItemRow(
+                    icon = Icons.Default.MyLocation,
+                    title = uiStrings.locationPermissionTitle,
+                    description = if (prefsKeyPrefix == "rider") {
+                        "Needed for live order dispatch, pickup/drop navigation & live ETA."
+                    } else {
+                        "Needed for 1-tap current pickup address capture & live rider tracking."
+                    },
+                    isGranted = locationGranted,
+                    accentColor = accentColor
+                )
+
+                PermissionGateItemRow(
+                    icon = Icons.Default.CameraAlt,
+                    title = uiStrings.cameraPermissionTitle,
+                    description = if (prefsKeyPrefix == "rider") {
+                        "Needed for live pickup/delivery proof photos & partner selfie verification."
+                    } else {
+                        "Needed to attach parcel safety photos before dispatch."
+                    },
+                    isGranted = cameraGranted,
+                    accentColor = accentColor
+                )
+
+                PermissionGateItemRow(
+                    icon = Icons.Default.NotificationsActive,
+                    title = uiStrings.notificationsPermissionTitle,
+                    description = "Needed for real-time order status alerts & instant Rider-Customer chat.",
+                    isGranted = notificationsGranted,
+                    accentColor = accentColor
+                )
+
+                if (attemptedRequest && !allGranted) {
+                    Surface(
+                        color = Color(0xFFFEF2F2),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Some required permissions are still denied. Please tap Allow below or enable them in App Settings to continue.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFB91C1C),
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = launchMissingPermissionsRequest,
+                    colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("${prefsKeyPrefix}_allow_permissions_btn")
+                ) {
+                    Text(
+                        text = if (allGranted) "Continue →" else uiStrings.allowPermissionsBtn,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                if (attemptedRequest && !allGranted) {
+                    OutlinedButton(
+                        onClick = {
+                            runCatching {
+                                val settingsIntent = Intent(
+                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.fromParts("package", context.packageName, null)
+                                )
+                                context.startActivity(settingsIntent)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .testTag("${prefsKeyPrefix}_open_app_settings_btn")
+                    ) {
+                        Text("Open App Settings", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                TextButton(
+                    onClick = onLogout,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text(
+                        text = "Sign Out / Switch Account",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFF64748B)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionGateItemRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    isGranted: Boolean,
+    accentColor: Color
+) {
+    Surface(
+        color = if (isGranted) Color(0xFFECFDF5) else Color(0xFFF8FAFC),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(
+            1.dp,
+            if (isGranted) Color(0xFF10B981) else Color(0xFFE2E8F0)
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = if (isGranted) Color(0xFF10B981) else accentColor.copy(alpha = 0.12f),
+                shape = CircleShape,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (isGranted) Icons.Default.CheckCircle else icon,
+                        contentDescription = title,
+                        tint = if (isGranted) Color.White else accentColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0D1B2A)
+                    )
+                    Surface(
+                        color = if (isGranted) Color(0xFFDCFCE7) else Color(0xFFFFEDD5),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = if (isGranted) "Allowed" else "Required",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isGranted) Color(0xFF047857) else Color(0xFFC2410C),
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF475569)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun QuickDeliveryPrivacyPolicyDialog(
     context: Context,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onAcceptAndAgree: (() -> Unit)? = null
 ) {
     val publicPrivacyUrl = "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/privacy-policy"
     val publicTermsUrl = "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/terms"
@@ -1537,7 +2048,7 @@ fun QuickDeliveryPrivacyPolicyDialog(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Privacy Policy & Terms",
+                    text = "Privacy Policy & Terms of Service",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF0D1B2A)
@@ -1550,42 +2061,65 @@ fun QuickDeliveryPrivacyPolicyDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "Quick Delivery Logistics collects only data essential to fulfill parcel pickup and drop-off deliveries:",
+                    text = "Quick Delivery Logistics enforces strict privacy, safety, and delivery terms across Customer & Rider Partner accounts:",
                     style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     color = Color(0xFF0D1B2A)
                 )
                 Text(
-                    text = "• Account & Identity: Name, 10-digit mobile number, and email for OTP & order receipts.\n" +
-                        "• Location (Foreground Only): Exact pickup/drop coordinates for fare calculation and live tracking while the app is active.\n" +
-                        "• Camera (On-Demand): Parcel condition photos and proof-of-delivery capture triggered only when you tap Camera.\n" +
-                        "• Data Safety: All traffic uses HTTPS/TLS encryption. We never sell personal data to third parties.",
+                    text = "1. Account Isolation & Identity: Your mobile number and email strictly isolate your orders, GST invoices, and saved addresses so no other user can view your bookings.\n\n" +
+                        "2. Essential Permissions Only:\n" +
+                        "   • Location (GPS): Used only while the app is open/on active delivery for accurate pickup/drop addresses, fare distance, and live rider tracking.\n" +
+                        "   • Camera: Triggered only when you capture parcel safety photos, pickup/delivery proofs, or Rider KYC selfies.\n" +
+                        "   • Notifications: Used for instant order updates, OTP alerts, and live Rider-Customer chat.\n\n" +
+                        "3. Prohibited Parcels & Liability: Sending illegal, hazardous, flammable, stolen, or prohibited goods is strictly banned. Senders are solely liable for accurate parcel declaration.\n\n" +
+                        "4. Payments, Cancellation & Rider Terms: Fair fare splits, OTP + Digital Signature Proof-of-Delivery, pickup wait-time & cancellation rules, and traffic/KYC compliance apply.\n\n" +
+                        "5. Data Security: All traffic uses HTTPS/TLS encryption and HMAC-SHA256 verification. We never sell personal data to third parties.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF334155)
                 )
                 Text(
-                    text = "Account & Data Deletion: You can permanently delete your account data anytime from the App Menu → Delete Account & Data, or by emailing ravindergupta141@gmail.com.",
+                    text = "Account & Data Deletion: Delete your profile anytime from Menu → Delete Account & Data, or email ravindergupta141@gmail.com.",
                     style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF0F766E)
                 )
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    runCatching {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(publicPrivacyUrl))
-                        context.startActivity(intent)
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
-            ) {
-                Text("View Online Policy", fontWeight = FontWeight.Bold)
+            if (onAcceptAndAgree != null) {
+                Button(
+                    onClick = onAcceptAndAgree,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
+                ) {
+                    Text("I Agree & Accept", fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Button(
+                    onClick = {
+                        runCatching {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(publicPrivacyUrl))
+                            context.startActivity(intent)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF008080))
+                ) {
+                    Text("View Online Policy", fontWeight = FontWeight.Bold)
+                }
             }
         },
         dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(publicPrivacyUrl))
+                            context.startActivity(intent)
+                        }
+                    }
+                ) {
+                    Text("Online Policy")
+                }
                 TextButton(
                     onClick = {
                         runCatching {
@@ -1993,16 +2527,32 @@ fun LiveRiderContinuousTrackingCard(
         baseLng + (dropLng - baseLng) * continuousLiveProgress
     }
 
+    val waitTimersByOrder by com.example.data.cloud.QuickDeliveryOperationsManager.waitTimerStartByOrder.collectAsState()
+    val riderLiveCoordsByOrder by com.example.data.cloud.QuickDeliveryOperationsManager.riderLiveCoordsByOrder.collectAsState()
+    val remoteFlags by com.example.data.cloud.QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+    val liveGpsEtaPair = remember(order.orderId, order.orderStatus, riderLiveCoordsByOrder) {
+        com.example.data.cloud.QuickDeliveryOperationsManager.computeLiveRiderEtaKmAndMins(order)
+    }
+    val waitFeeInfo = remember(order.orderId, waitTimersByOrder, remoteFlags, tickCount) {
+        if (remoteFlags.waitTimeAndCancelRuleEnabled) {
+            com.example.data.cloud.QuickDeliveryOperationsManager.computeWaitFeeInfo(order.orderId, remoteFlags)
+        } else null
+    }
+
     // Calculate Live Remaining Distance (km) & Approximate ETA (mins + secs)
     val totalDistanceKm = order.distanceKm.coerceAtLeast(1.8)
     val remainingDistanceKm = if (isDelivered) {
         0.0
+    } else if (liveGpsEtaPair != null) {
+        liveGpsEtaPair.first.coerceAtLeast(0.05)
     } else {
         (totalDistanceKm * (1.0f - continuousLiveProgress)).coerceAtLeast(0.15)
     }
     // Assume average city speed ~26 km/h (~2.3 mins per km)
     val totalRemainingSeconds = if (isDelivered) {
         0
+    } else if (liveGpsEtaPair != null) {
+        (liveGpsEtaPair.second * 60 - (tickCount % 45)).coerceAtLeast(30)
     } else {
         ((remainingDistanceKm * 138.0).roundToInt() - (tickCount % 45)).coerceAtLeast(35)
     }
@@ -2085,6 +2635,8 @@ fun LiveRiderContinuousTrackingCard(
                         Text(
                             text = if (isDelivered) {
                                 "✅ Delivered Successfully on Time!"
+                            } else if (liveGpsEtaPair != null) {
+                                "🛵 Rider ~${liveGpsEtaPair.second} mins away • ${String.format(Locale.US, "%.2f", remainingDistanceKm)} km"
                             } else {
                                 "⏱️ Approx. Delivery Time: ~${approxEtaMinutes} min ${approxEtaSeconds}s"
                             },
@@ -2120,6 +2672,42 @@ fun LiveRiderContinuousTrackingCard(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                         )
                     }
+                }
+            }
+
+            if (waitFeeInfo != null && (order.orderStatus == OrderStatus.RIDER_ASSIGNED || order.orderStatus == OrderStatus.ARRIVED_AT_PICKUP)) {
+                val mins = waitFeeInfo.elapsedSeconds / 60
+                val secs = waitFeeInfo.elapsedSeconds % 60
+                val isOvertime = waitFeeInfo.overtimeMinutes > 0
+                Surface(
+                    color = if (isOvertime) Color(0xFFFEF2F2) else Color(0xFFFFFBEB),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, if (isOvertime) Color(0xFFDC2626) else Color(0xFFF59E0B)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (isOvertime) {
+                            String.format(
+                                Locale.US,
+                                "⏱️ Rider waiting at Pickup (%02d:%02d) • Overtime Wait Fee: +₹%d",
+                                mins,
+                                secs,
+                                waitFeeInfo.waitFeeInr
+                            )
+                        } else {
+                            String.format(
+                                Locale.US,
+                                "⏱️ Rider at Pickup Gate (%02d:%02d) • %dm free wait window",
+                                mins,
+                                secs,
+                                remoteFlags.freeWaitMinutes
+                            )
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isOvertime) Color(0xFFB91C1C) else Color(0xFF92400E),
+                        modifier = Modifier.padding(10.dp)
+                    )
                 }
             }
 
@@ -2297,7 +2885,7 @@ fun LiveRiderContinuousTrackingCard(
                                         )
                                     )
 
-                                    // Completed route up to Rider's live position (solid glowing emerald)
+                                    // Glow halo under completed route (Swiggy/Zomato live map polish)
                                     val completedPath = Path().apply {
                                         val p0 = pointOnRoute(0f)
                                         moveTo(p0.x, p0.y)
@@ -2309,37 +2897,52 @@ fun LiveRiderContinuousTrackingCard(
                                     }
                                     drawPath(
                                         path = completedPath,
+                                        color = Color(0xFF10B981).copy(alpha = 0.28f),
+                                        style = Stroke(width = 19f, cap = StrokeCap.Round)
+                                    )
+                                    drawPath(
+                                        path = completedPath,
                                         color = Color(0xFF10B981),
                                         style = Stroke(width = 9f, cap = StrokeCap.Round)
                                     )
 
-                                    // Pickup Marker (Green Pin)
+                                    // Pickup Marker (Green Ring + Pin)
                                     drawCircle(
                                         color = Color(0xFF10B981).copy(alpha = 0.28f),
-                                        radius = 22f,
+                                        radius = 24f,
+                                        center = pickupPt
+                                    )
+                                    drawCircle(
+                                        color = Color.White,
+                                        radius = 12f,
                                         center = pickupPt
                                     )
                                     drawCircle(
                                         color = Color(0xFF10B981),
-                                        radius = 10f,
+                                        radius = 8f,
                                         center = pickupPt
                                     )
 
-                                    // Drop Marker (Orange Pin)
+                                    // Drop Marker (Orange Ring + Pin)
                                     drawCircle(
                                         color = Color(0xFFFF6B35).copy(alpha = 0.28f),
-                                        radius = 22f,
+                                        radius = 24f,
+                                        center = dropPt
+                                    )
+                                    drawCircle(
+                                        color = Color.White,
+                                        radius = 12f,
                                         center = dropPt
                                     )
                                     drawCircle(
                                         color = Color(0xFFFF6B35),
-                                        radius = 10f,
+                                        radius = 8f,
                                         center = dropPt
                                     )
 
                                     // Live Moving Rider Position & Radar Pulse
                                     val riderPt = pointOnRoute(continuousLiveProgress)
-                                    val pulseRadius = 18f + (microStepOffset * 180f)
+                                    val pulseRadius = 20f + (microStepOffset * 200f)
                                     drawCircle(
                                         color = Color(0xFFFF6B35).copy(alpha = 0.35f),
                                         radius = pulseRadius,
@@ -2347,7 +2950,7 @@ fun LiveRiderContinuousTrackingCard(
                                     )
                                     drawCircle(
                                         color = Color.White,
-                                        radius = 14f,
+                                        radius = 15f,
                                         center = riderPt
                                     )
                                     drawCircle(
@@ -2367,7 +2970,7 @@ fun LiveRiderContinuousTrackingCard(
                                         .padding(8.dp)
                                 ) {
                                     Text(
-                                        text = "📍 Pickup → 🏍️ Live Rider → 🏁 Drop",
+                                        text = "📍 P → 🏍️ Live → 🏁 D",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = Color.White,
@@ -2375,7 +2978,30 @@ fun LiveRiderContinuousTrackingCard(
                                     )
                                 }
 
-                                // Bottom-Right Live ETA & Speed Overlay Pill on Map
+                                // Top-Right Prominent "Arriving in X mins" Countdown Badge
+                                Surface(
+                                    color = if (isDelivered) Color(0xFF059669) else Color(0xFFFF6B35),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f)),
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(8.dp)
+                                        .testTag("customer_arriving_countdown_badge")
+                                ) {
+                                    Text(
+                                        text = if (isDelivered) {
+                                            "DELIVERED ✓"
+                                        } else {
+                                            "Arriving in ~${approxEtaMinutes.coerceAtLeast(1)} mins"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                    )
+                                }
+
+                                // Bottom-Right Live ETA & Distance Overlay Pill on Map
                                 Surface(
                                     color = Color(0xFF00A896),
                                     shape = RoundedCornerShape(10.dp),
@@ -2385,9 +3011,9 @@ fun LiveRiderContinuousTrackingCard(
                                 ) {
                                     Text(
                                         text = if (isDelivered) {
-                                            "Delivered ✓"
+                                            "Trip Complete ✓"
                                         } else {
-                                            "ETA ~${approxEtaMinutes}m ${approxEtaSeconds}s • ${String.format(Locale.US, "%.2f", remainingDistanceKm)} km"
+                                            "ETA ~${approxEtaMinutes}m ${approxEtaSeconds}s • ${String.format(Locale.US, "%.2f", remainingDistanceKm)} km left"
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.ExtraBold,
@@ -2567,4 +3193,38 @@ private fun LiveRiderPulseBadge(isDelivered: Boolean) {
         }
     }
 }
+
+@Composable
+fun QuickDeliveryCuteBunnyLogo(
+    size: Dp = 34.dp,
+    borderColor: Color = Color(0xFFFF6B35),
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val bunnyResId = remember(context) {
+        context.resources.getIdentifier(
+            "cute_scooter_bunny_logo_1794655841710",
+            "drawable",
+            context.packageName
+        )
+    }
+    if (bunnyResId != 0) {
+        Surface(
+            color = Color(0xFFFCF4E1),
+            shape = CircleShape,
+            border = BorderStroke(1.5.dp, borderColor),
+            modifier = modifier.size(size)
+        ) {
+            Image(
+                painter = painterResource(id = bunnyResId),
+                contentDescription = "Quick Delivery Scooter Bunny Logo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    } else {
+        QuickDeliveryOfficialLogo(size = size, borderColor = borderColor, modifier = modifier)
+    }
+}
+
 

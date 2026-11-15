@@ -15,6 +15,7 @@ import com.example.data.model.PaymentVerificationStatus
 import com.example.data.model.PickupProof
 import com.example.data.model.VehicleType
 import com.example.data.repository.SharedOrderRepository
+import com.example.security.CryptoSecurityEngine
 import com.example.security.OrderAlertSoundManager
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -179,22 +180,97 @@ object MultiPhoneLiveSyncManager {
         }.getOrNull()
     }
 
+    fun ensureValidLocalFareSeal(order: CustomerOrder): CustomerOrder {
+        val parseAmt: (String) -> Double = { raw ->
+            raw.substringBefore("(").replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+        }
+        val totalInr = parseAmt(order.totalAmount)
+        val commInr = parseAmt(order.platformCommission)
+        val riderInr = parseAmt(order.riderEarning)
+        val alreadyValid = order.fareSeal.isNotBlank() && CryptoSecurityEngine.verifyOrderFareSeal(
+            orderId = order.orderId,
+            distanceKm = order.distanceKm,
+            totalCustomerPrice = totalInr,
+            platformCommission = commInr,
+            riderEarnings = riderInr,
+            providedSeal = order.fareSeal
+        )
+        if (alreadyValid) return order
+        val freshSeal = CryptoSecurityEngine.computeOrderFareSeal(
+            orderId = order.orderId,
+            distanceKm = order.distanceKm,
+            totalCustomerPrice = totalInr,
+            platformCommission = commInr,
+            riderEarnings = riderInr
+        )
+        return order.copy(fareSeal = freshSeal)
+    }
+
+    fun ensureOrderSealedForRepository(repo: SharedOrderRepository, orderId: String) {
+        val mutableFlow = getMutableOrdersFlow(repo) ?: return
+        val currentList = mutableFlow.value
+        var modified = false
+        val updated = currentList.map { ord ->
+            if (ord.orderId == orderId) {
+                val sealed = ensureValidLocalFareSeal(ord)
+                if (sealed.fareSeal != ord.fareSeal) modified = true
+                sealed
+            } else {
+                ord
+            }
+        }
+        if (modified) {
+            mutableFlow.value = updated
+        }
+    }
+
     private suspend fun performSingleSyncCycle(context: Context, forceResetServer: Boolean) = withContext(Dispatchers.IO) {
         val repo = SharedOrderRepository.getInstance(context)
         AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
         RiderRegistrationApprovalManager.ensureLoaded(context)
         QuickDeliveryOperationsManager.ensureLoaded(context)
+        com.example.ui.components.OrderLiveChatManager.ensureLoaded(context)
         val localOrders = repo.orders.value.filterNot { it.orderId in DEMO_ORDER_IDS }
         val pickupProofs = OrderProofRegistry.pickupProofsByOrder.value
         val deliveryProofs = OrderProofRegistry.deliveryProofsByOrder.value
         val deviceId = getOrInitDeviceId(context)
         val activeRole = _lockedPhoneRole.value.ifBlank { "UNIFIED" }
         val deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
+        com.example.ui.components.FcmOrderNotificationManager.ensureInitialized(context)
+        val fcmTokenValue = com.example.ui.components.FcmOrderNotificationManager.fcmToken.value
+
+        // If running on Rider phone, capture latest Rider coordinates onto active assigned orders
+        if (activeRole == "RIDER") {
+            val activeRider = repo.riders.value.firstOrNull()
+            if (activeRider != null && (activeRider.currentLat != 0.0 || activeRider.currentLng != 0.0)) {
+                localOrders.filter {
+                    it.orderStatus != OrderStatus.SEARCHING_RIDER &&
+                        it.orderStatus != OrderStatus.DELIVERED &&
+                        it.orderStatus != OrderStatus.CANCELLED
+                }.forEach { activeOrder ->
+                    QuickDeliveryOperationsManager.updateRiderCoordsForOrder(
+                        context = context,
+                        orderId = activeOrder.orderId,
+                        lat = activeRider.currentLat,
+                        lng = activeRider.currentLng
+                    )
+                }
+            }
+        }
+        val activeRiderLat = repo.riders.value.firstOrNull()?.currentLat ?: 0.0
+        val activeRiderLng = repo.riders.value.firstOrNull()?.currentLng ?: 0.0
 
         val requestPayload = JSONObject().apply {
             put("deviceId", deviceId)
             put("role", activeRole)
             put("deviceModel", deviceModel)
+            if (fcmTokenValue.isNotBlank() && !fcmTokenValue.contains("connecting")) {
+                put("fcmToken", fcmTokenValue)
+            }
+            if (activeRole == "RIDER" && (activeRiderLat != 0.0 || activeRiderLng != 0.0)) {
+                put("deviceLat", activeRiderLat)
+                put("deviceLng", activeRiderLng)
+            }
             if (forceResetServer) {
                 put("resetEpochMs", localResetEpochMs.coerceAtLeast(System.currentTimeMillis()))
             }
@@ -208,6 +284,19 @@ object MultiPhoneLiveSyncManager {
             put("promoCoupons", opsJson.optJSONArray("promoCoupons"))
             put("withdrawalRequests", opsJson.optJSONArray("withdrawalRequests"))
             put("supportTickets", opsJson.optJSONArray("supportTickets"))
+            put("codSettlements", opsJson.optJSONArray("codSettlements"))
+            put("disputeRecords", opsJson.optJSONArray("disputeRecords"))
+            put("riderDocExpiries", opsJson.optJSONArray("riderDocExpiries"))
+            opsJson.optJSONObject("remoteFeatureFlags")?.let { flagsObj ->
+                put("remoteFeatureFlags", flagsObj)
+            }
+            opsJson.optJSONObject("waitTimerStartByOrder")?.let { wtObj ->
+                put("waitTimerStartByOrder", wtObj)
+            }
+            opsJson.optJSONObject("riderLiveCoordsByOrder")?.let { rcObj ->
+                put("riderLiveCoordsByOrder", rcObj)
+            }
+            put("chatMessages", com.example.ui.components.OrderLiveChatManager.exportAllMessagesToJsonArray())
         }
 
         var responseJson: JSONObject? = null
@@ -247,6 +336,7 @@ object MultiPhoneLiveSyncManager {
         if (serverResetEpochMs > localResetEpochMs && localResetEpochMs > 0L) {
             localResetEpochMs = serverResetEpochMs
             mutableOrdersFlow?.value = emptyList()
+            com.example.ui.components.OrderLiveChatManager.clearAllOnReset(context)
         } else if (localResetEpochMs == 0L && serverResetEpochMs > 0L) {
             localResetEpochMs = serverResetEpochMs
         }
@@ -256,6 +346,16 @@ object MultiPhoneLiveSyncManager {
             root.optJSONArray("riderRegistrations")
         )
         QuickDeliveryOperationsManager.mergeFromServerPayload(context, root)
+        val newlySyncedMessages = com.example.ui.components.OrderLiveChatManager.mergeFromServerJsonArray(
+            context,
+            root.optJSONArray("chatMessages")
+        )
+        newlySyncedMessages.forEach { msg ->
+            val fromOppositeRole = !msg.senderRole.equals(activeRole, ignoreCase = true)
+            if (fromOppositeRole && !msg.messageId.startsWith("msg_seed_")) {
+                com.example.ui.components.FcmOrderNotificationManager.dispatchIncomingChatNotification(context, msg)
+            }
+        }
 
         val remoteOrdersArr = root.optJSONArray("orders") ?: JSONArray()
         if (mutableOrdersFlow != null && remoteOrdersArr.length() > 0) {
@@ -306,18 +406,26 @@ object MultiPhoneLiveSyncManager {
                         !remoteOrder.latestRiderQuickNote.isNullOrBlank()
 
                     if (remoteRank > localRank || riderJustAssigned || noteChanged) {
-                        val mergedOrder = existingLocal.copy(
-                            orderStatus = if (remoteRank >= localRank) remoteOrder.orderStatus else existingLocal.orderStatus,
-                            assignedRiderId = remoteOrder.assignedRiderId ?: existingLocal.assignedRiderId,
-                            assignedRiderName = remoteOrder.assignedRiderName ?: existingLocal.assignedRiderName,
-                            assignedRiderPhone = remoteOrder.assignedRiderPhone ?: existingLocal.assignedRiderPhone,
-                            assignedRiderVehicle = remoteOrder.assignedRiderVehicle ?: existingLocal.assignedRiderVehicle,
-                            latestRiderQuickNote = remoteOrder.latestRiderQuickNote ?: existingLocal.latestRiderQuickNote,
-                            pickupOtp = remoteOrder.pickupOtp.ifBlank { existingLocal.pickupOtp },
-                            deliveryOtp = remoteOrder.deliveryOtp.ifBlank { existingLocal.deliveryOtp }
+                        val mergedOrder = ensureValidLocalFareSeal(
+                            existingLocal.copy(
+                                orderStatus = if (remoteRank >= localRank) remoteOrder.orderStatus else existingLocal.orderStatus,
+                                assignedRiderId = remoteOrder.assignedRiderId ?: existingLocal.assignedRiderId,
+                                assignedRiderName = remoteOrder.assignedRiderName ?: existingLocal.assignedRiderName,
+                                assignedRiderPhone = remoteOrder.assignedRiderPhone ?: existingLocal.assignedRiderPhone,
+                                assignedRiderVehicle = remoteOrder.assignedRiderVehicle ?: existingLocal.assignedRiderVehicle,
+                                latestRiderQuickNote = remoteOrder.latestRiderQuickNote ?: existingLocal.latestRiderQuickNote,
+                                pickupOtp = remoteOrder.pickupOtp.ifBlank { existingLocal.pickupOtp },
+                                deliveryOtp = remoteOrder.deliveryOtp.ifBlank { existingLocal.deliveryOtp }
+                            )
                         )
                         currentById[orderId] = mergedOrder
                         listChanged = true
+                    } else {
+                        val sealedLocal = ensureValidLocalFareSeal(existingLocal)
+                        if (sealedLocal.fareSeal != existingLocal.fareSeal) {
+                            currentById[orderId] = sealedLocal
+                            listChanged = true
+                        }
                     }
                 }
             }
@@ -465,30 +573,32 @@ object MultiPhoneLiveSyncManager {
         val assignedRiderVehicle = obj.optString("assignedRiderVehicle", "").ifBlank { null }
         val latestNote = obj.optString("latestRiderQuickNote", "").ifBlank { null }
 
-        CustomerOrder(
-            orderId = obj.optString("orderId", "QD-1001"),
-            customerId = obj.optString("customerId", "CUST-1001"),
-            customerName = obj.optString("customerName", "Customer"),
-            customerPhone = obj.optString("customerPhone", ""),
-            pickupAddress = pickup,
-            dropAddress = drop,
-            packageDetails = pkg,
-            vehicleType = vehicle,
-            orderStatus = status,
-            totalAmount = obj.optString("totalAmount", "₹0"),
-            platformCommission = obj.optString("platformCommission", "₹0"),
-            riderEarning = obj.optString("riderEarning", "₹0"),
-            distanceKm = obj.optDouble("distanceKm", 0.0),
-            pickupOtp = obj.optString("pickupOtp", ""),
-            deliveryOtp = obj.optString("deliveryOtp", ""),
-            assignedRiderId = assignedRiderId,
-            assignedRiderName = assignedRiderName,
-            assignedRiderPhone = assignedRiderPhone,
-            assignedRiderVehicle = assignedRiderVehicle,
-            latestRiderQuickNote = latestNote,
-            paymentMethod = payMethod,
-            paymentStatus = payStatus,
-            createdAt = obj.optString("createdAt", "Live Sync")
+        ensureValidLocalFareSeal(
+            CustomerOrder(
+                orderId = obj.optString("orderId", "QD-1001"),
+                customerId = obj.optString("customerId", "CUST-1001"),
+                customerName = obj.optString("customerName", "Customer"),
+                customerPhone = obj.optString("customerPhone", ""),
+                pickupAddress = pickup,
+                dropAddress = drop,
+                packageDetails = pkg,
+                vehicleType = vehicle,
+                orderStatus = status,
+                totalAmount = obj.optString("totalAmount", "₹0"),
+                platformCommission = obj.optString("platformCommission", "₹0"),
+                riderEarning = obj.optString("riderEarning", "₹0"),
+                distanceKm = obj.optDouble("distanceKm", 0.0),
+                pickupOtp = obj.optString("pickupOtp", ""),
+                deliveryOtp = obj.optString("deliveryOtp", ""),
+                assignedRiderId = assignedRiderId,
+                assignedRiderName = assignedRiderName,
+                assignedRiderPhone = assignedRiderPhone,
+                assignedRiderVehicle = assignedRiderVehicle,
+                latestRiderQuickNote = latestNote,
+                paymentMethod = payMethod,
+                paymentStatus = payStatus,
+                createdAt = obj.optString("createdAt", "Live Sync")
+            )
         )
     }.getOrNull()
 

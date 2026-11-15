@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.LocationOn
@@ -55,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -674,7 +676,8 @@ private fun CustomerOrderHistoryItemCard(
 
             HorizontalDivider(color = Color(0xFFE2E8F0))
 
-            // Action Buttons: View/Track Order & Reorder Same Route
+            val historyContext = LocalContext.current
+            // Action Buttons: View/Track Order, Book Again & Download PDF Receipt
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -699,6 +702,31 @@ private fun CustomerOrderHistoryItemCard(
                 ) {
                     Text(
                         text = if (order.orderStatus == OrderStatus.DELIVERED) "View Receipt" else "Live Track",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (order.orderStatus == OrderStatus.DELIVERED) {
+                OutlinedButton(
+                    onClick = {
+                        com.example.security.QuickDeliveryPdfGenerator.generateAndShareCustomerReceiptPdf(
+                            context = historyContext,
+                            order = order,
+                            pickupProof = pickupProofsByOrder[order.orderId],
+                            deliveryProof = deliveryProofsByOrder[order.orderId],
+                            tipAmountInr = tipAmountInr
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("customer_history_pdf_receipt_btn_${order.orderId}")
+                ) {
+                    Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "📄 Download / Share PDF Receipt",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold
                     )

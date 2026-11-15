@@ -122,6 +122,7 @@ data class RiderWithdrawalRequest(
     val riderPhone: String,
     val amountInr: Double,
     val payoutDestination: String, // UPI ID or Bank Account
+    val payoutMode: String = "INSTANT_UPI", // INSTANT_UPI or WEEKLY_AUTO
     val status: WithdrawalStatus = WithdrawalStatus.PENDING,
     val adminNote: String = "",
     val createdAtLabel: String = "",
@@ -134,6 +135,7 @@ data class RiderWithdrawalRequest(
         put("riderPhone", riderPhone)
         put("amountInr", amountInr)
         put("payoutDestination", payoutDestination)
+        put("payoutMode", payoutMode)
         put("status", status.name)
         put("adminNote", adminNote)
         put("createdAtLabel", createdAtLabel)
@@ -151,9 +153,157 @@ data class RiderWithdrawalRequest(
                 riderPhone = obj.optString("riderPhone", ""),
                 amountInr = obj.optDouble("amountInr", 0.0),
                 payoutDestination = obj.optString("payoutDestination", ""),
+                payoutMode = obj.optString("payoutMode", "INSTANT_UPI").ifBlank { "INSTANT_UPI" },
                 status = WithdrawalStatus.fromString(obj.optString("status")),
                 adminNote = obj.optString("adminNote", ""),
                 createdAtLabel = obj.optString("createdAtLabel", ""),
+                updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
+            )
+        }
+    }
+}
+
+data class RiderCodSettlementRecord(
+    val settlementId: String,
+    val riderId: String,
+    val riderName: String,
+    val riderPhone: String,
+    val amountInr: Double,
+    val referenceUtr: String,
+    val settledAtLabel: String = "",
+    val updatedAtEpochMs: Long = System.currentTimeMillis()
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("settlementId", settlementId)
+        put("riderId", riderId)
+        put("riderName", riderName)
+        put("riderPhone", riderPhone)
+        put("amountInr", amountInr)
+        put("referenceUtr", referenceUtr)
+        put("settledAtLabel", settledAtLabel)
+        put("updatedAtEpochMs", updatedAtEpochMs)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): RiderCodSettlementRecord? {
+            val id = obj.optString("settlementId", "").trim()
+            if (id.isEmpty()) return null
+            return RiderCodSettlementRecord(
+                settlementId = id,
+                riderId = obj.optString("riderId", ""),
+                riderName = obj.optString("riderName", "Rider Partner"),
+                riderPhone = obj.optString("riderPhone", ""),
+                amountInr = obj.optDouble("amountInr", 0.0),
+                referenceUtr = obj.optString("referenceUtr", "CASH_DESK"),
+                settledAtLabel = obj.optString("settledAtLabel", ""),
+                updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
+            )
+        }
+    }
+}
+
+enum class DisputeStatus {
+    OPEN,
+    REFUNDED,
+    REJECTED;
+
+    companion object {
+        fun fromString(raw: String?): DisputeStatus = when (raw?.trim()?.uppercase()) {
+            "REFUNDED" -> REFUNDED
+            "REJECTED" -> REJECTED
+            else -> OPEN
+        }
+    }
+}
+
+data class OrderDisputeRefundRecord(
+    val disputeId: String,
+    val orderId: String,
+    val customerPhone: String,
+    val customerName: String,
+    val reason: String,
+    val photoProofSummary: String = "",
+    val status: DisputeStatus = DisputeStatus.OPEN,
+    val refundAmountInr: Double = 0.0,
+    val adminNote: String = "",
+    val createdAtLabel: String = "",
+    val updatedAtEpochMs: Long = System.currentTimeMillis()
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("disputeId", disputeId)
+        put("orderId", orderId)
+        put("customerPhone", customerPhone)
+        put("customerName", customerName)
+        put("reason", reason)
+        put("photoProofSummary", photoProofSummary)
+        put("status", status.name)
+        put("refundAmountInr", refundAmountInr)
+        put("adminNote", adminNote)
+        put("createdAtLabel", createdAtLabel)
+        put("updatedAtEpochMs", updatedAtEpochMs)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): OrderDisputeRefundRecord? {
+            val id = obj.optString("disputeId", "").trim()
+            if (id.isEmpty()) return null
+            return OrderDisputeRefundRecord(
+                disputeId = id,
+                orderId = obj.optString("orderId", ""),
+                customerPhone = obj.optString("customerPhone", ""),
+                customerName = obj.optString("customerName", "Customer"),
+                reason = obj.optString("reason", "Delivery Issue"),
+                photoProofSummary = obj.optString("photoProofSummary", ""),
+                status = DisputeStatus.fromString(obj.optString("status")),
+                refundAmountInr = obj.optDouble("refundAmountInr", 0.0),
+                adminNote = obj.optString("adminNote", ""),
+                createdAtLabel = obj.optString("createdAtLabel", ""),
+                updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
+            )
+        }
+    }
+}
+
+enum class DocExpirySeverity {
+    VALID,
+    EXPIRING_SOON,
+    EXPIRED,
+    NOT_SET
+}
+
+data class RiderDocExpiryRecord(
+    val riderId: String,
+    val riderName: String,
+    val dlExpiry: String = "",
+    val rcExpiry: String = "",
+    val insuranceExpiry: String = "",
+    val autoHoldOnExpired: Boolean = false,
+    val alertSentAtLabel: String = "",
+    val updatedAtEpochMs: Long = System.currentTimeMillis()
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("riderId", riderId)
+        put("riderName", riderName)
+        put("dlExpiry", dlExpiry)
+        put("rcExpiry", rcExpiry)
+        put("insuranceExpiry", insuranceExpiry)
+        put("autoHoldOnExpired", autoHoldOnExpired)
+        put("alertSentAtLabel", alertSentAtLabel)
+        put("updatedAtEpochMs", updatedAtEpochMs)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): RiderDocExpiryRecord? {
+            val id = obj.optString("riderId", "").trim()
+            if (id.isEmpty()) return null
+            return RiderDocExpiryRecord(
+                riderId = id,
+                riderName = obj.optString("riderName", "Rider Partner"),
+                dlExpiry = obj.optString("dlExpiry", ""),
+                rcExpiry = obj.optString("rcExpiry", ""),
+                insuranceExpiry = obj.optString("insuranceExpiry", ""),
+                autoHoldOnExpired = obj.optBoolean("autoHoldOnExpired", false),
+                alertSentAtLabel = obj.optString("alertSentAtLabel", ""),
                 updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
             )
         }
@@ -223,9 +373,20 @@ object QuickDeliveryOperationsManager {
     private const val KEY_WITHDRAWALS = "rider_withdrawal_requests"
     private const val KEY_SUPPORT_TICKETS = "support_tickets"
     private const val KEY_ADMIN_ALLOWLIST_EMAIL = "admin_signed_in_email"
+    private const val KEY_REMOTE_FEATURE_FLAGS = "admin_remote_feature_flags_v1"
+    private const val KEY_CUSTOMER_WALLET_BONUS = "customer_referral_wallet_bonus_inr"
+    private const val KEY_CLAIMED_REFERRAL_CODES = "customer_claimed_referral_codes"
+    private const val KEY_WAIT_TIMERS_BY_ORDER = "wait_timers_by_order_json"
+    private const val KEY_RIDER_COORDS_BY_ORDER = "rider_live_coords_by_order_json"
+    private const val KEY_COD_SETTLEMENTS = "cod_settlement_ledger_json"
+    private const val KEY_DISPUTE_RECORDS = "order_dispute_refund_records_json"
+    private const val KEY_RIDER_DOC_EXPIRIES = "rider_doc_expiry_records_json"
+    private const val KEY_RIDER_PAYOUT_MODE = "rider_payout_mode_pref"
+    private const val KEY_CREDITED_DISPUTE_IDS = "credited_refund_dispute_ids"
 
     private val lock = Any()
     private var loaded = false
+    private var activeCustomerAccountKey: String = ""
 
     private val _savedAddresses = MutableStateFlow<List<SavedCustomerAddress>>(emptyList())
     val savedAddresses: StateFlow<List<SavedCustomerAddress>> = _savedAddresses.asStateFlow()
@@ -241,6 +402,33 @@ object QuickDeliveryOperationsManager {
 
     private val _signedInAdminEmail = MutableStateFlow<String?>(null)
     val signedInAdminEmail: StateFlow<String?> = _signedInAdminEmail.asStateFlow()
+
+    private val _remoteFeatureFlags = MutableStateFlow(AdminRemoteFeatureFlags())
+    val remoteFeatureFlags: StateFlow<AdminRemoteFeatureFlags> = _remoteFeatureFlags.asStateFlow()
+
+    private val _customerWalletBonusInr = MutableStateFlow(0)
+    val customerWalletBonusInr: StateFlow<Int> = _customerWalletBonusInr.asStateFlow()
+
+    private val _waitTimerStartByOrder = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val waitTimerStartByOrder: StateFlow<Map<String, Long>> = _waitTimerStartByOrder.asStateFlow()
+
+    private val _riderLiveCoordsByOrder = MutableStateFlow<Map<String, Pair<Double, Double>>>(emptyMap())
+    val riderLiveCoordsByOrder: StateFlow<Map<String, Pair<Double, Double>>> = _riderLiveCoordsByOrder.asStateFlow()
+
+    private val _codSettlements = MutableStateFlow<List<RiderCodSettlementRecord>>(emptyList())
+    val codSettlements: StateFlow<List<RiderCodSettlementRecord>> = _codSettlements.asStateFlow()
+
+    private val _disputeRecords = MutableStateFlow<List<OrderDisputeRefundRecord>>(emptyList())
+    val disputeRecords: StateFlow<List<OrderDisputeRefundRecord>> = _disputeRecords.asStateFlow()
+
+    private val _riderDocExpiries = MutableStateFlow<Map<String, RiderDocExpiryRecord>>(emptyMap())
+    val riderDocExpiries: StateFlow<Map<String, RiderDocExpiryRecord>> = _riderDocExpiries.asStateFlow()
+
+    private val _riderPayoutModePreference = MutableStateFlow("INSTANT_UPI")
+    val riderPayoutModePreference: StateFlow<String> = _riderPayoutModePreference.asStateFlow()
+
+    private val claimedReferralCodes = mutableSetOf<String>()
+    private val creditedDisputeIds = mutableSetOf<String>()
 
     val ALLOWED_ADMIN_EMAILS = setOf(
         "ravindergupta141@gmail.com",
@@ -278,6 +466,97 @@ object QuickDeliveryOperationsManager {
                     _supportTickets.value = (0 until arr.length())
                         .mapNotNull { arr.optJSONObject(it)?.let(CustomerSupportTicket::fromJson) }
                 }
+
+                prefs.getString(KEY_REMOTE_FEATURE_FLAGS, null)?.let { raw ->
+                    val obj = JSONObject(raw)
+                    _remoteFeatureFlags.value = AdminRemoteFeatureFlags.fromJson(obj)
+                }
+
+                _customerWalletBonusInr.value = prefs.getInt(KEY_CUSTOMER_WALLET_BONUS, 0).coerceAtLeast(0)
+                prefs.getStringSet(KEY_CLAIMED_REFERRAL_CODES, emptySet())?.let { codes ->
+                    claimedReferralCodes.clear()
+                    claimedReferralCodes.addAll(codes)
+                }
+
+                prefs.getString(KEY_WAIT_TIMERS_BY_ORDER, null)?.let { raw ->
+                    val obj = JSONObject(raw)
+                    val map = mutableMapOf<String, Long>()
+                    val keys = obj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val v = obj.optLong(k, 0L)
+                        if (v > 0L) map[k] = v
+                    }
+                    _waitTimerStartByOrder.value = map
+                }
+
+                prefs.getString(KEY_RIDER_COORDS_BY_ORDER, null)?.let { raw ->
+                    val obj = JSONObject(raw)
+                    val map = mutableMapOf<String, Pair<Double, Double>>()
+                    val keys = obj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val pairObj = obj.optJSONObject(k) ?: continue
+                        val lat = pairObj.optDouble("lat", 0.0)
+                        val lng = pairObj.optDouble("lng", 0.0)
+                        if (lat != 0.0 || lng != 0.0) map[k] = lat to lng
+                    }
+                    _riderLiveCoordsByOrder.value = map
+                }
+
+                prefs.getString(KEY_COD_SETTLEMENTS, null)?.let { raw ->
+                    val arr = JSONArray(raw)
+                    _codSettlements.value = (0 until arr.length())
+                        .mapNotNull { arr.optJSONObject(it)?.let(RiderCodSettlementRecord::fromJson) }
+                }
+
+                prefs.getString(KEY_DISPUTE_RECORDS, null)?.let { raw ->
+                    val arr = JSONArray(raw)
+                    _disputeRecords.value = (0 until arr.length())
+                        .mapNotNull { arr.optJSONObject(it)?.let(OrderDisputeRefundRecord::fromJson) }
+                }
+
+                prefs.getString(KEY_RIDER_DOC_EXPIRIES, null)?.let { raw ->
+                    val arr = JSONArray(raw)
+                    val map = mutableMapOf<String, RiderDocExpiryRecord>()
+                    for (i in 0 until arr.length()) {
+                        arr.optJSONObject(i)?.let(RiderDocExpiryRecord::fromJson)?.let { rec ->
+                            map[rec.riderId] = rec
+                        }
+                    }
+                    _riderDocExpiries.value = map
+                }
+
+                _riderPayoutModePreference.value = prefs.getString(KEY_RIDER_PAYOUT_MODE, "INSTANT_UPI") ?: "INSTANT_UPI"
+                prefs.getStringSet(KEY_CREDITED_DISPUTE_IDS, emptySet())?.let { ids ->
+                    creditedDisputeIds.clear()
+                    creditedDisputeIds.addAll(ids)
+                }
+            }
+        }
+    }
+
+    fun setActiveCustomerAccount(context: Context, phone: String, email: String) {
+        ensureLoaded(context)
+        val cleanPhone = com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(phone)
+        val newKey = when {
+            cleanPhone.length == 10 -> cleanPhone
+            email.isNotBlank() -> email.trim().lowercase(Locale.US)
+            else -> ""
+        }
+        synchronized(lock) {
+            if (activeCustomerAccountKey == newKey) return
+            activeCustomerAccountKey = newKey
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val scopedKey = if (newKey.isNotBlank()) "${KEY_SAVED_ADDRESSES}_$newKey" else KEY_SAVED_ADDRESSES
+            val raw = prefs.getString(scopedKey, null)
+            _savedAddresses.value = if (!raw.isNullOrBlank()) {
+                runCatching {
+                    val arr = JSONArray(raw)
+                    (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(SavedCustomerAddress::fromJson) }
+                }.getOrDefault(emptyList())
+            } else {
+                emptyList()
             }
         }
     }
@@ -285,11 +564,37 @@ object QuickDeliveryOperationsManager {
     private fun persist(context: Context) {
         runCatching {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val waitObj = JSONObject().apply {
+                _waitTimerStartByOrder.value.forEach { (k, v) -> put(k, v) }
+            }
+            val coordsObj = JSONObject().apply {
+                _riderLiveCoordsByOrder.value.forEach { (k, pair) ->
+                    put(k, JSONObject().apply {
+                        put("lat", pair.first)
+                        put("lng", pair.second)
+                    })
+                }
+            }
+            val addrPrefKey = if (activeCustomerAccountKey.isNotBlank()) {
+                "${KEY_SAVED_ADDRESSES}_$activeCustomerAccountKey"
+            } else {
+                KEY_SAVED_ADDRESSES
+            }
             prefs.edit()
-                .putString(KEY_SAVED_ADDRESSES, JSONArray().apply { _savedAddresses.value.forEach { put(it.toJson()) } }.toString())
+                .putString(addrPrefKey, JSONArray().apply { _savedAddresses.value.forEach { put(it.toJson()) } }.toString())
                 .putString(KEY_PROMO_COUPONS, JSONArray().apply { _promoCoupons.value.forEach { put(it.toJson()) } }.toString())
                 .putString(KEY_WITHDRAWALS, JSONArray().apply { _withdrawalRequests.value.forEach { put(it.toJson()) } }.toString())
                 .putString(KEY_SUPPORT_TICKETS, JSONArray().apply { _supportTickets.value.forEach { put(it.toJson()) } }.toString())
+                .putString(KEY_REMOTE_FEATURE_FLAGS, _remoteFeatureFlags.value.toJson().toString())
+                .putInt(KEY_CUSTOMER_WALLET_BONUS, _customerWalletBonusInr.value)
+                .putStringSet(KEY_CLAIMED_REFERRAL_CODES, claimedReferralCodes.toSet())
+                .putString(KEY_WAIT_TIMERS_BY_ORDER, waitObj.toString())
+                .putString(KEY_RIDER_COORDS_BY_ORDER, coordsObj.toString())
+                .putString(KEY_COD_SETTLEMENTS, JSONArray().apply { _codSettlements.value.forEach { put(it.toJson()) } }.toString())
+                .putString(KEY_DISPUTE_RECORDS, JSONArray().apply { _disputeRecords.value.forEach { put(it.toJson()) } }.toString())
+                .putString(KEY_RIDER_DOC_EXPIRIES, JSONArray().apply { _riderDocExpiries.value.values.forEach { put(it.toJson()) } }.toString())
+                .putString(KEY_RIDER_PAYOUT_MODE, _riderPayoutModePreference.value)
+                .putStringSet(KEY_CREDITED_DISPUTE_IDS, creditedDisputeIds.toSet())
                 .apply()
         }
     }
@@ -381,18 +686,29 @@ object QuickDeliveryOperationsManager {
     }
 
     // ---------------- RIDER PAYOUT WITHDRAWAL REQUESTS ----------------
+    fun setRiderPayoutModePreference(context: Context, mode: String) {
+        ensureLoaded(context)
+        val normalized = if (mode.uppercase() == "WEEKLY_AUTO") "WEEKLY_AUTO" else "INSTANT_UPI"
+        synchronized(lock) {
+            _riderPayoutModePreference.value = normalized
+            persist(context)
+        }
+    }
+
     fun submitRiderWithdrawalRequest(
         context: Context,
         riderId: String,
         riderName: String,
         riderPhone: String,
         amountInr: Double,
-        payoutDestination: String
+        payoutDestination: String,
+        payoutMode: String = _riderPayoutModePreference.value
     ): RiderWithdrawalRequest? {
         ensureLoaded(context)
         if (amountInr < 50.0 || payoutDestination.trim().length < 5) return null
         val now = System.currentTimeMillis()
         val label = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(now))
+        val mode = if (payoutMode.uppercase() == "WEEKLY_AUTO") "WEEKLY_AUTO" else "INSTANT_UPI"
         val req = RiderWithdrawalRequest(
             requestId = "WD-${(now % 100000).toString().padStart(5, '0')}",
             riderId = riderId,
@@ -400,6 +716,7 @@ object QuickDeliveryOperationsManager {
             riderPhone = riderPhone,
             amountInr = amountInr,
             payoutDestination = payoutDestination.trim(),
+            payoutMode = mode,
             status = WithdrawalStatus.PENDING,
             createdAtLabel = label,
             updatedAtEpochMs = now
@@ -510,16 +827,407 @@ object QuickDeliveryOperationsManager {
         }
     }
 
+    // ---------------- ADMIN REMOTE FEATURE SWITCHES & REFERRAL WALLET ----------------
+    fun updateRemoteFeatureFlagsFromAdmin(
+        context: Context,
+        updated: AdminRemoteFeatureFlags,
+        repository: SharedOrderRepository? = null
+    ): AdminRemoteFeatureFlags {
+        ensureLoaded(context)
+        val stamped = updated.copy(updatedAtEpochMs = System.currentTimeMillis())
+        synchronized(lock) {
+            _remoteFeatureFlags.value = stamped
+            persist(context)
+        }
+        applyPricingOverridesFromFlags(stamped, repository)
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return stamped
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    fun applyPricingOverridesFromFlags(
+        flags: AdminRemoteFeatureFlags,
+        repository: SharedOrderRepository?
+    ) {
+        runCatching {
+            val currentPricing = repository?.pricingConfig?.value
+                ?: com.example.data.pricing.ServerFareEngine.getPricingConfig()
+            val effectiveSurge = flags.effectiveSurgeMultiplier()
+            val effectiveComm = flags.platformCommissionPercent.toDouble().coerceIn(0.0, 40.0)
+            val surgeLabel = when {
+                flags.surgePricingEnabled -> "Admin Surge ${String.format(Locale.US, "%.2fx", effectiveSurge)}"
+                flags.isCurrentHourInPeakWindow() -> "Peak Auto-Surge ${String.format(Locale.US, "%.2fx", effectiveSurge)}"
+                else -> "Normal (1.0x)"
+            }
+            val nextPricing = currentPricing.copy(
+                surgeMultiplier = effectiveSurge,
+                surgePresetName = surgeLabel,
+                platformCommissionPercent = effectiveComm
+            )
+            val saved = com.example.data.pricing.ServerFareEngine.updatePricingConfig(nextPricing, "Admin Master Switch")
+            if (repository != null) {
+                val field = SharedOrderRepository::class.java.getDeclaredField("_pricingConfig")
+                field.isAccessible = true
+                val flow = field.get(repository) as MutableStateFlow<com.example.data.model.PricingConfig>
+                flow.value = saved
+            }
+        }
+    }
+
+    // ---------------- ADMIN COD SETTLEMENT LEDGER ----------------
+    fun markCodSettledByAdmin(
+        context: Context,
+        riderId: String,
+        riderName: String,
+        riderPhone: String,
+        amountInr: Double,
+        referenceUtr: String
+    ): RiderCodSettlementRecord? {
+        ensureLoaded(context)
+        if (amountInr <= 0.0) return null
+        val now = System.currentTimeMillis()
+        val label = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(now))
+        val rec = RiderCodSettlementRecord(
+            settlementId = "COD-${(now % 100000).toString().padStart(5, '0')}",
+            riderId = riderId,
+            riderName = riderName.ifBlank { "Rider Partner" },
+            riderPhone = riderPhone,
+            amountInr = amountInr,
+            referenceUtr = referenceUtr.trim().ifBlank { "CASH_DESK_${now % 10000}" },
+            settledAtLabel = label,
+            updatedAtEpochMs = now
+        )
+        synchronized(lock) {
+            _codSettlements.value = listOf(rec) + _codSettlements.value
+            persist(context)
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return rec
+    }
+
+    fun settledCodAmountForRider(riderId: String): Double {
+        return _codSettlements.value.filter { it.riderId == riderId }.sumOf { it.amountInr }
+    }
+
+    // ---------------- ADMIN DISPUTE & INSTANT WALLET REFUND DESK ----------------
+    fun submitOrderDispute(
+        context: Context,
+        orderId: String,
+        customerPhone: String,
+        customerName: String,
+        reason: String,
+        photoProofSummary: String = ""
+    ): OrderDisputeRefundRecord? {
+        ensureLoaded(context)
+        if (orderId.isBlank() || reason.isBlank()) return null
+        val now = System.currentTimeMillis()
+        val label = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(now))
+        val rec = OrderDisputeRefundRecord(
+            disputeId = "DSP-${(now % 100000).toString().padStart(5, '0')}",
+            orderId = orderId,
+            customerPhone = customerPhone,
+            customerName = customerName.ifBlank { "Customer" },
+            reason = reason.trim(),
+            photoProofSummary = photoProofSummary.trim(),
+            status = DisputeStatus.OPEN,
+            refundAmountInr = 0.0,
+            createdAtLabel = label,
+            updatedAtEpochMs = now
+        )
+        synchronized(lock) {
+            _disputeRecords.value = listOf(rec) + _disputeRecords.value
+            persist(context)
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return rec
+    }
+
+    fun processDisputeRefundByAdmin(
+        context: Context,
+        disputeId: String,
+        approveRefund: Boolean,
+        refundAmountInr: Double,
+        adminNote: String
+    ): OrderDisputeRefundRecord? {
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        var updatedItem: OrderDisputeRefundRecord? = null
+        synchronized(lock) {
+            _disputeRecords.value = _disputeRecords.value.map { d ->
+                if (d.disputeId == disputeId) {
+                    val next = d.copy(
+                        status = if (approveRefund) DisputeStatus.REFUNDED else DisputeStatus.REJECTED,
+                        refundAmountInr = if (approveRefund) refundAmountInr.coerceAtLeast(10.0) else 0.0,
+                        adminNote = adminNote.trim().ifBlank {
+                            if (approveRefund) "Instant Wallet Refund Credited" else "Rejected after proof review"
+                        },
+                        updatedAtEpochMs = now
+                    )
+                    updatedItem = next
+                    if (approveRefund && next.disputeId !in creditedDisputeIds &&
+                        (activeCustomerAccountKey.isBlank() ||
+                            next.customerPhone.filter(Char::isDigit).takeLast(10) == activeCustomerAccountKey)
+                    ) {
+                        creditedDisputeIds.add(next.disputeId)
+                        _customerWalletBonusInr.value += next.refundAmountInr.toInt()
+                    }
+                    next
+                } else d
+            }
+            persist(context)
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return updatedItem
+    }
+
+    // ---------------- RIDER DOCUMENT EXPIRY TRACKER ----------------
+    fun computeDocExpirySeverity(dateStr: String): DocExpirySeverity {
+        val clean = dateStr.trim()
+        if (clean.isEmpty()) return DocExpirySeverity.NOT_SET
+        val parsed = runCatching {
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }.parse(clean)
+        }.getOrNull() ?: return DocExpirySeverity.NOT_SET
+        val diffDays = ((parsed.time - System.currentTimeMillis()) / 86_400_000L)
+        return when {
+            diffDays < 0 -> DocExpirySeverity.EXPIRED
+            diffDays <= 7 -> DocExpirySeverity.EXPIRING_SOON
+            else -> DocExpirySeverity.VALID
+        }
+    }
+
+    fun upsertRiderDocExpiry(
+        context: Context,
+        riderId: String,
+        riderName: String,
+        dlExpiry: String,
+        rcExpiry: String,
+        insuranceExpiry: String,
+        autoHoldOnExpired: Boolean
+    ): RiderDocExpiryRecord {
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        val prev = _riderDocExpiries.value[riderId]
+        val rec = RiderDocExpiryRecord(
+            riderId = riderId,
+            riderName = riderName.ifBlank { prev?.riderName ?: "Rider Partner" },
+            dlExpiry = dlExpiry.trim(),
+            rcExpiry = rcExpiry.trim(),
+            insuranceExpiry = insuranceExpiry.trim(),
+            autoHoldOnExpired = autoHoldOnExpired,
+            alertSentAtLabel = prev?.alertSentAtLabel.orEmpty(),
+            updatedAtEpochMs = now
+        )
+        synchronized(lock) {
+            _riderDocExpiries.value = _riderDocExpiries.value + (riderId to rec)
+            persist(context)
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return rec
+    }
+
+    fun sendDocExpiryAlertByAdmin(context: Context, riderId: String, riderName: String): RiderDocExpiryRecord {
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        val label = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(now))
+        val prev = _riderDocExpiries.value[riderId] ?: RiderDocExpiryRecord(riderId = riderId, riderName = riderName)
+        val next = prev.copy(alertSentAtLabel = "Alerted $label", updatedAtEpochMs = now)
+        synchronized(lock) {
+            _riderDocExpiries.value = _riderDocExpiries.value + (riderId to next)
+            persist(context)
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return next
+    }
+
+    fun sendBroadcastFromAdmin(
+        context: Context,
+        message: String,
+        target: String = "ALL",
+        repository: SharedOrderRepository? = null
+    ) {
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        val next = _remoteFeatureFlags.value.copy(
+            adminBroadcastMessage = message.trim(),
+            adminBroadcastTarget = target.trim().uppercase().ifBlank { "ALL" },
+            adminBroadcastEpochMs = if (message.isBlank()) 0L else now,
+            updatedAtEpochMs = now
+        )
+        updateRemoteFeatureFlagsFromAdmin(context, next, repository)
+    }
+
+    fun buildPersonalReferralCode(name: String, phone: String): String {
+        val cleanName = name.uppercase(Locale.US).filter(Char::isLetter).take(3).ifBlank { "QD" }
+        val digits = phone.filter(Char::isDigit).takeLast(4).ifBlank { "2026" }
+        return "QD$cleanName$digits"
+    }
+
+    fun claimReferralBonus(context: Context, inviteCode: String, ownCode: String): Result<Int> {
+        ensureLoaded(context)
+        val clean = inviteCode.trim().uppercase().filter(Char::isLetterOrDigit)
+        if (clean.length < 5) {
+            return Result.failure(IllegalArgumentException("Enter a valid referral code (at least 5 characters)."))
+        }
+        if (clean == ownCode.trim().uppercase()) {
+            return Result.failure(IllegalArgumentException("You cannot apply your own referral code."))
+        }
+        synchronized(lock) {
+            if (clean in claimedReferralCodes) {
+                return Result.failure(IllegalArgumentException("Referral code $clean has already been redeemed."))
+            }
+            val bonus = _remoteFeatureFlags.value.referralBonusInr.coerceIn(10, 500)
+            claimedReferralCodes.add(clean)
+            _customerWalletBonusInr.value += bonus
+            persist(context)
+            return Result.success(bonus)
+        }
+    }
+
+    fun consumeWalletBonus(context: Context, amountUsedInr: Int) {
+        ensureLoaded(context)
+        if (amountUsedInr <= 0) return
+        synchronized(lock) {
+            _customerWalletBonusInr.value = (_customerWalletBonusInr.value - amountUsedInr).coerceAtLeast(0)
+            persist(context)
+        }
+    }
+
+    // ---------------- WAIT TIMER & LIVE RIDER GPS ETA ----------------
+    data class WaitTimerFeeInfo(
+        val startedAtMs: Long,
+        val elapsedSeconds: Long,
+        val freeSeconds: Long,
+        val overtimeMinutes: Int,
+        val waitFeeInr: Int
+    )
+
+    fun startWaitTimerAtPickup(
+        context: Context,
+        repository: SharedOrderRepository,
+        orderId: String
+    ): Long {
+        ensureLoaded(context)
+        val startedAt = synchronized(lock) {
+            val existing = _waitTimerStartByOrder.value[orderId]
+            if (existing != null && existing > 0L) {
+                existing
+            } else {
+                val now = System.currentTimeMillis()
+                _waitTimerStartByOrder.value = _waitTimerStartByOrder.value + (orderId to now)
+                persist(context)
+                now
+            }
+        }
+        getMutableOrdersFlow(repository)?.let { flow ->
+            flow.value = flow.value.map { ord ->
+                if (ord.orderId == orderId && ord.orderStatus == OrderStatus.RIDER_ASSIGNED) {
+                    ord.copy(
+                        orderStatus = OrderStatus.ARRIVED_AT_PICKUP,
+                        latestRiderQuickNote = "Rider reached pickup gate — Wait timer started"
+                    )
+                } else ord
+            }
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return startedAt
+    }
+
+    fun computeWaitFeeInfo(
+        orderId: String,
+        flags: AdminRemoteFeatureFlags,
+        nowMs: Long = System.currentTimeMillis()
+    ): WaitTimerFeeInfo? {
+        val startedAt = _waitTimerStartByOrder.value[orderId] ?: return null
+        if (startedAt <= 0L) return null
+        val elapsedSec = ((nowMs - startedAt) / 1000L).coerceAtLeast(0L)
+        val freeSec = (flags.freeWaitMinutes.coerceIn(1, 20) * 60L)
+        val extraSec = (elapsedSec - freeSec).coerceAtLeast(0L)
+        val overtimeMins = if (extraSec > 0L) ((extraSec + 59L) / 60L).toInt() else 0
+        val waitFee = overtimeMins * flags.waitFeePerMinuteInr.coerceIn(1, 50)
+        return WaitTimerFeeInfo(
+            startedAtMs = startedAt,
+            elapsedSeconds = elapsedSec,
+            freeSeconds = freeSec,
+            overtimeMinutes = overtimeMins,
+            waitFeeInr = waitFee
+        )
+    }
+
+    fun updateRiderCoordsForOrder(
+        context: Context,
+        orderId: String,
+        lat: Double,
+        lng: Double
+    ) {
+        if (lat == 0.0 && lng == 0.0) return
+        ensureLoaded(context)
+        synchronized(lock) {
+            val prev = _riderLiveCoordsByOrder.value[orderId]
+            if (prev == null || kotlin.math.abs(prev.first - lat) > 0.00005 || kotlin.math.abs(prev.second - lng) > 0.00005) {
+                _riderLiveCoordsByOrder.value = _riderLiveCoordsByOrder.value + (orderId to (lat to lng))
+                persist(context)
+            }
+        }
+    }
+
+    fun haversineDistanceKm(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+        if ((lat1 == 0.0 && lng1 == 0.0) || (lat2 == 0.0 && lng2 == 0.0)) return -1.0
+        val r = 6371.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lng2 - lng1)
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+            kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+            kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+        return r * c
+    }
+
+    fun computeLiveRiderEtaKmAndMins(order: CustomerOrder): Pair<Double, Int>? {
+        val riderCoords = _riderLiveCoordsByOrder.value[order.orderId] ?: return null
+        val targetLat = if (order.orderStatus == OrderStatus.PICKED_UP || order.orderStatus == OrderStatus.IN_TRANSIT) {
+            order.dropAddress.lat
+        } else {
+            order.pickupAddress.lat
+        }
+        val targetLng = if (order.orderStatus == OrderStatus.PICKED_UP || order.orderStatus == OrderStatus.IN_TRANSIT) {
+            order.dropAddress.lng
+        } else {
+            order.pickupAddress.lng
+        }
+        val dist = haversineDistanceKm(riderCoords.first, riderCoords.second, targetLat, targetLng)
+        if (dist < 0.0 || dist > 120.0) return null
+        val etaMins = kotlin.math.ceil((dist / 24.0) * 60.0).toInt().coerceIn(1, 90)
+        return dist to etaMins
+    }
+
     // ---------------- SERVER LIVE-SYNC MERGE & EXPORT ----------------
     fun exportOpsPayloadJson(): JSONObject = JSONObject().apply {
         put("promoCoupons", JSONArray().apply { _promoCoupons.value.forEach { put(it.toJson()) } })
         put("withdrawalRequests", JSONArray().apply { _withdrawalRequests.value.forEach { put(it.toJson()) } })
         put("supportTickets", JSONArray().apply { _supportTickets.value.forEach { put(it.toJson()) } })
+        put("codSettlements", JSONArray().apply { _codSettlements.value.forEach { put(it.toJson()) } })
+        put("disputeRecords", JSONArray().apply { _disputeRecords.value.forEach { put(it.toJson()) } })
+        put("riderDocExpiries", JSONArray().apply { _riderDocExpiries.value.values.forEach { put(it.toJson()) } })
+        if (_remoteFeatureFlags.value.updatedAtEpochMs > 0L) {
+            put("remoteFeatureFlags", _remoteFeatureFlags.value.toJson())
+        }
+        put("waitTimerStartByOrder", JSONObject().apply {
+            _waitTimerStartByOrder.value.forEach { (k, v) -> put(k, v) }
+        })
+        put("riderLiveCoordsByOrder", JSONObject().apply {
+            _riderLiveCoordsByOrder.value.forEach { (k, pair) ->
+                put(k, JSONObject().apply {
+                    put("lat", pair.first)
+                    put("lng", pair.second)
+                })
+            }
+        })
     }
 
     fun mergeFromServerPayload(context: Context, root: JSONObject) {
         ensureLoaded(context)
         var changed = false
+        var flagsUpdated: AdminRemoteFeatureFlags? = null
         synchronized(lock) {
             root.optJSONArray("promoCoupons")?.let { arr ->
                 val merged = _promoCoupons.value.associateBy { it.code }.toMutableMap()
@@ -560,8 +1268,98 @@ object QuickDeliveryOperationsManager {
                 _supportTickets.value = merged.values.sortedByDescending { it.updatedAtEpochMs }
             }
 
+            root.optJSONArray("codSettlements")?.let { arr ->
+                val merged = _codSettlements.value.associateBy { it.settlementId }.toMutableMap()
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i)?.let(RiderCodSettlementRecord::fromJson) ?: continue
+                    val prev = merged[item.settlementId]
+                    if (prev == null || item.updatedAtEpochMs >= prev.updatedAtEpochMs) {
+                        merged[item.settlementId] = item
+                        changed = true
+                    }
+                }
+                _codSettlements.value = merged.values.sortedByDescending { it.updatedAtEpochMs }
+            }
+
+            root.optJSONArray("disputeRecords")?.let { arr ->
+                val merged = _disputeRecords.value.associateBy { it.disputeId }.toMutableMap()
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i)?.let(OrderDisputeRefundRecord::fromJson) ?: continue
+                    val prev = merged[item.disputeId]
+                    if (prev == null || item.updatedAtEpochMs >= prev.updatedAtEpochMs) {
+                        merged[item.disputeId] = item
+                        changed = true
+                    }
+                    if (item.status == DisputeStatus.REFUNDED &&
+                        item.refundAmountInr > 0.0 &&
+                        item.disputeId !in creditedDisputeIds &&
+                        (activeCustomerAccountKey.isNotBlank() &&
+                            item.customerPhone.filter(Char::isDigit).takeLast(10) == activeCustomerAccountKey)
+                    ) {
+                        creditedDisputeIds.add(item.disputeId)
+                        _customerWalletBonusInr.value += item.refundAmountInr.toInt()
+                        changed = true
+                    }
+                }
+                _disputeRecords.value = merged.values.sortedByDescending { it.updatedAtEpochMs }
+            }
+
+            root.optJSONArray("riderDocExpiries")?.let { arr ->
+                val merged = _riderDocExpiries.value.toMutableMap()
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i)?.let(RiderDocExpiryRecord::fromJson) ?: continue
+                    val prev = merged[item.riderId]
+                    if (prev == null || item.updatedAtEpochMs >= prev.updatedAtEpochMs) {
+                        merged[item.riderId] = item
+                        changed = true
+                    }
+                }
+                _riderDocExpiries.value = merged
+            }
+
+            root.optJSONObject("remoteFeatureFlags")?.let { flagsObj ->
+                val incoming = AdminRemoteFeatureFlags.fromJson(flagsObj)
+                val prev = _remoteFeatureFlags.value
+                if (incoming.updatedAtEpochMs > prev.updatedAtEpochMs) {
+                    _remoteFeatureFlags.value = incoming
+                    flagsUpdated = incoming
+                    changed = true
+                }
+            }
+
+            root.optJSONObject("waitTimerStartByOrder")?.let { wtObj ->
+                val merged = _waitTimerStartByOrder.value.toMutableMap()
+                val keys = wtObj.keys()
+                while (keys.hasNext()) {
+                    val oid = keys.next()
+                    val ts = wtObj.optLong(oid, 0L)
+                    if (ts > 0L && (!merged.containsKey(oid) || ts < (merged[oid] ?: Long.MAX_VALUE))) {
+                        merged[oid] = ts
+                        changed = true
+                    }
+                }
+                _waitTimerStartByOrder.value = merged
+            }
+
+            root.optJSONObject("riderLiveCoordsByOrder")?.let { rcObj ->
+                val merged = _riderLiveCoordsByOrder.value.toMutableMap()
+                val keys = rcObj.keys()
+                while (keys.hasNext()) {
+                    val oid = keys.next()
+                    val pairObj = rcObj.optJSONObject(oid) ?: continue
+                    val lat = pairObj.optDouble("lat", 0.0)
+                    val lng = pairObj.optDouble("lng", 0.0)
+                    if (lat != 0.0 || lng != 0.0) {
+                        merged[oid] = lat to lng
+                        changed = true
+                    }
+                }
+                _riderLiveCoordsByOrder.value = merged
+            }
+
             if (changed) persist(context)
         }
+        flagsUpdated?.let { applyPricingOverridesFromFlags(it, SharedOrderRepository.getInstance(context)) }
     }
 
     // ---------------- ORDER MUTATIONS (CANCEL & REASSIGN) ----------------

@@ -135,7 +135,8 @@ fun attemptAutoSignIn(
 fun GoogleSignInButton(
     onAuthSuccess: () -> Unit,
     onAuthError: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -160,7 +161,7 @@ fun GoogleSignInButton(
                 onAuthCancelled = { isLoading = false }
             )
         },
-        enabled = !isLoading,
+        enabled = enabled && !isLoading,
         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D1B2A)),
         modifier = modifier.testTag("google_sign_in_button")
     ) {

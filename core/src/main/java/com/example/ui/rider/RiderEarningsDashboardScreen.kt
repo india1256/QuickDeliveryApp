@@ -9,6 +9,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -79,6 +81,7 @@ import com.example.data.model.OrderStatus
 import com.example.data.model.RiderProfile
 import com.example.data.model.UpiAppOption
 import com.example.data.repository.SharedOrderRepository
+import com.example.ui.components.QuickDeliveryCuteBunnyLogo
 import com.example.ui.components.QuickDeliveryOfficialLogo
 import com.example.ui.components.RiderDeliveryFeedback
 import com.example.ui.components.RiderFeedbackManager
@@ -135,6 +138,7 @@ fun RiderEarningsDashboardScreen(
     remember(context) { RiderThemeManager.ensureLoaded(context) }
     remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
     val isDarkMode by RiderThemeManager.isDarkMode.collectAsState()
+    val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
     val allWithdrawals by QuickDeliveryOperationsManager.withdrawalRequests.collectAsState()
     val riderWithdrawals = remember(allWithdrawals, rider.riderId) {
         allWithdrawals.filter { it.riderId == rider.riderId || it.riderPhone == rider.mobile }
@@ -294,11 +298,11 @@ fun RiderEarningsDashboardScreen(
                             )
                         }
                         Spacer(modifier = Modifier.width(6.dp))
-                        QuickDeliveryOfficialLogo(size = 32.dp, borderColor = DashOrange)
+                        QuickDeliveryCuteBunnyLogo(size = 34.dp, borderColor = DashOrange)
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Quick Delivery",
+                                text = "Partner Quick Delivery",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = Color.White,
@@ -586,6 +590,33 @@ fun RiderEarningsDashboardScreen(
                                     )
                                 }
                             }
+                        }
+
+                        Button(
+                            onClick = {
+                                com.example.security.QuickDeliveryPdfGenerator.generateAndShareRiderStatementPdf(
+                                    context = context,
+                                    rider = rider,
+                                    orders = orders,
+                                    tipsByOrder = tipsByOrder,
+                                    riderSharePercent = remoteFlags.riderSharePercent
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = DashEmerald,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("rider_download_monthly_statement_pdf_btn")
+                        ) {
+                            Text(
+                                text = "📄 Download Monthly Earning Statement PDF",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         }
                     }
                 }
@@ -1165,6 +1196,7 @@ fun RiderEarningsDashboardScreen(
                         // Withdraw Available Balance to Bank / UPI
                         val withdrawableInr = (rider.walletBalanceInr + liveTipsFromOrdersInr - rider.commissionDebtInr)
                             .coerceAtLeast(0.0)
+                        val payoutModePref by QuickDeliveryOperationsManager.riderPayoutModePreference.collectAsState()
                         Surface(
                             color = Color(0xFFF8FAFC),
                             shape = RoundedCornerShape(12.dp),
@@ -1181,6 +1213,41 @@ fun RiderEarningsDashboardScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = DashNavy
                                 )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilterChip(
+                                        selected = payoutModePref != "WEEKLY_AUTO",
+                                        onClick = {
+                                            QuickDeliveryOperationsManager.setRiderPayoutModePreference(context, "INSTANT_UPI")
+                                        },
+                                        label = {
+                                            Text(
+                                                "⚡ Instant UPI / IMPS (<5m)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("rider_payout_mode_instant_chip")
+                                    )
+                                    FilterChip(
+                                        selected = payoutModePref == "WEEKLY_AUTO",
+                                        onClick = {
+                                            QuickDeliveryOperationsManager.setRiderPayoutModePreference(context, "WEEKLY_AUTO")
+                                        },
+                                        label = {
+                                            Text(
+                                                "📅 Weekly Auto (Mon 10 AM)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("rider_payout_mode_weekly_chip")
+                                    )
+                                }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1227,12 +1294,14 @@ fun RiderEarningsDashboardScreen(
                                                     riderName = rider.name,
                                                     riderPhone = rider.mobile,
                                                     amountInr = amt,
-                                                    payoutDestination = withdrawDestinationInput
+                                                    payoutDestination = withdrawDestinationInput,
+                                                    payoutMode = payoutModePref
                                                 )
                                                 if (req != null) {
                                                     MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                                                     withdrawAmountInput = ""
-                                                    withdrawFeedback = "✅ Payout request #${req.requestId} (₹${amt.toInt()}) sent to Admin!"
+                                                    val modeText = if (req.payoutMode == "WEEKLY_AUTO") "Weekly Auto-Payout" else "Instant UPI/IMPS"
+                                                    withdrawFeedback = "✅ $modeText request #${req.requestId} (₹${amt.toInt()}) sent to Admin!"
                                                 }
                                             }
                                         }
@@ -1259,13 +1328,14 @@ fun RiderEarningsDashboardScreen(
                                             WithdrawalStatus.REJECTED -> Color(0xFFDC2626)
                                             WithdrawalStatus.PENDING -> Color(0xFFD97706)
                                         }
+                                        val modeTag = if (wd.payoutMode == "WEEKLY_AUTO") "Weekly Auto" else "Instant UPI"
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = "₹${wd.amountInr.toInt()} → ${wd.payoutDestination} (${wd.createdAtLabel})",
+                                                text = "₹${wd.amountInr.toInt()} ($modeTag) → ${wd.payoutDestination} • ${wd.createdAtLabel}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = Color(0xFF334155),
                                                 modifier = Modifier.weight(1f)

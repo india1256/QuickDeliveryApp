@@ -80,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.ui.components.QuickDeliveryCuteBunnyLogo
 import com.example.ui.components.QuickDeliveryOfficialLogo
 import com.example.data.model.CustomerOrder
 import com.example.data.model.OrderStatus
@@ -285,7 +286,7 @@ fun PorterRiderDrawerContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        QuickDeliveryOfficialLogo(size = 36.dp, borderColor = QuickDeliveryOrange)
+                        QuickDeliveryCuteBunnyLogo(size = 38.dp, borderColor = QuickDeliveryOrange)
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(

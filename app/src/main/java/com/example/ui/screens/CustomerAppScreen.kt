@@ -137,16 +137,21 @@ import com.example.ui.components.LiveRiderContinuousTrackingCard
 import com.example.ui.components.MotivationAndPromoManager
 import com.example.ui.components.PhoneStorageLoginBackupCard
 import com.example.ui.components.QuickDeliveryDeleteAccountDialog
+import com.example.ui.components.QuickDeliveryMandatoryPermissionsGateScreen
 import com.example.ui.components.QuickDeliveryNextLevelLaunchOverlay
+import com.example.ui.components.QuickDeliveryCuteBunnyLogo
 import com.example.ui.components.QuickDeliveryOfficialLogo
 import com.example.ui.components.QuickDeliveryPrivacyPolicyDialog
 import com.example.ui.components.QuickDeliverySpeedingVehicleIntro
 import com.example.ui.components.QuickDeliverySuggestionBoxCard
 import com.example.ui.components.QuickDeliveryUserAuthScreen
 import com.example.ui.components.RiderFeedbackManager
+import com.example.ui.components.hasAllMandatoryAppPermissions
+import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.InlineLanguageSelectorBar
 import com.example.ui.i18n.LanguageSwitcherPill
 import com.example.ui.i18n.LocalizedContextProvider
+import com.example.ui.i18n.rememberDynamicUiStrings
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -178,6 +183,7 @@ fun CustomerAppScreen(
 ) = LocalizedContextProvider {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val uiStrings = rememberDynamicUiStrings()
     val repository = remember {
         SharedOrderRepository.getInstance(context).also { repo ->
             AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
@@ -190,24 +196,37 @@ fun CustomerAppScreen(
     val gatewayConfig = remember { repository.getGatewayMerchantConfig() }
 
     // 0. Intro Animation & Customer Sign Up / Sign In State (cached in session so tab switches are 0ms instant)
+    remember(context) { MotivationAndPromoManager.restoreSavedLoginFromPhoneStorage(context) }
+    remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
     var showSpeedIntro by remember { mutableStateOf(!MotivationAndPromoManager.customerIntroCompleted) }
-    var isCustomerAuthenticated by remember { mutableStateOf(MotivationAndPromoManager.customerAuthenticatedInSession) }
 
     // 1 = Address & Route, 2 = Parcel Photo (after Address Next), 3 = Payment, 4 = Live Tracking
     var currentStep by rememberSaveable { mutableIntStateOf(1) }
     val customerMainListState = rememberLazyListState()
-
-    remember(context) { MotivationAndPromoManager.restoreSavedLoginFromPhoneStorage(context) }
-    remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
     val savedAddresses by QuickDeliveryOperationsManager.savedAddresses.collectAsState()
     val adminPromoCoupons by QuickDeliveryOperationsManager.promoCoupons.collectAsState()
     val customerSupportTickets by QuickDeliveryOperationsManager.supportTickets.collectAsState()
     val isCustomerStorageGranted by MotivationAndPromoManager.customerStoragePermissionGranted.collectAsState()
+    val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+    val walletBonusInr by QuickDeliveryOperationsManager.customerWalletBonusInr.collectAsState()
+
+    var isScheduledDelivery by rememberSaveable { mutableStateOf(false) }
+    var scheduledDateLabel by rememberSaveable { mutableStateOf("Today") }
+    var scheduledTimeSlot by rememberSaveable { mutableStateOf("3 PM - 6 PM") }
+    var isMultiDropEnabled by rememberSaveable { mutableStateOf(false) }
+    var extraStopAddress by rememberSaveable { mutableStateOf("") }
+    var isParcelInsured by rememberSaveable { mutableStateOf(false) }
+    var isHelperAdded by rememberSaveable { mutableStateOf(false) }
+    var useWalletBonus by rememberSaveable { mutableStateOf(false) }
 
     // Customer profile & booking form state (preserved across back navigation & tab switches)
     var customerName by rememberSaveable { mutableStateOf(MotivationAndPromoManager.cachedCustomerName) }
     var customerPhone by rememberSaveable { mutableStateOf(MotivationAndPromoManager.cachedCustomerPhone) }
     var customerEmail by rememberSaveable { mutableStateOf(MotivationAndPromoManager.cachedCustomerEmail) }
+
+    LaunchedEffect(customerPhone, customerEmail) {
+        QuickDeliveryOperationsManager.setActiveCustomerAccount(context, customerPhone, customerEmail)
+    }
 
     var pickupHouseFlat by rememberSaveable { mutableStateOf("") }
     var pickupBuilding by rememberSaveable { mutableStateOf("") }
@@ -288,6 +307,7 @@ fun CustomerAppScreen(
     var selectedWeightBracketLabel by rememberSaveable { mutableStateOf("Up to 5kg") }
     var packageWeightKg by rememberSaveable { mutableStateOf("1.0") }
     var packageDescription by rememberSaveable { mutableStateOf("") }
+    var selectedInstructionsCsv by rememberSaveable { mutableStateOf("") }
     var selectedVehicle by rememberSaveable { mutableStateOf(VehicleType.BIKE) }
 
     // Keep selectedVehicle synchronized if Admin disables the currently selected vehicle
@@ -360,18 +380,48 @@ fun CustomerAppScreen(
     var selectedTrackingOrderId by rememberSaveable { mutableStateOf<String?>(null) }
     var latestBookedOrder by remember { mutableStateOf<CustomerOrder?>(null) }
 
-    // Observe orders for automatic delivery motivation notifications & real-time FCM push updates
-    LaunchedEffect(orders) {
-        MotivationAndPromoManager.observeOrdersForDeliveryMotivation(orders)
-        FcmOrderNotificationManager.observeOrdersAndDispatchFcmNotifications(context, orders)
+    // Filter orders strictly to the logged-in customer's phone / email identity so different numbers see fresh state
+    val normalizedCustomerPhone = remember(customerPhone) {
+        com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(customerPhone)
+    }
+    val myCustomerId = remember(normalizedCustomerPhone, customerEmail) {
+        if (normalizedCustomerPhone.length == 10) {
+            "CUST-$normalizedCustomerPhone"
+        } else if (customerEmail.isNotBlank()) {
+            "CUST-EM-${customerEmail.trim().lowercase(Locale.US).hashCode().toUInt()}"
+        } else {
+            "CUST-GUEST"
+        }
+    }
+    val customerOrders = remember(orders, normalizedCustomerPhone, myCustomerId) {
+        orders.filter { ord ->
+            val ordPhone = com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(ord.customerPhone)
+            val ordPickupPhone = com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(ord.pickupAddress.contactPhone)
+            when {
+                normalizedCustomerPhone.length == 10 ->
+                    ordPhone == normalizedCustomerPhone ||
+                        (ordPhone.isBlank() && ordPickupPhone == normalizedCustomerPhone) ||
+                        ord.customerId == myCustomerId
+                else -> ord.customerId == myCustomerId
+            }
+        }
     }
 
-    val activeOrder: CustomerOrder? = remember(orders, selectedTrackingOrderId, latestBookedOrder) {
-        orders.firstOrNull { it.orderId == selectedTrackingOrderId }
-            ?: latestBookedOrder?.let { latest ->
-                orders.firstOrNull { it.orderId == latest.orderId } ?: latest
+    // Observe this customer's orders for automatic delivery motivation notifications & real-time FCM push updates
+    LaunchedEffect(customerOrders) {
+        MotivationAndPromoManager.observeOrdersForDeliveryMotivation(customerOrders)
+        FcmOrderNotificationManager.observeOrdersAndDispatchFcmNotifications(context, customerOrders)
+    }
+
+    val activeOrder: CustomerOrder? = remember(customerOrders, selectedTrackingOrderId, latestBookedOrder, normalizedCustomerPhone, myCustomerId) {
+        customerOrders.firstOrNull { it.orderId == selectedTrackingOrderId }
+            ?: latestBookedOrder?.takeIf { latest ->
+                val latestPhone = com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(latest.customerPhone)
+                (normalizedCustomerPhone.length == 10 && latestPhone == normalizedCustomerPhone) || latest.customerId == myCustomerId
+            }?.let { latest ->
+                customerOrders.firstOrNull { it.orderId == latest.orderId } ?: latest
             }
-            ?: orders.firstOrNull()
+            ?: customerOrders.firstOrNull()
     }
 
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -497,6 +547,14 @@ fun CustomerAppScreen(
         }
     }
 
+    val effectivePricingConfig = remember(pricingConfig, remoteFlags) {
+        val activeSurge = remoteFlags.effectiveSurgeMultiplier()
+        pricingConfig.copy(
+            surgeMultiplier = if (activeSurge > 1.0) activeSurge else pricingConfig.surgeMultiplier,
+            platformCommissionPercent = remoteFlags.platformCommissionPercent.toDouble().coerceIn(0.0, 40.0)
+        )
+    }
+
     val liveDetailedFare = remember(
         pickupLat,
         pickupLng,
@@ -506,7 +564,7 @@ fun CustomerAppScreen(
         packageWeightKg,
         packageDescription,
         selectedVehicle,
-        pricingConfig,
+        effectivePricingConfig,
         vehiclePolicy
     ) {
         AutomatedFairRiderAssignmentEngine.calculateDetailedVehicleFare(
@@ -518,7 +576,7 @@ fun CustomerAppScreen(
             vehicleType = selectedVehicle,
             packageType = selectedPackageType,
             packageDescription = packageDescription.ifBlank { "Parcel" },
-            pricingConfigOverride = pricingConfig,
+            pricingConfigOverride = effectivePricingConfig,
             policyOverride = vehiclePolicy
         )
     }
@@ -535,9 +593,38 @@ fun CustomerAppScreen(
         appliedCouponObj?.computeDiscountInr(liveDetailedFare.totalFareInr) ?: 0.0
     }
 
+    val extraStopAddonInr = if (remoteFlags.multiDropEnabled && isMultiDropEnabled) 40.0 else 0.0
+    val insuranceAddonInr = if (remoteFlags.parcelInsuranceEnabled && isParcelInsured) remoteFlags.insuranceFeeInr.toDouble() else 0.0
+    val helperAddonInr = if (remoteFlags.helperAddonEnabled && isHelperAdded) remoteFlags.helperFeeInr.toDouble() else 0.0
+    val totalRemoteAddonInr = extraStopAddonInr + insuranceAddonInr + helperAddonInr
+    val extraAddonSummaryLabel = remember(extraStopAddonInr, insuranceAddonInr, helperAddonInr) {
+        listOfNotNull(
+            if (extraStopAddonInr > 0.0) "Extra Stop" else null,
+            if (insuranceAddonInr > 0.0) "Parcel Insurance" else null,
+            if (helperAddonInr > 0.0) "Loading Helper" else null
+        ).joinToString(" + ")
+    }
+    val walletDiscountInr = remember(remoteFlags.referralWalletEnabled, useWalletBonus, walletBonusInr, liveDetailedFare.totalFareInr) {
+        if (remoteFlags.referralWalletEnabled && useWalletBonus && walletBonusInr > 0) {
+            minOf(walletBonusInr.toDouble(), (liveDetailedFare.totalFareInr * 0.5).coerceAtLeast(10.0))
+        } else 0.0
+    }
+
     val liveQuote = liveDetailedFare.quote
-    val liveFareAmountInr = (liveDetailedFare.totalFareInr - promoDiscountInr).coerceAtLeast(15.0)
+    val liveFareAmountInr = (liveDetailedFare.totalFareInr + totalRemoteAddonInr - promoDiscountInr - walletDiscountInr).coerceAtLeast(15.0)
     val totalWithTipInr = liveFareAmountInr + selectedRiderTipInr
+    val isCodAllowedForOrder = remoteFlags.codEnabled && totalWithTipInr <= remoteFlags.maxCodLimitInr
+
+    LaunchedEffect(remoteFlags, isCodAllowedForOrder) {
+        if (!remoteFlags.scheduledDeliveryEnabled) isScheduledDelivery = false
+        if (!remoteFlags.multiDropEnabled) isMultiDropEnabled = false
+        if (!remoteFlags.parcelInsuranceEnabled) isParcelInsured = false
+        if (!remoteFlags.helperAddonEnabled) isHelperAdded = false
+        if (!remoteFlags.referralWalletEnabled) useWalletBonus = false
+        if (!isCodAllowedForOrder && selectedPaymentMethod == CustomerPaymentMethod.CASH_ON_DELIVERY) {
+            selectedPaymentMethod = CustomerPaymentMethod.GATEWAY_UPI
+        }
+    }
 
     val formattedDistanceKm = remember(liveDetailedFare.distanceKm) {
         String.format(Locale.US, "%.1f", liveDetailedFare.distanceKm)
@@ -564,6 +651,49 @@ fun CustomerAppScreen(
     var showGstInvoiceDialogForOrder by remember { mutableStateOf<CustomerOrder?>(null) }
     var orderPendingCancellation by remember { mutableStateOf<CustomerOrder?>(null) }
     var isCustomerLoggedIn by remember { mutableStateOf(MotivationAndPromoManager.customerAuthenticatedInSession) }
+    var allCustomerPermissionsGranted by remember { mutableStateOf(hasAllMandatoryAppPermissions(context)) }
+
+    val resetCustomerTransientBookingState = {
+        selectedTrackingOrderId = null
+        latestBookedOrder = null
+        showOrderHistoryScreen = false
+        showBookingConfirmationScreen = false
+        currentStep = 1
+        attemptedStep1Next = false
+        pickupHouseFlat = ""
+        pickupBuilding = ""
+        pickupAddressText = ""
+        pickupPinCode = ""
+        pickupLandmark = ""
+        pickupLat = 0.0
+        pickupLng = 0.0
+        pickupLiveGpsVerified = false
+        dropHouseFlat = ""
+        dropBuilding = ""
+        dropAddressText = ""
+        dropPinCode = ""
+        dropLandmark = ""
+        dropLat = 0.0
+        dropLng = 0.0
+        dropLiveGpsVerified = false
+        receiverFullName = ""
+        receiverMobilePhone = ""
+        packageDescription = ""
+        selectedInstructionsCsv = ""
+        currentBookingPhotoSummary = null
+        verifiedGatewayOrder = null
+        promoCodeInput = ""
+        appliedPromoCode = ""
+        promoFeedbackMessage = null
+        selectedRiderTipInr = 0
+        liveRiderGpsCoordinates = null
+        useWalletBonus = false
+        isScheduledDelivery = false
+        isMultiDropEnabled = false
+        extraStopAddress = ""
+        isParcelInsured = false
+        isHelperAdded = false
+    }
 
     val validateStep1MandatoryFields: () -> String? = {
         val weightCheck = AutomatedFairRiderAssignmentEngine.validateCustomerParcelWeightKg(
@@ -575,12 +705,15 @@ fun CustomerAppScreen(
             pickupBuilding.isBlank() -> "Pickup Building / Society (*) is mandatory"
             pickupAddressText.isBlank() -> "Pickup Area / Locality / Street (*) is mandatory"
             pickupPinCode.length != 6 -> "Please enter a valid 6-digit Pickup PIN Code (*)"
+            !remoteFlags.isPinCodeAllowed(pickupPinCode) -> "Pickup PIN $pickupPinCode is currently outside Admin serviceable PIN zones."
             receiverFullName.isBlank() -> "Receiver Name (*) is mandatory"
             receiverMobilePhone.length != 10 -> "Please enter a valid 10-digit Receiver Phone (*)"
             dropHouseFlat.isBlank() -> "Drop House / Flat No. (*) is mandatory"
             dropBuilding.isBlank() -> "Drop Building / Society (*) is mandatory"
             dropAddressText.isBlank() -> "Drop Area / Locality / Street (*) is mandatory"
             dropPinCode.length != 6 -> "Please enter a valid 6-digit Drop PIN Code (*)"
+            !remoteFlags.isPinCodeAllowed(dropPinCode) -> "Drop PIN $dropPinCode is currently outside Admin serviceable PIN zones."
+            remoteFlags.multiDropEnabled && isMultiDropEnabled && extraStopAddress.isBlank() -> "Please enter Extra Stop address or turn off Multi-Drop."
             weightCheck.isFailure -> weightCheck.exceptionOrNull()?.message
                 ?: AutomatedFairRiderAssignmentEngine.MAX_PARCEL_WEIGHT_ERROR_MESSAGE
             packageDescription.isBlank() -> "Parcel Note / Item Description (*) is mandatory"
@@ -639,22 +772,48 @@ fun CustomerAppScreen(
             prefsKeyPrefix = "customer",
             context = context,
             onAuthenticated = { name, phone, email ->
+                val prevCleanPhone = com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(customerPhone)
+                val nextCleanPhone = com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(phone)
+                val accountChanged = (nextCleanPhone != prevCleanPhone) ||
+                    (prevCleanPhone.isBlank() && !email.equals(customerEmail, ignoreCase = true))
+                if (accountChanged) {
+                    resetCustomerTransientBookingState()
+                }
                 customerName = name
                 customerPhone = phone
                 customerEmail = email
+                QuickDeliveryOperationsManager.setActiveCustomerAccount(context, phone, email)
                 MotivationAndPromoManager.customerAuthenticatedInSession = true
                 isCustomerLoggedIn = true
-                statusBanner = "Welcome back, $name! Plan your delivery."
+                allCustomerPermissionsGranted = hasAllMandatoryAppPermissions(context)
+                statusBanner = "Welcome, $name! Plan your delivery."
             }
         )
         return@LocalizedContextProvider
     }
 
-    // 3. Dedicated Customer Order History Screen (Past & Active Deliveries with Status, Date, and Final Price)
+    if (!allCustomerPermissionsGranted) {
+        QuickDeliveryMandatoryPermissionsGateScreen(
+            roleTitle = "Customer",
+            prefsKeyPrefix = "customer",
+            accentColor = PrimaryTeal,
+            onAllPermissionsGranted = {
+                allCustomerPermissionsGranted = true
+            },
+            onLogout = {
+                MotivationAndPromoManager.logoutCustomer(context)
+                resetCustomerTransientBookingState()
+                isCustomerLoggedIn = false
+            }
+        )
+        return@LocalizedContextProvider
+    }
+
+    // 3. Dedicated Customer Order History Screen (Past & Active Deliveries scoped to this Customer account)
     if (showOrderHistoryScreen) {
         CustomerOrderHistoryScreen(
             customerName = customerName,
-            orders = orders,
+            orders = customerOrders,
             onBack = { showOrderHistoryScreen = false },
             onSelectOrderToTrack = { selectedOrder ->
                 selectedTrackingOrderId = selectedOrder.orderId
@@ -753,16 +912,35 @@ fun CustomerAppScreen(
                 dropAddressText.ifBlank { "Drop Location" }
             }
 
+            val enrichedDescription = buildString {
+                append(packageDescription.ifBlank { "Express Parcel" })
+                if (selectedInstructionsCsv.isNotBlank()) {
+                    append(" [Instructions: ${selectedInstructionsCsv.trim()}]")
+                }
+                if (remoteFlags.scheduledDeliveryEnabled && isScheduledDelivery) {
+                    append(" [Scheduled: $scheduledDateLabel $scheduledTimeSlot]")
+                }
+                if (remoteFlags.multiDropEnabled && isMultiDropEnabled && extraStopAddress.isNotBlank()) {
+                    append(" [Extra Stop: ${extraStopAddress.trim()}]")
+                }
+                if (remoteFlags.parcelInsuranceEnabled && isParcelInsured) {
+                    append(" [Insured ₹5,000]")
+                }
+                if (remoteFlags.helperAddonEnabled && isHelperAdded) {
+                    append(" [Helper Needed]")
+                }
+            }
+
             val bookingResult = AutomatedFairRiderAssignmentEngine.createCustomerOrderWithBackendValidation(
                 repository = repository,
-                customerId = "CUST-1001",
+                customerId = myCustomerId,
                 customerName = customerName.ifBlank { "Customer" },
-                customerPhone = customerPhone.ifBlank { "+91 98765 43210" },
+                customerPhone = normalizedCustomerPhone.ifBlank { customerEmail.ifBlank { "+91 98765 43210" } },
                 pickupAddress = AddressDetails(
                     fullAddress = resolvedPickupAddress,
                     landmark = pickupLandmark,
                     contactName = customerName.ifBlank { "Customer" },
-                    contactPhone = customerPhone.ifBlank { "+91 98765 43210" },
+                    contactPhone = normalizedCustomerPhone.ifBlank { customerEmail.ifBlank { "+91 98765 43210" } },
                     lat = pickupLat,
                     lng = pickupLng
                 ),
@@ -777,7 +955,7 @@ fun CustomerAppScreen(
                 packageDetails = PackageDetails(
                     packageType = selectedPackageType,
                     weightKg = packageWeightKg.ifBlank { "1.0" },
-                    description = packageDescription.ifBlank { "Express Parcel" }
+                    description = enrichedDescription
                 ),
                 vehicleType = selectedVehicle,
                 paymentMethod = selectedPaymentMethod,
@@ -791,6 +969,9 @@ fun CustomerAppScreen(
 
             bookingResult.fold(
                 onSuccess = { newOrder ->
+                    if (walletDiscountInr > 0.0) {
+                        QuickDeliveryOperationsManager.consumeWalletBonus(context, walletDiscountInr.toInt())
+                    }
                     latestBookedOrder = newOrder
                     selectedTrackingOrderId = newOrder.orderId
                     currentBookingPhotoSummary?.let {
@@ -859,6 +1040,9 @@ fun CustomerAppScreen(
             selectedUpiApp = selectedUpiApp,
             appliedPromoCode = appliedPromoCode,
             promoDiscountInr = promoDiscountInr,
+            extraAddonInr = totalRemoteAddonInr,
+            extraAddonLabel = extraAddonSummaryLabel,
+            walletDiscountInr = walletDiscountInr,
             onBack = { showBookingConfirmationScreen = false },
             onConfirmBooking = executeCustomerBooking,
             modifier = modifier
@@ -870,7 +1054,7 @@ fun CustomerAppScreen(
         QuickDeliveryTopOptionsDialog(
             onDismiss = { showCustomerTopOptionsDialog = false },
             showMobileCloudApkCard = false,
-            dialogTitle = "Menu & Language (☰)",
+            dialogTitle = uiStrings.menuAndLanguageTitle,
             extraTopContent = {
                 Column(
                     modifier = Modifier
@@ -880,7 +1064,7 @@ fun CustomerAppScreen(
                 ) {
                     // SECTION 1: HOME & BOOKING / ORDERS
                     Text(
-                        text = "HOME & BOOKING / ORDERS",
+                        text = uiStrings.sectionHomeBooking,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = SlateMuted
@@ -920,13 +1104,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Book a Parcel Delivery",
+                                    text = uiStrings.bookParcelTitle,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepNavy
                                 )
                                 Text(
-                                    text = "Select route, vehicle & schedule pickup",
+                                    text = uiStrings.bookParcelSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SlateMuted
                                 )
@@ -942,7 +1126,7 @@ fun CustomerAppScreen(
 
                     // SECTION 2: TRACKING & DELIVERY
                     Text(
-                        text = "TRACKING & DELIVERY",
+                        text = uiStrings.sectionTrackingDelivery,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = SlateMuted
@@ -987,13 +1171,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Live Order Tracking",
+                                    text = uiStrings.liveOrderTrackingTitle,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepNavy
                                 )
                                 Text(
-                                    text = if (activeOrder != null) "Order #${activeOrder.orderId} in progress" else "Real-time rider GPS & OTP verification",
+                                    text = if (activeOrder != null) "${uiStrings.activeOrderLabel} #${activeOrder.orderId}" else uiStrings.liveOrderTrackingSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SlateMuted
                                 )
@@ -1009,7 +1193,7 @@ fun CustomerAppScreen(
 
                     // SECTION 3: HISTORY
                     Text(
-                        text = "HISTORY",
+                        text = uiStrings.sectionHistory,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = SlateMuted
@@ -1049,13 +1233,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Order History & Receipts",
+                                    text = uiStrings.orderHistoryReceiptsTitle,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepNavy
                                 )
                                 Text(
-                                    text = "${orders.size} deliveries recorded",
+                                    text = "${customerOrders.size} ${uiStrings.deliveriesRecordedSuffix}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SlateMuted
                                 )
@@ -1071,7 +1255,7 @@ fun CustomerAppScreen(
 
                     // SECTION 4: PROFILE
                     Text(
-                        text = "PROFILE",
+                        text = uiStrings.sectionProfile,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = SlateMuted
@@ -1123,7 +1307,7 @@ fun CustomerAppScreen(
 
                     // SECTION 5: NOTIFICATIONS & SUPPORT
                     Text(
-                        text = "NOTIFICATIONS & SUPPORT",
+                        text = uiStrings.sectionNotificationsSupport,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = SlateMuted
@@ -1154,7 +1338,7 @@ fun CustomerAppScreen(
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = Icons.Default.Shield,
-                                        contentDescription = "Customer Support",
+                                        contentDescription = uiStrings.helpSupportDeskTitle,
                                         tint = PrimaryTeal,
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -1163,13 +1347,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Help & Support Desk",
+                                    text = uiStrings.helpSupportDeskTitle,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepNavy
                                 )
                                 Text(
-                                    text = "Raise support ticket & track Admin replies",
+                                    text = uiStrings.helpSupportDeskSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SlateMuted
                                 )
@@ -1212,13 +1396,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Customer Suggestion & Feedback Box",
+                                    text = uiStrings.suggestionBoxTitle,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepNavy
                                 )
                                 Text(
-                                    text = "Share feedback or suggestions directly with Admin",
+                                    text = uiStrings.suggestionBoxSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SlateMuted
                                 )
@@ -1234,7 +1418,7 @@ fun CustomerAppScreen(
 
                     // SECTION 6: SETTINGS, PRIVACY & ACCOUNT
                     Text(
-                        text = "SETTINGS, PRIVACY & ACCOUNT",
+                        text = uiStrings.sectionSettingsPrivacy,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = SlateMuted
@@ -1270,7 +1454,7 @@ fun CustomerAppScreen(
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = Icons.Default.Description,
-                                        contentDescription = "Privacy Policy & Terms",
+                                        contentDescription = uiStrings.privacyPolicyTermsTitle,
                                         tint = PrimaryTeal,
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -1279,13 +1463,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Privacy Policy & Terms",
+                                    text = uiStrings.privacyPolicyTermsTitle,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepNavy
                                 )
                                 Text(
-                                    text = "Data safety & commercial delivery terms",
+                                    text = uiStrings.privacyPolicyTermsSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SlateMuted
                                 )
@@ -1328,13 +1512,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Logout",
+                                    text = uiStrings.logoutTitle,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFDC2626)
                                 )
                                 Text(
-                                    text = "Sign out of your customer account",
+                                    text = uiStrings.logoutConfirmTitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFF991B1B)
                                 )
@@ -1368,7 +1552,7 @@ fun CustomerAppScreen(
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete Account & Data",
+                                        contentDescription = uiStrings.deleteAccountTitle,
                                         tint = Color(0xFFBE123C),
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -1377,13 +1561,13 @@ fun CustomerAppScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Delete Account & Data",
+                                    text = uiStrings.deleteAccountTitle,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF9F1239)
                                 )
                                 Text(
-                                    text = "Permanently remove saved profile from this device",
+                                    text = uiStrings.deleteAccountSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFF881337)
                                 )
@@ -1400,14 +1584,14 @@ fun CustomerAppScreen(
             onDismissRequest = { showCustomerLogoutConfirmDialog = false },
             title = {
                 Text(
-                    text = "Logout of Quick Delivery?",
+                    text = uiStrings.logoutConfirmTitle,
                     fontWeight = FontWeight.Bold,
                     color = DeepNavy
                 )
             },
             text = {
                 Text(
-                    text = "Are you sure you want to log out? You can sign back into your customer account anytime.",
+                    text = uiStrings.logoutConfirmMessage,
                     style = MaterialTheme.typography.bodyMedium,
                     color = SlateMuted
                 )
@@ -1417,21 +1601,21 @@ fun CustomerAppScreen(
                     onClick = {
                         showCustomerLogoutConfirmDialog = false
                         MotivationAndPromoManager.logoutCustomer(context)
+                        resetCustomerTransientBookingState()
                         isCustomerLoggedIn = false
-                        statusBanner = "Logged out of Quick Delivery successfully"
-                        currentStep = 1
+                        statusBanner = "${uiStrings.logoutTitle} ✓"
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
                     modifier = Modifier.testTag("confirm_customer_logout_btn")
                 ) {
-                    Text("Logout", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(uiStrings.logoutTitle, color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 OutlinedButton(
                     onClick = { showCustomerLogoutConfirmDialog = false }
                 ) {
-                    Text("Cancel")
+                    Text(uiStrings.cancelBtn)
                 }
             }
         )
@@ -1466,7 +1650,7 @@ fun CustomerAppScreen(
     if (showCustomerSupportTicketDialog) {
         var ticketCategory by remember { mutableStateOf("Order Delay") }
         var ticketOrderId by remember {
-            mutableStateOf(orders.firstOrNull { it.orderStatus != OrderStatus.CANCELLED }?.orderId.orEmpty())
+            mutableStateOf(customerOrders.firstOrNull { it.orderStatus != OrderStatus.CANCELLED }?.orderId.orEmpty())
         }
         var ticketMessage by remember { mutableStateOf("") }
         val myTickets = remember(customerSupportTickets, customerPhone, customerName) {
@@ -1630,9 +1814,9 @@ fun CustomerAppScreen(
             onConfirmDelete = {
                 showCustomerDeleteAccountDialog = false
                 MotivationAndPromoManager.deleteUserAccountData(context, "customer")
+                resetCustomerTransientBookingState()
                 isCustomerLoggedIn = false
                 statusBanner = "Your customer account data has been deleted from this device."
-                currentStep = 1
             },
             onDismiss = { showCustomerDeleteAccountDialog = false }
         )
@@ -1724,37 +1908,25 @@ fun CustomerAppScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val invoiceSummary = buildString {
-                            appendLine("QUICK DELIVERY — TAX INVOICE")
-                            appendLine("Order ID: ${invOrder.orderId}")
-                            appendLine("Customer: ${invOrder.customerName} (${invOrder.customerPhone})")
-                            appendLine("Pickup: ${invOrder.pickupAddress.fullAddress}")
-                            appendLine("Drop: ${invOrder.dropAddress.fullAddress}")
-                            appendLine("Vehicle: ${invOrder.vehicleType.title} | Weight: ${invOrder.packageDetails.weightKg} kg")
-                            appendLine("Payment: ${invOrder.paymentMethod.name.replace('_', ' ')}")
-                            appendLine("Total Fare: ${invOrder.totalAmount}")
-                            appendLine("Status: ${invOrder.orderStatus.displayTitle}")
-                        }
-                        runCatching {
-                            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(
-                                    android.content.Intent.EXTRA_SUBJECT,
-                                    "Quick Delivery Invoice #${invOrder.orderId}"
-                                )
-                                putExtra(android.content.Intent.EXTRA_TEXT, invoiceSummary)
-                            }
-                            context.startActivity(
-                                android.content.Intent.createChooser(shareIntent, "Share or Save GST Invoice")
-                            )
+                        val tipAmt = RiderFeedbackManager.tipsByOrder.value[invOrder.orderId] ?: 0
+                        com.example.security.QuickDeliveryPdfGenerator.generateAndShareCustomerReceiptPdf(
+                            context = context,
+                            order = invOrder,
+                            pickupProof = com.example.data.model.OrderProofRegistry.getPickupProof(invOrder.orderId),
+                            deliveryProof = com.example.data.model.OrderProofRegistry.getDeliveryProof(invOrder.orderId),
+                            tipAmountInr = tipAmt
+                        ).onFailure {
+                            isErrorBanner = true
+                            statusBanner = "Unable to export PDF receipt right now."
                         }
                         showGstInvoiceDialogForOrder = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryTeal)
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryTeal),
+                    modifier = Modifier.testTag("customer_share_pdf_receipt_btn")
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Share / Save", fontWeight = FontWeight.Bold)
+                    Text("Download PDF Receipt", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -1795,6 +1967,24 @@ fun CustomerAppScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = SlateMuted
                     )
+                    if (remoteFlags.waitTimeAndCancelRuleEnabled &&
+                        (cancelTarget.orderStatus == OrderStatus.RIDER_ASSIGNED || cancelTarget.orderStatus == OrderStatus.ARRIVED_AT_PICKUP) &&
+                        remoteFlags.cancellationPenaltyInr > 0
+                    ) {
+                        Surface(
+                            color = Color(0xFFFEF2F2),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color(0xFFFCA5A5))
+                        ) {
+                            Text(
+                                text = "⚠️ Cancellation Rule Active: Rider already assigned — ₹${remoteFlags.cancellationPenaltyInr} cancellation charge applies.",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFB91C1C),
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
                     cancelReasons.forEach { reason ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1858,7 +2048,7 @@ fun CustomerAppScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        QuickDeliveryOfficialLogo(size = 34.dp, borderColor = BrandOrange)
+                        QuickDeliveryCuteBunnyLogo(size = 36.dp, borderColor = BrandOrange)
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(verticalArrangement = Arrangement.Center) {
                             Text(
@@ -1870,7 +2060,7 @@ fun CustomerAppScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = QuickDeliveryTagline,
+                                text = uiStrings.appTagline,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFFFFD166),
@@ -1881,6 +2071,10 @@ fun CustomerAppScreen(
                     }
                 },
                 actions = {
+                    LanguageSwitcherPill(
+                        accentColor = BrandOrange,
+                        modifier = Modifier.padding(end = 2.dp)
+                    )
                     Box {
                         IconButton(
                             onClick = { showCustomerShareThreeDotsMenu = true },
@@ -1990,11 +2184,22 @@ fun CustomerAppScreen(
                 }
             }
 
+            // Remote Admin Maintenance / Broadcast Announcements
+            if (remoteFlags.maintenanceBannerEnabled ||
+                (remoteFlags.adminBroadcastMessage.isNotBlank() &&
+                    (remoteFlags.adminBroadcastTarget == "ALL" || remoteFlags.adminBroadcastTarget == "CUSTOMER"))
+            ) {
+                item(key = "customer_remote_alerts_banner") {
+                    CustomerRemoteAlertsBanner(flags = remoteFlags)
+                }
+            }
+
             // 4-Step Animated Wizard Progress Header
             item(key = "customer_wizard_progress_header") {
                 CustomerWizardProgressHeader(
                     currentStep = currentStep,
                     hasBookedOrder = activeOrder != null,
+                    uiStrings = uiStrings,
                     onSelectStep = { targetStep ->
                         if (targetStep == 2) {
                             attemptedStep1Next = true
@@ -2118,7 +2323,7 @@ fun CustomerAppScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "🟢 Active Order #${activeOrder.orderId} • ${activeOrder.orderStatus.displayTitle}",
+                                        text = "🟢 ${uiStrings.activeOrderLabel} #${activeOrder.orderId} • ${activeOrder.orderStatus.displayTitle}",
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = DeepNavy
@@ -2127,7 +2332,7 @@ fun CustomerAppScreen(
                                         text = if (!activeOrder.assignedRiderName.isNullOrBlank()) {
                                             "Rider: ${activeOrder.assignedRiderName} (${activeOrder.assignedRiderPhone.orEmpty()})"
                                         } else {
-                                            "Waiting for nearby Rider Partner to accept..."
+                                            uiStrings.waitingForRiderText
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = SlateMuted
@@ -2138,7 +2343,7 @@ fun CustomerAppScreen(
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier.testTag("customer_main_open_live_map_btn")
                                 ) {
-                                    Text("Live Track →", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                    Text(uiStrings.liveTrackArrow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                 }
                             }
                             if (!activeOrder.assignedRiderName.isNullOrBlank()) {
@@ -2188,13 +2393,13 @@ fun CustomerAppScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "Step 1 • Route & Vehicle",
+                                            text = uiStrings.step1HeaderTitle,
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.ExtraBold,
                                             color = Color.White
                                         )
                                         Text(
-                                            text = "Instant door-to-door city parcel pickup",
+                                            text = uiStrings.step1HeaderSubtitle,
                                             style = MaterialTheme.typography.bodySmall,
                                             color = Color.White.copy(alpha = 0.88f)
                                         )
@@ -2215,7 +2420,7 @@ fun CustomerAppScreen(
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
-                                                text = "${selectedVehicle.etaMinutes} Min Pickup",
+                                                text = "${selectedVehicle.etaMinutes} ${uiStrings.minPickupSuffix}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = Color.White
@@ -2247,7 +2452,12 @@ fun CustomerAppScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 8.dp)
+                                            ) {
                                                 Box(
                                                     modifier = Modifier
                                                         .size(10.dp)
@@ -2257,13 +2467,13 @@ fun CustomerAppScreen(
                                                 Spacer(modifier = Modifier.width(8.dp))
                                                 Column {
                                                     Text(
-                                                        text = "PICKUP ADDRESS DETAILS",
+                                                        text = uiStrings.pickupDetailsHeading,
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         color = PrimaryTeal
                                                     )
                                                     Text(
-                                                        text = "Auto-capture your exact current address or enter below",
+                                                        text = uiStrings.pickupDetailsSubheading,
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = SlateMuted
                                                     )
@@ -2276,10 +2486,12 @@ fun CustomerAppScreen(
                                                     border = BorderStroke(1.dp, VerifiedGreen)
                                                 ) {
                                                     Text(
-                                                        text = "✅ Exact Address Captured",
+                                                        text = uiStrings.gpsCapturedBadge,
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         color = VerifiedGreen,
+                                                        maxLines = 1,
+                                                        softWrap = false,
                                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                     )
                                                 }
@@ -2334,9 +2546,9 @@ fun CustomerAppScreen(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = if (isCapturingPickupLocation) {
-                                                    "Detecting Exact Current Address..."
+                                                    uiStrings.detectingAddressBtn
                                                 } else {
-                                                    "📍 Auto-Capture My Current Address"
+                                                    uiStrings.autoCaptureCurrentAddrBtn
                                                 },
                                                 style = MaterialTheme.typography.labelLarge,
                                                 fontWeight = FontWeight.ExtraBold
@@ -2356,6 +2568,11 @@ fun CustomerAppScreen(
                                                     it.label.equals(tag, ignoreCase = true)
                                                 }
                                                 val activeTag = selectedPickupSavedTag == tag
+                                                val displayTagLabel = when (tag) {
+                                                    "Home" -> uiStrings.tagHome
+                                                    "Office" -> uiStrings.tagOffice
+                                                    else -> uiStrings.tagShop
+                                                }
                                                 FilterChip(
                                                     selected = activeTag,
                                                     onClick = {
@@ -2377,7 +2594,7 @@ fun CustomerAppScreen(
                                                     },
                                                     label = {
                                                         Text(
-                                                            text = if (savedMatch != null) "📍 $tag ✓" else "📍 $tag",
+                                                            text = if (savedMatch != null) "📍 $displayTagLabel ✓" else "📍 $displayTagLabel",
                                                             style = MaterialTheme.typography.labelSmall,
                                                             fontWeight = FontWeight.Bold
                                                         )
@@ -2411,7 +2628,7 @@ fun CustomerAppScreen(
                                                     modifier = Modifier.testTag("customer_save_pickup_address_btn")
                                                 ) {
                                                     Text(
-                                                        text = "💾 Save",
+                                                        text = "💾 ${uiStrings.saveBtn}",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.Bold,
                                                         color = PrimaryTeal
@@ -2428,7 +2645,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = pickupHouseFlat,
                                                 onValueChange = { pickupHouseFlat = it },
-                                                label = { Text("House / Flat No. *") },
+                                                label = { Text(uiStrings.houseFlatLabel) },
                                                 isError = attemptedStep1Next && pickupHouseFlat.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
@@ -2444,7 +2661,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = pickupBuilding,
                                                 onValueChange = { pickupBuilding = it },
-                                                label = { Text("Building / Society *") },
+                                                label = { Text(uiStrings.buildingSocietyLabel) },
                                                 isError = attemptedStep1Next && pickupBuilding.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
@@ -2468,7 +2685,7 @@ fun CustomerAppScreen(
                                                 pickupLat = 0.0
                                                 pickupLng = 0.0
                                             },
-                                            label = { Text("Pickup Area / Locality / Street *") },
+                                            label = { Text(uiStrings.pickupAreaLabel) },
                                             isError = attemptedStep1Next && pickupAddressText.isBlank(),
                                             leadingIcon = {
                                                 Icon(
@@ -2499,7 +2716,7 @@ fun CustomerAppScreen(
                                                 onValueChange = { input ->
                                                     pickupPinCode = input.filter { it.isDigit() }.take(6)
                                                 },
-                                                label = { Text("PIN Code *") },
+                                                label = { Text(uiStrings.pinCodeLabel) },
                                                 isError = attemptedStep1Next && pickupPinCode.length != 6,
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                                 singleLine = true,
@@ -2516,7 +2733,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = pickupLandmark,
                                                 onValueChange = { pickupLandmark = it },
-                                                label = { Text("Landmark (Optional)") },
+                                                label = { Text(uiStrings.landmarkOptionalLabel) },
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -2541,7 +2758,12 @@ fun CustomerAppScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 8.dp)
+                                            ) {
                                                 Box(
                                                     modifier = Modifier
                                                         .size(10.dp)
@@ -2551,13 +2773,13 @@ fun CustomerAppScreen(
                                                 Spacer(modifier = Modifier.width(8.dp))
                                                 Column {
                                                     Text(
-                                                        text = "DROP DESTINATION DETAILS",
+                                                        text = uiStrings.dropDetailsHeading,
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         color = BrandOrange
                                                     )
                                                     Text(
-                                                        text = "Enter receiver & drop delivery address",
+                                                        text = uiStrings.dropDetailsSubheading,
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = SlateMuted
                                                     )
@@ -2610,11 +2832,11 @@ fun CustomerAppScreen(
                                                     Spacer(modifier = Modifier.width(4.dp))
                                                     Text(
                                                         text = if (isCapturingDropLocation) {
-                                                            "Detecting..."
+                                                            uiStrings.detectingShort
                                                         } else if (dropLiveGpsVerified) {
-                                                            "✅ Address Captured"
+                                                            uiStrings.addressCapturedBadge
                                                         } else {
-                                                            "📍 Auto-Capture Address"
+                                                            uiStrings.autoCaptureDropBtn
                                                         },
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.Bold,
@@ -2637,6 +2859,11 @@ fun CustomerAppScreen(
                                                     it.label.equals(tag, ignoreCase = true)
                                                 }
                                                 val activeTag = selectedDropSavedTag == tag
+                                                val displayDropTagLabel = when (tag) {
+                                                    "Home" -> uiStrings.tagHome
+                                                    "Office" -> uiStrings.tagOffice
+                                                    else -> uiStrings.tagShop
+                                                }
                                                 FilterChip(
                                                     selected = activeTag,
                                                     onClick = {
@@ -2658,7 +2885,7 @@ fun CustomerAppScreen(
                                                     },
                                                     label = {
                                                         Text(
-                                                            text = if (savedMatch != null) "🏁 $tag ✓" else "🏁 $tag",
+                                                            text = if (savedMatch != null) "🏁 $displayDropTagLabel ✓" else "🏁 $displayDropTagLabel",
                                                             style = MaterialTheme.typography.labelSmall,
                                                             fontWeight = FontWeight.Bold
                                                         )
@@ -2692,7 +2919,7 @@ fun CustomerAppScreen(
                                                     modifier = Modifier.testTag("customer_save_drop_address_btn")
                                                 ) {
                                                     Text(
-                                                        text = "💾 Save",
+                                                        text = "💾 ${uiStrings.saveBtn}",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.Bold,
                                                         color = BrandOrange
@@ -2709,7 +2936,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = receiverFullName,
                                                 onValueChange = { receiverFullName = it },
-                                                label = { Text("Receiver Name *") },
+                                                label = { Text(uiStrings.receiverNameLabel) },
                                                 isError = attemptedStep1Next && receiverFullName.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
@@ -2727,7 +2954,7 @@ fun CustomerAppScreen(
                                                 onValueChange = { input ->
                                                     receiverMobilePhone = input.filter { it.isDigit() }.take(10)
                                                 },
-                                                label = { Text("Receiver Phone *") },
+                                                label = { Text(uiStrings.receiverPhoneLabel) },
                                                 isError = attemptedStep1Next && receiverMobilePhone.length != 10,
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                                                 singleLine = true,
@@ -2751,7 +2978,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = dropHouseFlat,
                                                 onValueChange = { dropHouseFlat = it },
-                                                label = { Text("House / Flat No. *") },
+                                                label = { Text(uiStrings.houseFlatLabel) },
                                                 isError = attemptedStep1Next && dropHouseFlat.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
@@ -2767,7 +2994,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = dropBuilding,
                                                 onValueChange = { dropBuilding = it },
-                                                label = { Text("Building / Society *") },
+                                                label = { Text(uiStrings.buildingSocietyLabel) },
                                                 isError = attemptedStep1Next && dropBuilding.isBlank(),
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
@@ -2791,7 +3018,7 @@ fun CustomerAppScreen(
                                                 dropLat = 0.0
                                                 dropLng = 0.0
                                             },
-                                            label = { Text("Drop Area / Locality / Street *") },
+                                            label = { Text(uiStrings.dropAreaLabel) },
                                             isError = attemptedStep1Next && dropAddressText.isBlank(),
                                             leadingIcon = {
                                                 Icon(
@@ -2822,7 +3049,7 @@ fun CustomerAppScreen(
                                                 onValueChange = { input ->
                                                     dropPinCode = input.filter { it.isDigit() }.take(6)
                                                 },
-                                                label = { Text("PIN Code *") },
+                                                label = { Text(uiStrings.pinCodeLabel) },
                                                 isError = attemptedStep1Next && dropPinCode.length != 6,
                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                                 singleLine = true,
@@ -2839,7 +3066,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = dropLandmark,
                                                 onValueChange = { dropLandmark = it },
-                                                label = { Text("Landmark (Optional)") },
+                                                label = { Text(uiStrings.landmarkOptionalLabel) },
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(12.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -2869,15 +3096,15 @@ fun CustomerAppScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Column {
+                                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                             Text(
-                                                text = "Select Delivery Vehicle",
+                                                text = uiStrings.selectVehicleHeading,
                                                 style = MaterialTheme.typography.titleSmall,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = DeepNavy
                                             )
                                             Text(
-                                                text = "Bike → Scooter → Auto • Instant Fare",
+                                                text = uiStrings.selectVehicleSubheading,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = SlateMuted
                                             )
@@ -2887,7 +3114,7 @@ fun CustomerAppScreen(
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
                                             Text(
-                                                text = "$formattedDistanceKm km route",
+                                                text = "$formattedDistanceKm ${uiStrings.kmRouteSuffix}",
                                                 style = MaterialTheme.typography.labelMedium,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = PrimaryTeal,
@@ -2911,7 +3138,7 @@ fun CustomerAppScreen(
                                                 packageWeightKg,
                                                 packageDescription,
                                                 vehicle,
-                                                pricingConfig,
+                                                effectivePricingConfig,
                                                 vehiclePolicy
                                             ) {
                                                 AutomatedFairRiderAssignmentEngine.calculateDetailedVehicleFare(
@@ -2923,7 +3150,7 @@ fun CustomerAppScreen(
                                                     vehicleType = vehicle,
                                                     packageType = selectedPackageType,
                                                     packageDescription = packageDescription.ifBlank { "Parcel" },
-                                                    pricingConfigOverride = pricingConfig,
+                                                    pricingConfigOverride = effectivePricingConfig,
                                                     policyOverride = vehiclePolicy
                                                 )
                                             }
@@ -2951,16 +3178,16 @@ fun CustomerAppScreen(
                                                 label = "vehicleElevation_${vehicle.name}"
                                             )
                                             val shortVehicleLabel = when (vehicle) {
-                                                VehicleType.BIKE -> "Bike"
-                                                VehicleType.SCOOTER -> "Scooter"
-                                                VehicleType.AUTO -> "Auto"
+                                                VehicleType.BIKE -> uiStrings.vehicleBike
+                                                VehicleType.SCOOTER -> uiStrings.vehicleScooter
+                                                VehicleType.AUTO -> uiStrings.vehicleAuto
                                                 else -> vehicle.title
                                             }
                                             val vehicleTagline = when {
-                                                !isVehicleEnabled -> "Paused"
-                                                vehicle == VehicleType.BIKE -> "3 mins away"
-                                                vehicle == VehicleType.SCOOTER -> "5 mins away"
-                                                vehicle == VehicleType.AUTO -> "7 mins away"
+                                                !isVehicleEnabled -> uiStrings.pausedLabel
+                                                vehicle == VehicleType.BIKE -> "3 mins"
+                                                vehicle == VehicleType.SCOOTER -> "5 mins"
+                                                vehicle == VehicleType.AUTO -> "7 mins"
                                                 else -> vehicle.capacity
                                             }
 
@@ -3072,9 +3299,14 @@ fun CustomerAppScreen(
                                                         overflow = TextOverflow.Ellipsis
                                                     )
 
-                                                    // Max Weight Limit & ETA
+                                                    // Porter-Style Box Capacity Dimensions & ETA
+                                                    val boxDimensions = when (vehicle) {
+                                                        VehicleType.BIKE -> "30×30cm"
+                                                        VehicleType.SCOOTER -> "40×40cm"
+                                                        else -> "90×60cm"
+                                                    }
                                                     Text(
-                                                        text = "≤${vehicleFareDetails.maxWeightKgForVehicle.toInt()}kg • ${vehicle.etaMinutes}m",
+                                                        text = "≤${vehicleFareDetails.maxWeightKgForVehicle.toInt()}kg • $boxDimensions",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = SlateMuted,
                                                         maxLines = 1,
@@ -3101,7 +3333,7 @@ fun CustomerAppScreen(
                                                                 text = if (isVehicleEnabled) {
                                                                     vehicleFareDetails.formattedTotalFare
                                                                 } else {
-                                                                    "Paused"
+                                                                    uiStrings.pausedLabel
                                                                 },
                                                                 style = MaterialTheme.typography.labelMedium,
                                                                 fontWeight = FontWeight.ExtraBold,
@@ -3119,7 +3351,7 @@ fun CustomerAppScreen(
                                 // Package Type Chips
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(
-                                        text = "Parcel Category & Weight Bracket",
+                                        text = uiStrings.parcelCategoryHeading,
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = DeepNavy
@@ -3202,16 +3434,16 @@ fun CustomerAppScreen(
                                                 statusBanner = null
                                             }
                                         },
-                                        label = { Text("Weight (kg • Max 20) *") },
+                                        label = { Text(uiStrings.weightKgLabel) },
                                         isError = weightErrorMessage != null || (attemptedStep1Next && packageWeightKg.isBlank()),
                                         supportingText = {
                                             Text(
                                                 text = if (isWeightOverLimit) {
-                                                    "Max 20 kg allowed!"
+                                                    "Max 20 kg!"
                                                 } else if (weightErrorMessage != null) {
-                                                    "Enter 0.1 – 20 kg"
+                                                    "0.1 – 20 kg"
                                                 } else {
-                                                    "Up to 20 kg allowed"
+                                                    uiStrings.weightUpTo20Hint
                                                 },
                                                 color = if (weightErrorMessage != null) Color(0xFFB91C1C) else SlateMuted,
                                                 fontWeight = if (weightErrorMessage != null) FontWeight.Bold else FontWeight.Normal
@@ -3231,11 +3463,11 @@ fun CustomerAppScreen(
                                     OutlinedTextField(
                                         value = packageDescription,
                                         onValueChange = { packageDescription = it },
-                                        label = { Text("Parcel Note *") },
+                                        label = { Text(uiStrings.parcelNoteLabel) },
                                         isError = attemptedStep1Next && packageDescription.isBlank(),
                                         supportingText = {
                                             Text(
-                                                text = "Mandatory: Describe item inside parcel",
+                                                text = uiStrings.parcelNoteHint,
                                                 color = if (attemptedStep1Next && packageDescription.isBlank()) Color(0xFFB91C1C) else SlateMuted
                                             )
                                         },
@@ -3249,6 +3481,77 @@ fun CustomerAppScreen(
                                             .weight(1.5f)
                                             .testTag("package_description_input")
                                     )
+                                }
+
+                                // Delivery / Handling Instructions Chips (Swiggy/Zomato/Porter style, synced directly to Rider card)
+                                val instructionPresets = remember {
+                                    listOf(
+                                        "Call on Arrival",
+                                        "Leave at Gate",
+                                        "Don't Ring Bell",
+                                        "Fragile Parcel",
+                                        "Keep Upright"
+                                    )
+                                }
+                                val selectedInstructionsList = remember(selectedInstructionsCsv) {
+                                    selectedInstructionsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                }
+                                Surface(
+                                    color = Color(0xFFF8FAFC),
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = uiStrings.deliveryInstructionsTitle,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = DeepNavy
+                                        )
+                                        Text(
+                                            text = uiStrings.deliveryInstructionsSub,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SlateMuted
+                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            instructionPresets.forEach { preset ->
+                                                val isChosen = selectedInstructionsList.any { it.equals(preset, ignoreCase = true) }
+                                                FilterChip(
+                                                    selected = isChosen,
+                                                    onClick = {
+                                                        val mutable = selectedInstructionsList.toMutableList()
+                                                        if (isChosen) {
+                                                            mutable.removeAll { it.equals(preset, ignoreCase = true) }
+                                                        } else {
+                                                            mutable.add(preset)
+                                                        }
+                                                        selectedInstructionsCsv = mutable.joinToString(", ")
+                                                    },
+                                                    label = {
+                                                        Text(
+                                                            text = if (isChosen) "✓ $preset" else preset,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Medium
+                                                        )
+                                                    },
+                                                    colors = FilterChipDefaults.filterChipColors(
+                                                        selectedContainerColor = PrimaryTeal,
+                                                        selectedLabelColor = Color.White
+                                                    ),
+                                                    modifier = Modifier.testTag("customer_instruction_chip_${preset.lowercase().replace(" ", "_")}")
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // Clear Inline Error Alert Card when parcel weight exceeds 20 kg or is invalid
@@ -3297,6 +3600,66 @@ fun CustomerAppScreen(
                                     }
                                 }
 
+                                // Repeat Last Order 1-Tap Shortcut (shown only if THIS customer has previous orders)
+                                customerOrders.firstOrNull()?.let { prevOrder ->
+                                    CustomerRepeatLastOrderCard(
+                                        lastOrder = prevOrder,
+                                        onRepeatRoute = { pastOrder ->
+                                            pickupAddressText = pastOrder.pickupAddress.fullAddress
+                                            pickupLandmark = pastOrder.pickupAddress.landmark
+                                            pickupLat = pastOrder.pickupAddress.lat
+                                            pickupLng = pastOrder.pickupAddress.lng
+                                            pickupLiveGpsVerified = pastOrder.pickupAddress.lat != 0.0
+                                            dropAddressText = pastOrder.dropAddress.fullAddress
+                                            dropLandmark = pastOrder.dropAddress.landmark
+                                            dropLat = pastOrder.dropAddress.lat
+                                            dropLng = pastOrder.dropAddress.lng
+                                            dropLiveGpsVerified = pastOrder.dropAddress.lat != 0.0
+                                            receiverFullName = pastOrder.dropAddress.contactName
+                                            receiverMobilePhone = pastOrder.dropAddress.contactPhone.filter(Char::isDigit).takeLast(10)
+                                            selectedVehicle = pastOrder.vehicleType
+                                            selectedPackageType = pastOrder.packageDetails.packageType
+                                            packageWeightKg = pastOrder.packageDetails.weightKg
+                                            packageDescription = pastOrder.packageDetails.description
+                                            isErrorBanner = false
+                                            statusBanner = "🔁 Route loaded from Order #${pastOrder.orderId}"
+                                        }
+                                    )
+                                }
+
+                                // Admin-Controlled Add-Ons: Scheduled Delivery & Multi-Drop Extra Stop
+                                CustomerScheduledAndMultiDropCard(
+                                    flags = remoteFlags,
+                                    isScheduled = isScheduledDelivery,
+                                    onToggleScheduled = { isScheduledDelivery = it },
+                                    selectedDateLabel = scheduledDateLabel,
+                                    onSelectDateLabel = { scheduledDateLabel = it },
+                                    selectedTimeSlot = scheduledTimeSlot,
+                                    onSelectTimeSlot = { scheduledTimeSlot = it },
+                                    isMultiDrop = isMultiDropEnabled,
+                                    onToggleMultiDrop = { isMultiDropEnabled = it },
+                                    extraStopAddress = extraStopAddress,
+                                    onExtraStopChange = { extraStopAddress = it },
+                                    extraStopFeeInr = 40
+                                )
+
+                                // Porter-Style Loading / Unloading Helper Add-On
+                                CustomerHelperAddonCard(
+                                    flags = remoteFlags,
+                                    isHelperAdded = isHelperAdded,
+                                    onToggleHelper = { isHelperAdded = it }
+                                )
+
+                                // Admin-Controlled Referral & Wallet Rewards Card
+                                CustomerReferralWalletCard(
+                                    flags = remoteFlags,
+                                    customerName = customerName,
+                                    customerPhone = customerPhone,
+                                    walletBonusInr = walletBonusInr,
+                                    useWalletBonus = useWalletBonus,
+                                    onToggleUseWallet = { useWalletBonus = it }
+                                )
+
                                 // Premium Instant Full ₹ Price Breakdown Card (Step 1)
                                 Surface(
                                     color = DeepNavy,
@@ -3323,7 +3686,7 @@ fun CustomerAppScreen(
                                                         shape = RoundedCornerShape(6.dp)
                                                     ) {
                                                         Text(
-                                                            text = "LIVE ₹ FARE BREAKDOWN",
+                                                            text = uiStrings.liveFareBreakdownBadge,
                                                             style = MaterialTheme.typography.labelSmall,
                                                             fontWeight = FontWeight.ExtraBold,
                                                             color = BrightTeal,
@@ -3374,25 +3737,37 @@ fun CustomerAppScreen(
 
                                         // Itemized ₹ Rows: Base Fare + Distance + Weight + GST + Interactive Promo Coupon
                                         CustomerFareLineRow(
-                                            label = "${selectedVehicle.title} Base Fare",
+                                            label = "${selectedVehicle.title} ${uiStrings.baseFareLabel}",
                                             value = liveDetailedFare.formattedBaseFare
                                         )
                                         CustomerFareLineRow(
-                                            label = "Distance Charge ($formattedDistanceKm km × ${liveDetailedFare.formattedPerKmRate})",
+                                            label = "${uiStrings.distanceChargeLabel} ($formattedDistanceKm km × ${liveDetailedFare.formattedPerKmRate})",
                                             value = liveDetailedFare.formattedDistanceCharge
                                         )
                                         CustomerFareLineRow(
-                                            label = "Parcel Weight Charge (${liveDetailedFare.weightKg} kg ≤ ${activeMaxWeightKg.toInt()} kg)",
+                                            label = "${uiStrings.weightChargeLabel} (${liveDetailedFare.weightKg} kg ≤ ${activeMaxWeightKg.toInt()} kg)",
                                             value = liveDetailedFare.formattedWeightCharge
                                         )
                                         CustomerFareLineRow(
-                                            label = "5% GST & Safe Platform Fee",
+                                            label = uiStrings.gstAndFeeLabel,
                                             value = liveDetailedFare.formattedTaxesAndFees
                                         )
+                                        if (totalRemoteAddonInr > 0.0) {
+                                            CustomerFareLineRow(
+                                                label = extraAddonSummaryLabel,
+                                                value = String.format(Locale.US, "+ ₹%.0f", totalRemoteAddonInr)
+                                            )
+                                        }
                                         if (promoDiscountInr > 0.0 && appliedPromoCode.isNotBlank()) {
                                             CustomerFareLineRow(
                                                 label = "Promo Discount ($appliedPromoCode)",
                                                 value = String.format(Locale.US, "- ₹%.0f", promoDiscountInr)
+                                            )
+                                        }
+                                        if (walletDiscountInr > 0.0) {
+                                            CustomerFareLineRow(
+                                                label = "Referral Wallet Bonus",
+                                                value = String.format(Locale.US, "- ₹%.0f", walletDiscountInr)
                                             )
                                         }
 
@@ -3407,7 +3782,7 @@ fun CustomerAppScreen(
                                             OutlinedTextField(
                                                 value = promoCodeInput,
                                                 onValueChange = { promoCodeInput = it.uppercase().filter(Char::isLetterOrDigit) },
-                                                placeholder = { Text("Enter Promo Code", color = Color.White.copy(alpha = 0.55f)) },
+                                                placeholder = { Text(uiStrings.promoCodePlaceholder, color = Color.White.copy(alpha = 0.55f)) },
                                                 singleLine = true,
                                                 shape = RoundedCornerShape(10.dp),
                                                 colors = OutlinedTextFieldDefaults.colors(
@@ -3430,7 +3805,7 @@ fun CustomerAppScreen(
                                                     border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
                                                     shape = RoundedCornerShape(10.dp)
                                                 ) {
-                                                    Text("Remove", color = Color(0xFFFECACA), fontWeight = FontWeight.Bold)
+                                                    Text(uiStrings.removeBtn, color = Color(0xFFFECACA), fontWeight = FontWeight.Bold)
                                                 }
                                             } else {
                                                 Button(
@@ -3449,7 +3824,7 @@ fun CustomerAppScreen(
                                                     shape = RoundedCornerShape(10.dp),
                                                     modifier = Modifier.testTag("customer_apply_promo_btn")
                                                 ) {
-                                                    Text("Apply", fontWeight = FontWeight.Bold, color = Color.White)
+                                                    Text(uiStrings.applyBtn, fontWeight = FontWeight.Bold, color = Color.White)
                                                 }
                                             }
                                         }
@@ -3565,9 +3940,9 @@ fun CustomerAppScreen(
                                 ) {
                                     Text(
                                         text = when {
-                                            isResolvingStep1Route -> "Verifying Route & Continuing..."
+                                            isResolvingStep1Route -> uiStrings.verifyingRouteBtn
                                             isWeightOverLimit -> "Booking Blocked: Max 20 kg Allowed"
-                                            else -> "Next: Parcel Photo (Step 2) "
+                                            else -> uiStrings.nextParcelPhotoBtn
                                         },
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.ExtraBold,
@@ -3603,7 +3978,7 @@ fun CustomerAppScreen(
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "View Active Order #${activeOrder.orderId} Live Tracking →",
+                                            text = String.format(Locale.US, uiStrings.viewActiveOrderTrackBtn, activeOrder.orderId),
                                             fontWeight = FontWeight.Bold,
                                             color = PrimaryTeal
                                         )
@@ -3659,13 +4034,13 @@ fun CustomerAppScreen(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Column {
                                             Text(
-                                                text = "Step 2 • Parcel Photo Verification",
+                                                text = uiStrings.step2HeaderTitle,
                                                 style = MaterialTheme.typography.titleMedium,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = Color.White
                                             )
                                             Text(
-                                                text = "Snap a quick parcel photo for safe handling",
+                                                text = uiStrings.step2HeaderSubtitle,
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = Color.White.copy(alpha = 0.88f)
                                             )
@@ -3676,7 +4051,7 @@ fun CustomerAppScreen(
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
                                         Text(
-                                            text = "SAFE PROOF",
+                                            text = uiStrings.safeProofBadge,
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.ExtraBold,
                                             color = Color.White,
@@ -3778,9 +4153,9 @@ fun CustomerAppScreen(
 
                                         Text(
                                             text = if (currentBookingPhotoSummary != null) {
-                                                "Parcel Photo Attached & Verified"
+                                                uiStrings.photoAttachedVerifiedTitle
                                             } else {
-                                                "Capture or Attach Parcel Photo"
+                                                uiStrings.captureOrAttachPhotoTitle
                                             },
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.ExtraBold,
@@ -3788,8 +4163,7 @@ fun CustomerAppScreen(
                                         )
 
                                         Text(
-                                            text = currentBookingPhotoSummary
-                                                ?: "Helps your assigned delivery partner verify parcel size and handle fragile items with extra care.",
+                                            text = currentBookingPhotoSummary ?: uiStrings.photoHelpDesc,
                                             style = MaterialTheme.typography.bodySmall,
                                             color = if (currentBookingPhotoSummary != null) VerifiedGreen else SlateMuted
                                         )
@@ -3815,15 +4189,22 @@ fun CustomerAppScreen(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = if (currentBookingPhotoSummary == null) {
-                                                    "Click Parcel Photo (Camera)"
+                                                    uiStrings.clickParcelPhotoBtn
                                                 } else {
-                                                    "Retake Parcel Photo"
+                                                    uiStrings.retakeParcelPhotoBtn
                                                 },
                                                 fontWeight = FontWeight.Bold
                                             )
                                         }
                                     }
                                 }
+
+                                // Admin-Controlled Parcel Insurance Add-On Checkbox
+                                CustomerParcelInsuranceCard(
+                                    flags = remoteFlags,
+                                    isInsured = isParcelInsured,
+                                    onToggleInsured = { isParcelInsured = it }
+                                )
 
                                 // Payment Method Selector Card (UPI, COD, Card, Net Banking)
                                 Surface(
@@ -3847,7 +4228,11 @@ fun CustomerAppScreen(
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = "Select Payment Method *",
+                                                text = if (remoteFlags.liveGatewayModeEnabled) {
+                                                    "${uiStrings.selectPaymentMethodTitle} (${remoteFlags.gatewayProvider})"
+                                                } else {
+                                                    uiStrings.selectPaymentMethodTitle
+                                                },
                                                 style = MaterialTheme.typography.titleSmall,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = DeepNavy
@@ -3856,7 +4241,11 @@ fun CustomerAppScreen(
 
                                         val paymentChoices = listOf(
                                             CustomerPaymentMethod.GATEWAY_UPI to "UPI",
-                                            CustomerPaymentMethod.CASH_ON_DELIVERY to "Cash (COD)",
+                                            CustomerPaymentMethod.CASH_ON_DELIVERY to (
+                                                if (!remoteFlags.codEnabled) "Cash (${uiStrings.pausedLabel})"
+                                                else if (totalWithTipInr > remoteFlags.maxCodLimitInr) "Cash (Max ₹${remoteFlags.maxCodLimitInr})"
+                                                else uiStrings.cashCodLabel
+                                            ),
                                             CustomerPaymentMethod.GATEWAY_DEBIT_CARD to "Debit Card",
                                             CustomerPaymentMethod.GATEWAY_CREDIT_CARD to "Credit Card",
                                             CustomerPaymentMethod.GATEWAY_NET_BANKING to "Net Banking"
@@ -3868,18 +4257,32 @@ fun CustomerAppScreen(
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             paymentChoices.forEach { (method, label) ->
+                                                val isChoiceEnabled = method != CustomerPaymentMethod.CASH_ON_DELIVERY || isCodAllowedForOrder
                                                 FilterChip(
                                                     selected = selectedPaymentMethod == method,
+                                                    enabled = isChoiceEnabled,
                                                     onClick = { selectedPaymentMethod = method },
                                                     label = { Text(label, fontWeight = FontWeight.Bold) },
                                                     modifier = Modifier.testTag("customer_pay_method_${method.name}")
                                                 )
                                             }
                                         }
+                                        if (!isCodAllowedForOrder) {
+                                            Text(
+                                                text = if (!remoteFlags.codEnabled) {
+                                                    "Cash on Delivery is paused by Admin — please pay via UPI or Card."
+                                                } else {
+                                                    "COD is capped at ₹${remoteFlags.maxCodLimitInr} by Admin — choose UPI or Card for this order."
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFB45309),
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
 
                                         if (selectedPaymentMethod == CustomerPaymentMethod.GATEWAY_UPI) {
                                             Text(
-                                                text = "Choose Preferred UPI App:",
+                                                text = uiStrings.preferredUpiLabel,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold,
                                                 color = SlateMuted
@@ -3918,7 +4321,7 @@ fun CustomerAppScreen(
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = "Reward Your Delivery Partner (100% goes to Rider)",
+                                                text = uiStrings.tipPartnerTitle,
                                                 style = MaterialTheme.typography.labelMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = DeepNavy
@@ -3934,7 +4337,7 @@ fun CustomerAppScreen(
                                                     onClick = { selectedRiderTipInr = tipVal },
                                                     label = {
                                                         Text(
-                                                            text = if (tipVal == 0) "No Tip" else "+₹$tipVal",
+                                                            text = if (tipVal == 0) uiStrings.noTipLabel else "+₹$tipVal",
                                                             fontWeight = FontWeight.Bold
                                                         )
                                                     },
@@ -3980,7 +4383,7 @@ fun CustomerAppScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = String.format(Locale.US, "Review & Confirm Booking • ₹%.0f", totalWithTipInr),
+                                        text = String.format(Locale.US, uiStrings.reviewConfirmBookingBtn, totalWithTipInr),
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = Color.White
@@ -4100,13 +4503,22 @@ fun CustomerAppScreen(
                                             modifier = Modifier.testTag("customer_download_gst_invoice_btn")
                                         ) {
                                             Text(
-                                                text = "View GST Invoice",
+                                                text = uiStrings.viewGstInvoiceBtn,
                                                 style = MaterialTheme.typography.labelMedium,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = Color.White
                                             )
                                         }
                                     }
+
+                                    CustomerShareLiveTrackingButton(order = activeOrder)
+
+                                    CustomerSendReceiverOtpCard(order = activeOrder)
+
+                                    CustomerOrderDisputeCard(
+                                        order = activeOrder,
+                                        photoProofSummary = orderPhotoProofMap[activeOrder.orderId]
+                                    )
 
                                     if (activeOrder.orderStatus == OrderStatus.SEARCHING_RIDER ||
                                         activeOrder.orderStatus == OrderStatus.RIDER_ASSIGNED
@@ -4122,7 +4534,7 @@ fun CustomerAppScreen(
                                         ) {
                                             Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("Cancel Booking Request", fontWeight = FontWeight.Bold)
+                                            Text(uiStrings.cancelBookingBtn, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
@@ -4143,13 +4555,13 @@ fun CustomerAppScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
-                                    text = "No Active Order Being Tracked",
+                                    text = uiStrings.noActiveOrderTitle,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = DeepNavy
                                 )
                                 Text(
-                                    text = "Enter your Pickup & Drop addresses in Step 1 and confirm your booking to track live rider GPS, Pickup/Drop OTPs, and delivery status here.",
+                                    text = uiStrings.noActiveOrderDesc,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFF475569)
                                 )
@@ -4159,7 +4571,7 @@ fun CustomerAppScreen(
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text(
-                                        text = "Go to Step 1: Book Parcel",
+                                        text = uiStrings.goToStep1Btn,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = Color.White
                                     )
@@ -4175,7 +4587,7 @@ fun CustomerAppScreen(
                 item(key = "customer_step4_delivery_history_tab") {
                     CustomerDeliveryHistoryTabSection(
                         customerName = customerName,
-                        orders = orders,
+                        orders = customerOrders,
                         onSelectOrderToTrack = { selectedOrder ->
                             selectedTrackingOrderId = selectedOrder.orderId
                             statusBanner = null
@@ -4223,13 +4635,14 @@ fun CustomerAppScreen(
 private fun CustomerWizardProgressHeader(
     currentStep: Int,
     hasBookedOrder: Boolean,
+    uiStrings: com.example.ui.i18n.DynamicUiStrings,
     onSelectStep: (Int) -> Unit
 ) {
     val steps = listOf(
-        1 to "1. Route",
-        2 to "2. Photo",
-        3 to "3. Track",
-        4 to "4. History"
+        1 to uiStrings.step1Tab,
+        2 to uiStrings.step2Tab,
+        3 to uiStrings.step3Tab,
+        4 to uiStrings.step4Tab
     )
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),

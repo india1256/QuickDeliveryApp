@@ -109,6 +109,7 @@ object OrderLiveChatManager {
 
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeFirestoreJobs = mutableMapOf<String, Job>()
+    private val chatLock = Any()
 
     @Volatile
     private var isLoaded = false
@@ -224,8 +225,9 @@ object OrderLiveChatManager {
         val currentUser = runCatching { FirebaseAuth.getInstance().currentUser }.getOrNull()
         if (currentUser == null) {
             _firestoreSyncStatusByOrder.value = _firestoreSyncStatusByOrder.value.toMutableMap().apply {
-                put(order.orderId, "Local + Multi-Role Live Sync")
+                put(order.orderId, "Live Multi-Phone Sync Active")
             }
+            com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
             return
         }
 
@@ -349,13 +351,18 @@ object OrderLiveChatManager {
             syncedToFirestore = currentUser != null
         )
 
-        val updatedOrderMessages = (_messagesByOrder.value[order.orderId].orEmpty() + optimisticMsg)
-            .sortedBy { it.createdAtEpochMs }
-        val updatedMap = _messagesByOrder.value.toMutableMap().apply {
-            put(order.orderId, updatedOrderMessages)
+        synchronized(chatLock) {
+            val currentList = _messagesByOrder.value[order.orderId].orEmpty()
+            val updatedOrderMessages = (currentList + optimisticMsg)
+                .distinctBy { it.messageId }
+                .sortedBy { it.createdAtEpochMs }
+            val updatedMap = _messagesByOrder.value.toMutableMap().apply {
+                put(order.orderId, updatedOrderMessages)
+            }
+            _messagesByOrder.value = updatedMap
+            persist(context, updatedMap)
         }
-        _messagesByOrder.value = updatedMap
-        persist(context, updatedMap)
+        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
 
         // Write to Firestore if authenticated
         if (currentUser != null) {
@@ -391,6 +398,89 @@ object OrderLiveChatManager {
         }
     }
 
+    fun exportAllMessagesToJsonArray(): JSONArray {
+        val arr = JSONArray()
+        val snapshot = synchronized(chatLock) { _messagesByOrder.value }
+        snapshot.forEach { (orderId, list) ->
+            list.filterNot { it.messageId.startsWith("msg_seed_") }
+                .takeLast(60)
+                .forEach { item ->
+                    arr.put(
+                        JSONObject().apply {
+                            put("messageId", item.messageId)
+                            put("orderId", item.orderId.ifBlank { orderId })
+                            put("senderUid", item.senderUid)
+                            put("senderRole", item.senderRole)
+                            put("senderName", item.senderName)
+                            put("messageText", item.messageText)
+                            put("deliveryStage", item.deliveryStage)
+                            put("timestampLabel", item.timestampLabel)
+                            put("createdAtEpochMs", item.createdAtEpochMs)
+                            put("syncedToFirestore", item.syncedToFirestore)
+                        }
+                    )
+                }
+        }
+        return arr
+    }
+
+    fun mergeFromServerJsonArray(context: Context, arr: JSONArray?): List<OrderChatMessageUi> {
+        if (arr == null || arr.length() == 0) return emptyList()
+        ensureLoaded(context)
+        val newlyAdded = mutableListOf<OrderChatMessageUi>()
+        val nextMap = synchronized(chatLock) {
+            val working = _messagesByOrder.value.toMutableMap()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val messageId = obj.optString("messageId", "").trim()
+                val orderId = obj.optString("orderId", "").trim()
+                val messageText = obj.optString("messageText", "").trim()
+                if (messageId.isEmpty() || orderId.isEmpty() || messageText.isEmpty()) continue
+                if (messageId.startsWith("msg_seed_")) continue
+
+                val existingList = working[orderId].orEmpty()
+                if (existingList.any { it.messageId == messageId }) continue
+
+                val uiMsg = OrderChatMessageUi(
+                    messageId = messageId,
+                    orderId = orderId,
+                    senderUid = obj.optString("senderUid", "remote_uid"),
+                    senderRole = obj.optString("senderRole", "RIDER"),
+                    senderName = obj.optString("senderName", "Partner"),
+                    messageText = messageText,
+                    deliveryStage = obj.optString("deliveryStage", "IN_TRANSIT"),
+                    timestampLabel = obj.optString("timestampLabel", "Just now"),
+                    createdAtEpochMs = obj.optLong("createdAtEpochMs", System.currentTimeMillis()),
+                    syncedToFirestore = obj.optBoolean("syncedToFirestore", true)
+                )
+                working[orderId] = (existingList + uiMsg).sortedBy { it.createdAtEpochMs }
+                newlyAdded.add(uiMsg)
+            }
+            if (newlyAdded.isNotEmpty()) {
+                _messagesByOrder.value = working
+                working.toMap()
+            } else {
+                null
+            }
+        }
+        if (nextMap != null) {
+            persist(context, nextMap)
+        }
+        return newlyAdded
+    }
+
+    fun clearAllOnReset(context: Context) {
+        synchronized(chatLock) {
+            _messagesByOrder.value = emptyMap()
+        }
+        runCatching {
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_CHAT_BY_ORDER_JSON)
+                .apply()
+        }
+    }
+
     private fun persist(context: Context, map: Map<String, List<OrderChatMessageUi>>) {
         val appCtx = context.applicationContext
         ioScope.launch {
@@ -398,7 +488,7 @@ object OrderLiveChatManager {
                 val root = JSONObject()
                 map.forEach { (orderId, list) ->
                     val arr = JSONArray()
-                    list.takeLast(40).forEach { item ->
+                    list.takeLast(60).forEach { item ->
                         arr.put(
                             JSONObject().apply {
                                 put("messageId", item.messageId)
@@ -465,7 +555,12 @@ fun OrderRealTimeChatSection(
     val counterpartTitle = if (isCustomerViewer) {
         "Live Chat with Rider $activeRiderName"
     } else {
-        "Live Chat with Customer ${order.customerName}"
+        val cleanCustName = order.customerName.trim()
+        if (cleanCustName.isBlank() || cleanCustName.equals("Customer", ignoreCase = true)) {
+            "Live Chat with Customer"
+        } else {
+            "Live Chat with $cleanCustName"
+        }
     }
     val counterpartSubtitle = if (isCustomerViewer) {
         "Assigned Pickup & Delivery Partner • $activeRiderPhone"

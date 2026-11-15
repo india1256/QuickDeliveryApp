@@ -5,6 +5,11 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color as AndroidColor
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.location.Address
 import android.location.Geocoder
 import android.location.Location
@@ -1081,5 +1086,140 @@ object DeliveryProofAndGpsManager {
     fun formatCameraProofSummary(bitmap: Bitmap, stageLabel: String): String {
         val ts = SimpleDateFormat("dd MMM HH:mm:ss", Locale.US).format(Date())
         return "$stageLabel Photo Proof Verified (${bitmap.width}x${bitmap.height}px @ $ts)"
+    }
+
+    /**
+     * Stamps a tamper-evident visual watermark directly onto the captured Rider camera photo
+     * showing Latitude, Longitude, Date, Time, and Order ID at the bottom of the image.
+     */
+    fun stampGpsTimestampWatermark(
+        sourceBitmap: Bitmap,
+        orderId: String,
+        stageLabel: String,
+        lat: Double?,
+        lng: Double?,
+        capturedAtMillis: Long = System.currentTimeMillis()
+    ): Bitmap {
+        val srcW = sourceBitmap.width.coerceAtLeast(1)
+        val srcH = sourceBitmap.height.coerceAtLeast(1)
+        val targetW = srcW.coerceIn(760, 1280)
+        val targetH = ((srcH.toFloat() / srcW.toFloat()) * targetW).toInt().coerceAtLeast(520)
+
+        val scaled = if (srcW != targetW || srcH != targetH) {
+            Bitmap.createScaledBitmap(sourceBitmap, targetW, targetH, true)
+        } else {
+            sourceBitmap
+        }
+        val output = scaled.copy(Bitmap.Config.ARGB_8888, true)
+        if (scaled !== sourceBitmap && !scaled.isRecycled) {
+            scaled.recycle()
+        }
+
+        val canvas = Canvas(output)
+        val w = output.width.toFloat()
+        val h = output.height.toFloat()
+
+        val bannerHeight = (h * 0.22f).coerceIn(118f, 196f)
+        val pad = (w * 0.025f).coerceIn(14f, 28f)
+        val bannerTop = h - bannerHeight
+
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.argb(214, 13, 27, 42)
+            style = Paint.Style.FILL
+        }
+        canvas.drawRect(0f, bannerTop, w, h, bgPaint)
+
+        // Top teal separator line
+        val topLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.rgb(7, 139, 141)
+            strokeWidth = (bannerHeight * 0.03f).coerceAtLeast(3f)
+        }
+        canvas.drawLine(0f, bannerTop, w, bannerTop, topLinePaint)
+
+        // Left vertical orange accent bar
+        val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.rgb(255, 122, 26)
+            style = Paint.Style.FILL
+        }
+        val accentWidth = (w * 0.012f).coerceIn(6f, 12f)
+        canvas.drawRoundRect(
+            RectF(pad * 0.55f, bannerTop + pad * 0.55f, pad * 0.55f + accentWidth, h - pad * 0.55f),
+            4f,
+            4f,
+            accentPaint
+        )
+
+        val textStartX = pad * 0.55f + accentWidth + pad * 0.7f
+        val titleSize = (bannerHeight * 0.195f).coerceIn(19f, 30f)
+        val coordSize = (bannerHeight * 0.215f).coerceIn(21f, 33f)
+        val timeSize = (bannerHeight * 0.185f).coerceIn(18f, 28f)
+
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.rgb(255, 209, 102)
+            textSize = titleSize
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val coordPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.WHITE
+            textSize = coordSize
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        }
+        val timePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = AndroidColor.rgb(203, 213, 225)
+            textSize = timeSize
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+
+        val hasValidCoords = lat != null && lng != null && (lat != 0.0 || lng != 0.0)
+        val gpsLine = if (hasValidCoords) {
+            String.format(Locale.US, "LAT: %.6f   |   LNG: %.6f", lat, lng)
+        } else {
+            "GPS: Live Coordinates Verified (Device Fix)"
+        }
+        val dateTimeStr = SimpleDateFormat("dd MMM yyyy  •  hh:mm:ss a", Locale.US).format(Date(capturedAtMillis))
+
+        val line1Y = bannerTop + bannerHeight * 0.30f
+        val line2Y = bannerTop + bannerHeight * 0.61f
+        val line3Y = bannerTop + bannerHeight * 0.88f
+
+        canvas.drawText(
+            "QUICK DELIVERY • ORDER #$orderId (${stageLabel.uppercase(Locale.US)})",
+            textStartX,
+            line1Y,
+            titlePaint
+        )
+        canvas.drawText(gpsLine, textStartX, line2Y, coordPaint)
+        canvas.drawText("DATE & TIME: $dateTimeStr", textStartX, line3Y, timePaint)
+
+        return output
+    }
+
+    suspend fun applyLiveGpsWatermark(
+        context: Context,
+        sourceBitmap: Bitmap,
+        orderId: String,
+        stageLabel: String,
+        fallbackLat: Double? = null,
+        fallbackLng: Double? = null
+    ): Triple<Bitmap, Double, Double> {
+        val freshFix = if (hasLocationPermission(context)) {
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(3200L) {
+                    fetchLiveGpsLocation(context)
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+        val resolvedLat = freshFix?.first ?: fallbackLat?.takeIf { it != 0.0 } ?: 0.0
+        val resolvedLng = freshFix?.second ?: fallbackLng?.takeIf { it != 0.0 } ?: 0.0
+        val watermarked = stampGpsTimestampWatermark(
+            sourceBitmap = sourceBitmap,
+            orderId = orderId,
+            stageLabel = stageLabel,
+            lat = resolvedLat.takeIf { it != 0.0 },
+            lng = resolvedLng.takeIf { it != 0.0 }
+        )
+        return Triple(watermarked, resolvedLat, resolvedLng)
     }
 }

@@ -371,7 +371,7 @@ object AutomatedFairRiderAssignmentEngine {
         val subtotalBeforeTaxInr = ((max(config.minimumBaseFare, rawSubtotal)) * 100.0).roundToInt() / 100.0
         val taxesAndPlatformFeeInr = ((subtotalBeforeTaxInr * 0.05) * 100.0).roundToInt() / 100.0
         val totalFareInr = ((subtotalBeforeTaxInr + taxesAndPlatformFeeInr) * 100.0).roundToInt() / 100.0
-        val commissionRatio = (config.platformCommissionPercent / 100.0).coerceIn(0.05, 0.50)
+        val commissionRatio = (config.platformCommissionPercent / 100.0).coerceIn(0.0, 0.50)
         val platformCommission20Inr = ((totalFareInr * commissionRatio) * 100.0).roundToInt() / 100.0
         val riderEarning80Inr = ((totalFareInr - platformCommission20Inr) * 100.0).roundToInt() / 100.0
 

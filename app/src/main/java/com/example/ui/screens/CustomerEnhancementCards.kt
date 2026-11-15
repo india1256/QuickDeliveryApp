@@ -1,0 +1,771 @@
+package com.example.ui.screens
+
+import android.content.Intent
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddLocationAlt
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.example.data.cloud.AdminRemoteFeatureFlags
+import com.example.data.cloud.DisputeStatus
+import com.example.data.cloud.QuickDeliveryOperationsManager
+import com.example.data.model.CustomerOrder
+
+private val EnhTeal = Color(0xFF078B8D)
+private val EnhOrange = Color(0xFFFF7A1A)
+private val EnhNavy = Color(0xFF0D1B2A)
+private val EnhSlate = Color(0xFF475569)
+private val EnhGreen = Color(0xFF059669)
+
+@Composable
+fun CustomerRemoteAlertsBanner(
+    flags: AdminRemoteFeatureFlags
+) {
+    var dismissedEpochMs by remember { mutableLongStateOf(0L) }
+    val showBroadcast = flags.adminBroadcastMessage.isNotBlank() &&
+        (flags.adminBroadcastTarget == "ALL" || flags.adminBroadcastTarget == "CUSTOMER") &&
+        flags.adminBroadcastEpochMs > 0L &&
+        flags.adminBroadcastEpochMs != dismissedEpochMs
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (flags.maintenanceBannerEnabled) {
+            Surface(
+                color = Color(0xFFFEF3C7),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.2.dp, Color(0xFFD97706)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("customer_maintenance_banner")
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFB45309))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Service Notice",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF92400E)
+                        )
+                        Text(
+                            text = flags.maintenanceMessage.ifBlank {
+                                "Scheduled service window active. Delivery ETAs may vary."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF78350F)
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showBroadcast) {
+            Surface(
+                color = Color(0xFFEFF6FF),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.2.dp, Color(0xFF2563EB)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("customer_admin_broadcast_banner")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Campaign, contentDescription = null, tint = Color(0xFF1D4ED8))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Quick Delivery Announcement",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF1E3A8A)
+                        )
+                        Text(
+                            text = flags.adminBroadcastMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF1E40AF)
+                        )
+                    }
+                    IconButton(onClick = { dismissedEpochMs = flags.adminBroadcastEpochMs }) {
+                        Icon(Icons.Default.Close, contentDescription = "Dismiss announcement", tint = Color(0xFF1D4ED8))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CustomerRepeatLastOrderCard(
+    lastOrder: CustomerOrder,
+    onRepeatRoute: (CustomerOrder) -> Unit
+) {
+    Surface(
+        color = Color(0xFFF0FDFA),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, EnhTeal.copy(alpha = 0.35f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("customer_repeat_last_order_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Text(
+                    text = "Repeat Last Order • #${lastOrder.orderId}",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = EnhTeal
+                )
+                Text(
+                    text = "${lastOrder.pickupAddress.fullAddress.substringBefore(",")} → ${lastOrder.dropAddress.fullAddress.substringBefore(",")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = EnhNavy,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            OutlinedButton(
+                onClick = { onRepeatRoute(lastOrder) },
+                border = BorderStroke(1.dp, EnhTeal),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .height(48.dp)
+                    .testTag("customer_repeat_last_order_btn")
+            ) {
+                Icon(Icons.Default.Replay, contentDescription = null, tint = EnhTeal, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Fill Route", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = EnhTeal)
+            }
+        }
+    }
+}
+
+@Composable
+fun CustomerScheduledAndMultiDropCard(
+    flags: AdminRemoteFeatureFlags,
+    isScheduled: Boolean,
+    onToggleScheduled: (Boolean) -> Unit,
+    selectedDateLabel: String,
+    onSelectDateLabel: (String) -> Unit,
+    selectedTimeSlot: String,
+    onSelectTimeSlot: (String) -> Unit,
+    isMultiDrop: Boolean,
+    onToggleMultiDrop: (Boolean) -> Unit,
+    extraStopAddress: String,
+    onExtraStopChange: (String) -> Unit,
+    extraStopFeeInr: Int
+) {
+    if (!flags.scheduledDeliveryEnabled && !flags.multiDropEnabled) return
+
+    Surface(
+        color = Color(0xFFF8FAFC),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("customer_remote_booking_addons_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (flags.scheduledDeliveryEnabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Schedule, contentDescription = null, tint = EnhTeal, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("Schedule Pickup Time", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = EnhNavy)
+                            Text(
+                                text = if (isScheduled) "$selectedDateLabel • $selectedTimeSlot" else "Immediate pickup (Now)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EnhSlate
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = isScheduled,
+                        onCheckedChange = onToggleScheduled,
+                        modifier = Modifier.testTag("customer_schedule_toggle_switch")
+                    )
+                }
+
+                if (isScheduled) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Today", "Tomorrow").forEach { day ->
+                            FilterChip(
+                                selected = selectedDateLabel == day,
+                                onClick = { onSelectDateLabel(day) },
+                                label = { Text(day, fontWeight = FontWeight.Bold) }
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("10 AM - 12 PM", "12 PM - 3 PM", "3 PM - 6 PM", "6 PM - 9 PM").forEach { slot ->
+                            FilterChip(
+                                selected = selectedTimeSlot == slot,
+                                onClick = { onSelectTimeSlot(slot) },
+                                label = { Text(slot, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (flags.multiDropEnabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.AddLocationAlt, contentDescription = null, tint = EnhOrange, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text("Extra Stop / Round-Trip (+₹$extraStopFeeInr)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = EnhNavy)
+                            Text("Add an intermediate stop along this route", style = MaterialTheme.typography.labelSmall, color = EnhSlate)
+                        }
+                    }
+                    Switch(
+                        checked = isMultiDrop,
+                        onCheckedChange = onToggleMultiDrop,
+                        modifier = Modifier.testTag("customer_multidrop_toggle_switch")
+                    )
+                }
+                if (isMultiDrop) {
+                    OutlinedTextField(
+                        value = extraStopAddress,
+                        onValueChange = onExtraStopChange,
+                        label = { Text("Extra Stop / Return Point Address *") },
+                        placeholder = { Text("Shop / Gate / Landmark for 2nd stop") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_extra_stop_input")
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CustomerReferralWalletCard(
+    flags: AdminRemoteFeatureFlags,
+    customerName: String,
+    customerPhone: String,
+    walletBonusInr: Int,
+    useWalletBonus: Boolean,
+    onToggleUseWallet: (Boolean) -> Unit
+) {
+    if (!flags.referralWalletEnabled) return
+    val context = LocalContext.current
+    val ownCode = remember(customerName, customerPhone) {
+        QuickDeliveryOperationsManager.buildPersonalReferralCode(customerName, customerPhone)
+    }
+    var friendCodeInput by remember { mutableStateOf("") }
+    var feedbackMsg by remember { mutableStateOf<String?>(null) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7ED)),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, EnhOrange.copy(alpha = 0.45f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("customer_referral_wallet_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CardGiftcard, contentDescription = null, tint = EnhOrange)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Refer & Earn ₹${flags.referralBonusInr} Wallet Bonus",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = EnhNavy
+                        )
+                        Text(
+                            text = "Your Code: $ownCode • Balance: ₹$walletBonusInr",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = EnhOrange
+                        )
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                "Send parcels fast with Quick Delivery! Use my invite code $ownCode to earn ₹${flags.referralBonusInr} off: https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/customer-apk"
+                            )
+                        }
+                        runCatching {
+                            context.startActivity(Intent.createChooser(shareIntent, "Share Referral Code"))
+                        }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = "Share Invite", tint = EnhOrange, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Invite", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = EnhOrange)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = friendCodeInput,
+                    onValueChange = { friendCodeInput = it.uppercase().filter(Char::isLetterOrDigit) },
+                    label = { Text("Have a friend's code?") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = {
+                        QuickDeliveryOperationsManager.claimReferralBonus(context, friendCodeInput, ownCode)
+                            .onSuccess { credited ->
+                                feedbackMsg = "✅ ₹$credited added to your Referral Wallet!"
+                                friendCodeInput = ""
+                            }
+                            .onFailure { err ->
+                                feedbackMsg = err.message
+                            }
+                    },
+                    enabled = friendCodeInput.length >= 5,
+                    colors = ButtonDefaults.buttonColors(containerColor = EnhOrange),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Text("Claim", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+
+            if (walletBonusInr > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Use ₹$walletBonusInr Wallet Bonus on this order",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = EnhGreen
+                    )
+                    Switch(
+                        checked = useWalletBonus,
+                        onCheckedChange = onToggleUseWallet
+                    )
+                }
+            }
+
+            feedbackMsg?.let { msg ->
+                Text(
+                    text = msg,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (msg.startsWith("✅")) EnhGreen else Color(0xFFB91C1C)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CustomerParcelInsuranceCard(
+    flags: AdminRemoteFeatureFlags,
+    isInsured: Boolean,
+    onToggleInsured: (Boolean) -> Unit
+) {
+    if (!flags.parcelInsuranceEnabled) return
+    Surface(
+        color = if (isInsured) Color(0xFFECFDF5) else Color(0xFFF8FAFC),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.2.dp, if (isInsured) EnhGreen else Color(0xFFCBD5E1)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("customer_parcel_insurance_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = isInsured,
+                onCheckedChange = onToggleInsured,
+                modifier = Modifier.testTag("customer_parcel_insurance_checkbox")
+            )
+            Icon(Icons.Default.Shield, contentDescription = null, tint = EnhGreen, modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Secure Parcel Coverage (+₹${flags.insuranceFeeInr})",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = EnhNavy
+                )
+                Text(
+                    text = "Covers accidental damage or loss up to ₹5,000 during transit",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = EnhSlate
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CustomerShareLiveTrackingButton(
+    order: CustomerOrder,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    OutlinedButton(
+        onClick = {
+            val summary = buildString {
+                appendLine("Quick Delivery Live Tracking • #${order.orderId}")
+                appendLine("Status: ${order.orderStatus.displayTitle}")
+                appendLine("Pickup: ${order.pickupAddress.fullAddress}")
+                appendLine("Drop: ${order.dropAddress.fullAddress}")
+                if (!order.assignedRiderName.isNullOrBlank()) {
+                    appendLine("Rider: ${order.assignedRiderName} (${order.assignedRiderPhone.orEmpty()})")
+                }
+                append("Track / Download Quick Delivery: https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/customer-apk")
+            }
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, "Track Parcel #${order.orderId} - Quick Delivery")
+                putExtra(Intent.EXTRA_TEXT, summary)
+            }
+            runCatching {
+                context.startActivity(Intent.createChooser(shareIntent, "Share Live Tracking"))
+            }
+        },
+        border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .testTag("customer_share_live_tracking_btn")
+    ) {
+        Icon(Icons.Default.Share, contentDescription = "Share Tracking", tint = Color(0xFF7DD3FC), modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("Share Live Order Tracking", fontWeight = FontWeight.Bold, color = Color.White)
+    }
+}
+
+@Composable
+fun CustomerHelperAddonCard(
+    flags: AdminRemoteFeatureFlags,
+    isHelperAdded: Boolean,
+    onToggleHelper: (Boolean) -> Unit
+) {
+    if (!flags.helperAddonEnabled) return
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (isHelperAdded) Color(0xFFFFF7ED) else Color.White
+        ),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.2.dp, if (isHelperAdded) EnhOrange else Color(0xFFCBD5E1)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("customer_helper_addon_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Text(
+                    text = "💪 Loading / Unloading Helper (+₹${flags.helperFeeInr})",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = EnhNavy
+                )
+                Text(
+                    text = "Porter-style doorstep lift & heavy-parcel carry assistance by Rider",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = EnhSlate
+                )
+            }
+            Switch(
+                checked = isHelperAdded,
+                onCheckedChange = onToggleHelper,
+                modifier = Modifier.testTag("customer_helper_addon_switch")
+            )
+        }
+    }
+}
+
+@Composable
+fun CustomerSendReceiverOtpCard(
+    order: CustomerOrder,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val receiverName = order.dropAddress.contactName.ifBlank { "Receiver" }
+    Button(
+        onClick = {
+            val summary = buildString {
+                appendLine("Hi $receiverName! Your parcel (#${order.orderId}) is on the way via Quick Delivery.")
+                appendLine("Pickup: ${order.pickupAddress.fullAddress}")
+                appendLine("Drop: ${order.dropAddress.fullAddress}")
+                if (!order.assignedRiderName.isNullOrBlank()) {
+                    appendLine("Rider Partner: ${order.assignedRiderName} (${order.assignedRiderPhone.orEmpty()})")
+                }
+                appendLine("DROP OTP (Share with Rider at Delivery): ${order.deliveryOtp}")
+                append("Live Track Link: https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/customer-apk")
+            }
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, "Quick Delivery Drop OTP (${order.deliveryOtp}) - #${order.orderId}")
+                putExtra(Intent.EXTRA_TEXT, summary)
+            }
+            runCatching {
+                context.startActivity(Intent.createChooser(shareIntent, "Send Tracking & Drop OTP to Receiver"))
+            }
+        },
+        colors = ButtonDefaults.buttonColors(containerColor = EnhOrange),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .testTag("customer_send_receiver_otp_btn")
+    ) {
+        Icon(Icons.Default.Share, contentDescription = "Send Receiver OTP", tint = Color.White, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = "Send Tracking & Drop OTP (${order.deliveryOtp}) to $receiverName",
+            fontWeight = FontWeight.ExtraBold,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+fun CustomerOrderDisputeCard(
+    order: CustomerOrder,
+    photoProofSummary: String?
+) {
+    val context = LocalContext.current
+    val disputes by QuickDeliveryOperationsManager.disputeRecords.collectAsState()
+    val orderDispute = remember(disputes, order.orderId) {
+        disputes.firstOrNull { it.orderId == order.orderId }
+    }
+    var showForm by remember { mutableStateOf(false) }
+    var selectedCategory by remember { mutableStateOf("Delay in Delivery") }
+    var noteInput by remember { mutableStateOf("") }
+    var feedback by remember { mutableStateOf<String?>(null) }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFF334155)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("customer_order_dispute_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (orderDispute != null) {
+                        "⚖️ Dispute #${orderDispute.disputeId} (${orderDispute.status.name})"
+                    } else {
+                        "Need help with delay or parcel issue?"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier.weight(1f)
+                )
+                if (orderDispute == null) {
+                    OutlinedButton(
+                        onClick = { showForm = !showForm },
+                        border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.testTag("customer_toggle_dispute_form_btn")
+                    ) {
+                        Text(
+                            text = if (showForm) "Close" else "Report Dispute",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFECACA)
+                        )
+                    }
+                }
+            }
+
+            if (orderDispute != null) {
+                val info = when (orderDispute.status) {
+                    DisputeStatus.REFUNDED -> "✅ Admin approved instant wallet refund: +₹${orderDispute.refundAmountInr.toInt()} credited! (${orderDispute.adminNote})"
+                    DisputeStatus.REJECTED -> "❌ Closed by Admin: ${orderDispute.adminNote}"
+                    DisputeStatus.OPEN -> "⏳ Sent to Admin Dispute Desk: ${orderDispute.reason}"
+                }
+                Text(
+                    text = info,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (orderDispute.status == DisputeStatus.REFUNDED) Color(0xFF34D399) else Color(0xFFCBD5E1)
+                )
+            } else if (showForm) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf("Delay in Delivery", "Parcel Damaged", "Wrong Charges / COD", "Rider Behaviour").forEach { cat ->
+                        FilterChip(
+                            selected = selectedCategory == cat,
+                            onClick = { selectedCategory = cat },
+                            label = { Text(cat, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = noteInput,
+                    onValueChange = { noteInput = it },
+                    label = { Text("Describe issue for Admin Refund Desk", color = Color(0xFF94A3B8)) },
+                    placeholder = { Text("e.g., Delayed by 45 mins or box corner crushed") },
+                    singleLine = false,
+                    maxLines = 2,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("customer_dispute_note_input")
+                )
+                Button(
+                    onClick = {
+                        val reason = if (noteInput.isBlank()) selectedCategory else "$selectedCategory: ${noteInput.trim()}"
+                        val created = QuickDeliveryOperationsManager.submitOrderDispute(
+                            context = context,
+                            orderId = order.orderId,
+                            customerPhone = order.customerPhone,
+                            customerName = order.customerName,
+                            reason = reason,
+                            photoProofSummary = photoProofSummary.orEmpty()
+                        )
+                        if (created != null) {
+                            showForm = false
+                            noteInput = ""
+                            feedback = "✅ Dispute #${created.disputeId} sent to Admin Refund Desk!"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("customer_submit_dispute_btn")
+                ) {
+                    Text("Submit Dispute / Request Wallet Refund", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+
+            feedback?.let { msg ->
+                Text(
+                    text = msg,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF34D399)
+                )
+            }
+        }
+    }
+}
+

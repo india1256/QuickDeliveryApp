@@ -179,6 +179,7 @@ object FcmOrderNotificationManager {
     const val CHANNEL_CUSTOMER_ORDER_UPDATES = "fcm_customer_order_updates_silent_v3"
     const val CHANNEL_RIDER_DISPATCH_UPDATES = "fcm_rider_dispatch_updates"
     const val CHANNEL_DELIVERY_COMPLETION = "fcm_delivery_completion_alerts"
+    const val CHANNEL_ORDER_CHAT = "fcm_order_chat_messages_v1"
 
     private const val PREFS_NAME = "quick_delivery_fcm_prefs"
     private const val KEY_FCM_TOKEN = "fcm_registration_token"
@@ -312,8 +313,17 @@ object FcmOrderNotificationManager {
                 enableVibration(true)
             }
 
+            val chatChannel = NotificationChannel(
+                CHANNEL_ORDER_CHAT,
+                "Customer & Rider Live Chat Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Real-time notifications when Rider or Customer sends a chat message"
+                enableVibration(true)
+            }
+
             manager.createNotificationChannels(
-                listOf(customerChannel, riderChannel, completionChannel)
+                listOf(customerChannel, riderChannel, completionChannel, chatChannel)
             )
         }
     }
@@ -522,6 +532,64 @@ object FcmOrderNotificationManager {
             postAndroidSystemNotification(context.applicationContext, record)
         }
         return record
+    }
+
+    fun dispatchIncomingChatNotification(
+        context: Context,
+        message: OrderChatMessageUi
+    ) {
+        ensureInitialized(context)
+        val appRole = resolveCurrentAppRole(context)
+        val targetRole = if (message.senderRole.equals("RIDER", ignoreCase = true)) {
+            FcmTargetAppRole.CUSTOMER
+        } else {
+            FcmTargetAppRole.RIDER
+        }
+        val title = if (targetRole == FcmTargetAppRole.CUSTOMER) {
+            "💬 Message from Rider ${message.senderName} (#${message.orderId})"
+        } else {
+            "💬 Message from Customer ${message.senderName} (#${message.orderId})"
+        }
+        val record = dispatchIncomingFcmMessage(
+            context = context,
+            orderId = message.orderId,
+            orderStatus = OrderStatus.IN_TRANSIT,
+            targetRole = targetRole,
+            title = title,
+            body = message.messageText,
+            isDeliveryCompletion = false,
+            postToSystemTray = false
+        )
+        if (!hasNotificationPermission(context)) return
+        if (appRole == "ADMIN") return
+        if (appRole == "CUSTOMER" && targetRole != FcmTargetAppRole.CUSTOMER) return
+        if (appRole == "RIDER" && targetRole != FcmTargetAppRole.RIDER) return
+
+        runCatching {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("fcm_order_id", message.orderId)
+            }
+            val pendingIntent = if (launchIntent != null) {
+                PendingIntent.getActivity(
+                    context,
+                    message.messageId.hashCode(),
+                    launchIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            } else null
+
+            val builder = NotificationCompat.Builder(context, CHANNEL_ORDER_CHAT)
+                .setSmallIcon(android.R.drawable.ic_dialog_email)
+                .setContentTitle(record.title)
+                .setContentText(record.body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(record.body))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setAutoCancel(true)
+            if (pendingIntent != null) builder.setContentIntent(pendingIntent)
+            NotificationManagerCompat.from(context).notify(message.messageId.hashCode(), builder.build())
+        }
     }
 
     fun dismissCustomerBanner() {

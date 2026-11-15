@@ -36,6 +36,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -93,7 +94,11 @@ class AdminMainActivity : ComponentActivity() {
             QuickDeliveryTheme {
                 LocalizedContextProvider {
                     val signedInAdminEmail by QuickDeliveryOperationsManager.signedInAdminEmail.collectAsState()
+                    val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
                     val isAdminAuthorized = QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(signedInAdminEmail)
+                    var unlockedAdminPin by remember(signedInAdminEmail) { mutableStateOf("") }
+                    val requiresPinUnlock = remoteFlags.adminSecurityPin.length == 4 &&
+                        unlockedAdminPin != remoteFlags.adminSecurityPin
 
                     QuickDeliveryCloudSyncBar(showCardUi = false)
 
@@ -104,6 +109,15 @@ class AdminMainActivity : ComponentActivity() {
                                     this@AdminMainActivity,
                                     verifiedEmail
                                 )
+                            }
+                        )
+                    } else if (requiresPinUnlock) {
+                        AdminSecurityPinUnlockScreen(
+                            expectedPin = remoteFlags.adminSecurityPin,
+                            onPinUnlocked = { unlockedAdminPin = remoteFlags.adminSecurityPin },
+                            onSignOut = {
+                                runCatching { Firebase.auth.signOut() }
+                                QuickDeliveryOperationsManager.signOutAdminSession(this@AdminMainActivity)
                             }
                         )
                     } else {
@@ -129,6 +143,7 @@ class AdminMainActivity : ComponentActivity() {
                                         MultiPhoneLiveSyncManager.notifyOrdersReset(this@AdminMainActivity)
                                     },
                                     onExitToCustomer = {
+                                        unlockedAdminPin = ""
                                         runCatching { Firebase.auth.signOut() }
                                         QuickDeliveryOperationsManager.signOutAdminSession(this@AdminMainActivity)
                                     }
@@ -298,3 +313,116 @@ private fun AdminAllowlistSecurityGateScreen(
         }
     }
 }
+
+@Composable
+private fun AdminSecurityPinUnlockScreen(
+    expectedPin: String,
+    onPinUnlocked: () -> Unit,
+    onSignOut: () -> Unit
+) {
+    var pinInput by remember { mutableStateOf("") }
+    var pinError by remember { mutableStateOf<String?>(null) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0A2E36))
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.5.dp, Color(0xFF0F766E)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("admin_pin_unlock_card")
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Surface(
+                    color = Color(0xFF0F766E).copy(alpha = 0.12f),
+                    shape = CircleShape,
+                    modifier = Modifier.size(58.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Admin PIN Lock",
+                            tint = Color(0xFF0F766E),
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                }
+                Text(
+                    text = "Enter 4-Digit Admin PIN",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF0F172A)
+                )
+                Text(
+                    text = "Security Lock is enabled in Admin Settings",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF475569)
+                )
+                OutlinedTextField(
+                    value = pinInput,
+                    onValueChange = { next ->
+                        val clean = next.filter(Char::isDigit).take(4)
+                        pinInput = clean
+                        pinError = null
+                        if (clean.length == 4 && clean == expectedPin) {
+                            onPinUnlocked()
+                        }
+                    },
+                    label = { Text("4-Digit PIN") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("admin_pin_unlock_input")
+                )
+                pinError?.let { err ->
+                    Text(
+                        text = err,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFDC2626)
+                    )
+                }
+                Button(
+                    onClick = {
+                        if (pinInput == expectedPin) {
+                            onPinUnlocked()
+                        } else {
+                            pinError = "Incorrect 4-digit Admin PIN"
+                        }
+                    },
+                    enabled = pinInput.length == 4,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("admin_pin_unlock_submit_btn")
+                ) {
+                    Text("Unlock Admin Console", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+                OutlinedButton(
+                    onClick = onSignOut,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Switch Admin Account")
+                }
+            }
+        }
+    }
+}
+

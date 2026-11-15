@@ -128,6 +128,10 @@ class RiderRepository(
         OrderProofRegistry.saveDeliveryProof(savedProof)
 
         if (sharedOrderRepository != null) {
+            com.example.data.cloud.MultiPhoneLiveSyncManager.ensureOrderSealedForRepository(
+                sharedOrderRepository,
+                orderId
+            )
             val otpResult = sharedOrderRepository.verifyDeliveryOtpByRider(
                 orderId,
                 enteredOtp,

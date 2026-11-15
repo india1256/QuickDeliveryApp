@@ -112,13 +112,16 @@ fun CustomerBookingConfirmationScreen(
     selectedUpiApp: UpiAppOption,
     appliedPromoCode: String = "",
     promoDiscountInr: Double = 0.0,
+    extraAddonInr: Double = 0.0,
+    extraAddonLabel: String = "",
+    walletDiscountInr: Double = 0.0,
     onBack: () -> Unit,
     onConfirmBooking: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     BackHandler { onBack() }
 
-    val netFareAfterPromoInr = (detailedFare.totalFareInr - promoDiscountInr).coerceAtLeast(15.0)
+    val netFareAfterPromoInr = (detailedFare.totalFareInr + extraAddonInr - promoDiscountInr - walletDiscountInr).coerceAtLeast(15.0)
     val finalTotalWithTipInr = netFareAfterPromoInr + tipInr
 
     Scaffold(
@@ -831,6 +834,26 @@ fun CustomerBookingConfirmationScreen(
                             )
                         }
 
+                        if (extraAddonInr > 0.0 && extraAddonLabel.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = extraAddonLabel,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = DeepNavy
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "+ ₹%.0f", extraAddonInr),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DeepNavy
+                                )
+                            }
+                        }
+
                         // Applied Admin Promo Discount
                         if (promoDiscountInr > 0.0 && appliedPromoCode.isNotBlank()) {
                             Row(
@@ -845,6 +868,26 @@ fun CustomerBookingConfirmationScreen(
                                 )
                                 Text(
                                     text = String.format(Locale.US, "- ₹%.0f", promoDiscountInr),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = VerifiedGreen
+                                )
+                            }
+                        }
+
+                        if (walletDiscountInr > 0.0) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Referral Wallet Credit",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = VerifiedGreen
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "- ₹%.0f", walletDiscountInr),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = VerifiedGreen

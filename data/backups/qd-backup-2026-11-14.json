@@ -1,0 +1,216 @@
+{
+  "resetEpochMs": 1794653824959,
+  "ordersById": {
+    "QD-4352": {
+      "orderId": "QD-4352",
+      "customerId": "CUST-1001",
+      "customerName": "Customer",
+      "customerPhone": "9876543210",
+      "pickupFullAddress": "gupta niwas, no 2, Road Number 16, Thane West, Thane, Maharashtra, Raj mahal apt - 400604",
+      "pickupLandmark": "Raj mahal apt",
+      "pickupContactName": "Customer",
+      "pickupContactPhone": "9876543210",
+      "pickupLat": 19.1914594,
+      "pickupLng": 72.9514085,
+      "dropFullAddress": "delhivery.ltd, ashida compund ground floor, jaibhawani nagar, ola service centre - 400604",
+      "dropLandmark": "ola service centre",
+      "dropContactName": "sonu",
+      "dropContactPhone": "9898989888",
+      "dropLat": 19.2022525,
+      "dropLng": 72.9520225,
+      "packageType": "FOOD",
+      "weightKg": "1",
+      "description": "tiffin",
+      "vehicleType": "BIKE",
+      "orderStatus": "IN_TRANSIT",
+      "statusRank": 5,
+      "totalAmount": "₹100.59",
+      "platformCommission": "₹19.16 (20%)",
+      "riderEarning": "₹76.64",
+      "distanceKm": 1.6,
+      "pickupOtp": "3725",
+      "deliveryOtp": "8664",
+      "assignedRiderId": "RIDER-101",
+      "assignedRiderName": "Rider Partner",
+      "assignedRiderPhone": "8989898989",
+      "assignedRiderVehicle": "Bike (KA-01-EQ-4455)",
+      "latestRiderQuickNote": "📷 Drop Proof (256x115) • 🕒 14 Nov 2026, 06:04 PM • 📍 12.97840, 77.64080",
+      "paymentMethod": "GATEWAY_UPI",
+      "paymentStatus": "VERIFIED_PAID_TO_COMPANY",
+      "createdAt": "14 Nov, 05:23 PM",
+      "createdByDeviceId": "PH-81439F9D",
+      "updatedAtEpochMs": 1794663938917,
+      "pickupProof": {
+        "orderId": "QD-4352",
+        "riderId": "RIDER-101",
+        "riderName": "Rider Partner",
+        "packagePhotoUrl": "Parcel Photo Proof Verified (256x115px @ 14 Nov 17:24:55)",
+        "packagePhotoSummary": "Parcel Photo Proof Verified (256x115px @ 14 Nov 17:24:55)",
+        "senderName": "sonu",
+        "senderSignatureSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 360 140\" width=\"360\" height=\"140\"><path d=\"M 626 179 L 626 179 L 609 147 L 599 130 L 583 124 L 574 148 L 562 186 L 554 231 L 552 274 L 562 312 L 578 342 L 601 363 L 623 378 L 641 389 L 654 393 L 663 393 L 668 392 L 669 390 L 669 390 L 668 389 L 656 390 L 639 394 L 620 398 L 594 399 L 570 398 L 538 391 L 509 380 L 485 365 L 471 349 L 468 333 L 468 318 L 471 303 L 475 289 L 481 274 L 497 258 L 524 240 L 553 226 L 578 225 L 597 239 L 608 259 L 616 281 L 622 301 L 626 318 L 628 328 L 627 330 L 626 329 L 624 325 L 603 305 L 575 275 L 555 250 L 548 241 M 506 217 L 506 217 L 544 243 L 580 255 L 618 260 L 659 257 L 706 246 L 756 226 L 807 200 L 861 173 L 904 150\" fill=\"none\" stroke=\"#042F2E\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+        "verifiedOtp": "3725",
+        "latitude": 19.1914594,
+        "longitude": 72.9514085,
+        "capturedAt": "14 Nov 2026, 05:25 PM"
+      }
+    }
+  },
+  "devicesById": {
+    "PH-59A0402E": {
+      "deviceId": "PH-59A0402E",
+      "role": "UNIFIED",
+      "deviceModel": "Google sdk_gphone64_arm64",
+      "lat": 0,
+      "lng": 0,
+      "lastSeenEpochMs": 1794663938917
+    }
+  },
+  "fcmTokensByDevice": {
+    "PH-6FC90B2A": {
+      "token": "fcm_qd_sdkgphone64arm64_live_98450",
+      "role": "UNIFIED",
+      "updatedAtEpochMs": 1794662594153
+    },
+    "PH-59A0402E": {
+      "token": "fcm_qd_sdkgphone64arm64_live_98450",
+      "role": "UNIFIED",
+      "updatedAtEpochMs": 1794663938917
+    }
+  },
+  "riderRegistrationsByKey": {},
+  "promoCouponsByCode": {},
+  "withdrawalRequestsById": {},
+  "supportTicketsById": {
+    "TKT-03751": {
+      "ticketId": "TKT-03751",
+      "senderRole": "RIDER",
+      "senderName": "Rider Partner",
+      "senderPhone": "8989898998",
+      "orderId": "",
+      "category": "Order Issue",
+      "message": "not getting any order",
+      "isResolved": false,
+      "adminReply": "",
+      "createdAtLabel": "13 Nov, 09:45 PM",
+      "updatedAtEpochMs": 1794586503751
+    }
+  },
+  "remoteFeatureFlags": null,
+  "chatMessagesById": {
+    "msg_ce66056999dd": {
+      "messageId": "msg_ce66056999dd",
+      "orderId": "QD-4352",
+      "senderUid": "customer_local",
+      "senderRole": "CUSTOMER",
+      "senderName": "Customer",
+      "messageText": "hii",
+      "deliveryStage": "Rider Assigned",
+      "timestampLabel": "05:24:43 PM",
+      "createdAtEpochMs": 1794657283599,
+      "syncedToFirestore": false
+    },
+    "msg_f03cd2032355": {
+      "messageId": "msg_f03cd2032355",
+      "orderId": "QD-4352",
+      "senderUid": "rider_local",
+      "senderRole": "RIDER",
+      "senderName": "Rider Partner",
+      "messageText": "On my way to pick up your parcel!",
+      "deliveryStage": "Rider Assigned",
+      "timestampLabel": "05:25:03 PM",
+      "createdAtEpochMs": 1794657303317,
+      "syncedToFirestore": false
+    },
+    "msg_eb0a8df03e9d": {
+      "messageId": "msg_eb0a8df03e9d",
+      "orderId": "QD-4352",
+      "senderUid": "rider_local",
+      "senderRole": "RIDER",
+      "senderName": "Vikram Rathore",
+      "messageText": "📷 Drop Proof (256x115) • 🕒 14 Nov 2026, 05:59 PM • 📍 12.97840, 77.64080",
+      "deliveryStage": "In Transit to Drop",
+      "timestampLabel": "05:59:11 PM",
+      "createdAtEpochMs": 1794659351458,
+      "syncedToFirestore": false
+    },
+    "msg_ae4e5012f058": {
+      "messageId": "msg_ae4e5012f058",
+      "orderId": "QD-4352",
+      "senderUid": "rider_local",
+      "senderRole": "RIDER",
+      "senderName": "Vikram Rathore",
+      "messageText": "📷 Drop Proof (256x115) • 🕒 14 Nov 2026, 06:00 PM • 📍 12.97840, 77.64080",
+      "deliveryStage": "In Transit to Drop",
+      "timestampLabel": "06:00:19 PM",
+      "createdAtEpochMs": 1794659419197,
+      "syncedToFirestore": false
+    },
+    "msg_2cf5b0a38e54": {
+      "messageId": "msg_2cf5b0a38e54",
+      "orderId": "QD-4352",
+      "senderUid": "rider_local",
+      "senderRole": "RIDER",
+      "senderName": "Vikram Rathore",
+      "messageText": "📷 Drop Proof (256x115) • 🕒 14 Nov 2026, 06:04 PM • 📍 12.97840, 77.64080",
+      "deliveryStage": "In Transit to Drop",
+      "timestampLabel": "06:04:44 PM",
+      "createdAtEpochMs": 1794659684641,
+      "syncedToFirestore": false
+    },
+    "msg_7c897beaa6c4": {
+      "messageId": "msg_7c897beaa6c4",
+      "orderId": "QD-4352",
+      "senderUid": "customer_local",
+      "senderRole": "CUSTOMER",
+      "senderName": "Customer",
+      "messageText": "hii",
+      "deliveryStage": "In Transit to Drop",
+      "timestampLabel": "06:05:30 PM",
+      "createdAtEpochMs": 1794659730180,
+      "syncedToFirestore": false
+    },
+    "msg_726bf00ab5c6": {
+      "messageId": "msg_726bf00ab5c6",
+      "orderId": "QD-4352",
+      "senderUid": "rider_local",
+      "senderRole": "RIDER",
+      "senderName": "Rider Partner",
+      "messageText": "On my way to pick up your parcel!",
+      "deliveryStage": "In Transit to Drop",
+      "timestampLabel": "06:06:17 PM",
+      "createdAtEpochMs": 1794659777782,
+      "syncedToFirestore": false
+    },
+    "msg_499d059726e6": {
+      "messageId": "msg_499d059726e6",
+      "orderId": "QD-4352",
+      "senderUid": "customer_local",
+      "senderRole": "CUSTOMER",
+      "senderName": "Customer",
+      "messageText": "whare is my order",
+      "deliveryStage": "In Transit to Drop",
+      "timestampLabel": "06:06:01 PM",
+      "createdAtEpochMs": 1794659761353,
+      "syncedToFirestore": false
+    }
+  },
+  "waitTimerStartByOrder": {},
+  "riderLiveCoordsByOrder": {
+    "QD-4352": {
+      "lat": 39.237255,
+      "lng": -123.1500317,
+      "updatedAtEpochMs": 1794663938917
+    }
+  },
+  "paymentsByOrder": {
+    "QD-TEST": {
+      "orderId": "QD-TEST",
+      "provider": "RAZORPAY",
+      "gatewayOrderId": "razorpay_ord_0398c4ff35a9",
+      "amountInr": 0,
+      "amountPaise": 100,
+      "status": "CREATED",
+      "createdAtIso": "2026-11-14T12:39:58.344Z"
+    }
+  }
+}

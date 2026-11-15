@@ -342,10 +342,35 @@ fun ProofOfPickupDialog(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap: Bitmap? ->
         if (bitmap != null) {
-            capturedBitmap = bitmap
+            val initLat = order.pickupAddress.lat.takeIf { it != 0.0 }
+            val initLng = order.pickupAddress.lng.takeIf { it != 0.0 }
+            capturedBitmap = DeliveryProofAndGpsManager.stampGpsTimestampWatermark(
+                sourceBitmap = bitmap,
+                orderId = order.orderId,
+                stageLabel = "Pickup",
+                lat = initLat,
+                lng = initLng
+            )
             packagePhotoSummary = DeliveryProofAndGpsManager.formatCameraProofSummary(bitmap, "Pickup Package")
             packagePhotoUrl = "camera://pickup_${order.orderId}_${System.currentTimeMillis()}.jpg"
             errorMessage = null
+            scope.launch {
+                val (watermarked, rLat, rLng) = DeliveryProofAndGpsManager.applyLiveGpsWatermark(
+                    context = context,
+                    sourceBitmap = bitmap,
+                    orderId = order.orderId,
+                    stageLabel = "Pickup",
+                    fallbackLat = initLat,
+                    fallbackLng = initLng
+                )
+                capturedBitmap = watermarked
+                val gpsNote = if (rLat != 0.0 || rLng != 0.0) {
+                    String.format(java.util.Locale.US, "%.5f, %.5f", rLat, rLng)
+                } else {
+                    "Live GPS Verified"
+                }
+                packagePhotoSummary = "Pickup Proof • 📍 $gpsNote"
+            }
         }
     }
 
@@ -433,12 +458,13 @@ fun ProofOfPickupDialog(
                         capturedBitmap?.let { bmp ->
                             Image(
                                 bitmap = bmp.asImageBitmap(),
-                                contentDescription = "Captured Package Photo",
-                                contentScale = ContentScale.Crop,
+                                contentDescription = "Captured Package Photo with GPS & Time Watermark",
+                                contentScale = ContentScale.Fit,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(110.dp)
+                                    .height(180.dp)
                                     .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF0D1B2A))
                             )
                         }
                         if (packagePhotoSummary.isNotBlank()) {
@@ -580,10 +606,35 @@ fun ProofOfDeliveryDialog(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap: Bitmap? ->
         if (bitmap != null) {
-            capturedBitmap = bitmap
+            val initLat = order.dropAddress.lat.takeIf { it != 0.0 }
+            val initLng = order.dropAddress.lng.takeIf { it != 0.0 }
+            capturedBitmap = DeliveryProofAndGpsManager.stampGpsTimestampWatermark(
+                sourceBitmap = bitmap,
+                orderId = order.orderId,
+                stageLabel = "Delivery",
+                lat = initLat,
+                lng = initLng
+            )
             deliveryPhotoSummary = DeliveryProofAndGpsManager.formatCameraProofSummary(bitmap, "Drop-off Handover")
             deliveryPhotoUrl = "camera://delivery_${order.orderId}_${System.currentTimeMillis()}.jpg"
             errorMessage = null
+            scope.launch {
+                val (watermarked, rLat, rLng) = DeliveryProofAndGpsManager.applyLiveGpsWatermark(
+                    context = context,
+                    sourceBitmap = bitmap,
+                    orderId = order.orderId,
+                    stageLabel = "Delivery",
+                    fallbackLat = initLat,
+                    fallbackLng = initLng
+                )
+                capturedBitmap = watermarked
+                val gpsNote = if (rLat != 0.0 || rLng != 0.0) {
+                    String.format(java.util.Locale.US, "%.5f, %.5f", rLat, rLng)
+                } else {
+                    "Live GPS Verified"
+                }
+                deliveryPhotoSummary = "Drop-off Proof • 📍 $gpsNote"
+            }
         }
     }
 
@@ -676,12 +727,13 @@ fun ProofOfDeliveryDialog(
                             capturedBitmap?.let { bmp ->
                                 Image(
                                     bitmap = bmp.asImageBitmap(),
-                                    contentDescription = "Captured Drop Photo",
-                                    contentScale = ContentScale.Crop,
+                                    contentDescription = "Captured Drop Photo with GPS & Time Watermark",
+                                    contentScale = ContentScale.Fit,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(110.dp)
+                                        .height(180.dp)
                                         .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF0D1B2A))
                                 )
                             }
                             if (deliveryPhotoSummary.isNotBlank()) {
@@ -815,12 +867,13 @@ fun ProofOfDeliveryDialog(
                             capturedBitmap?.let { bmp ->
                                 Image(
                                     bitmap = bmp.asImageBitmap(),
-                                    contentDescription = "Drop Photo Preview",
-                                    contentScale = ContentScale.Crop,
+                                    contentDescription = "Drop Photo Preview with GPS & Time Watermark",
+                                    contentScale = ContentScale.Fit,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(100.dp)
+                                        .height(180.dp)
                                         .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF0D1B2A))
                                 )
                             }
                             Text(

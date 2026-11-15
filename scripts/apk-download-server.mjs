@@ -1,4 +1,6 @@
 import http from 'node:http';
+import https from 'node:https';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync, spawn } from 'node:child_process';
@@ -6,6 +8,7 @@ import { execSync, spawn } from 'node:child_process';
 const PORT = Number(process.env.APP_PORT || 3000);
 const ROOT = process.cwd();
 const SYNC_STATE_FILE = '/tmp/quickdelivery-live-sync.json';
+const BACKUP_DIR = path.join(ROOT, 'data', 'backups');
 const CLOUD_RUN_MAX_SAFE_APK_BYTES = 33000000; // < 31.5 MiB (well below Cloud Run's 32 MiB = 33,554,432 limit)
 
 const APK_FILE_NAMES = [
@@ -77,10 +80,19 @@ function loadSyncState() {
           resetEpochMs: Number(parsed.resetEpochMs || 0),
           ordersById: cleanOrders,
           devicesById: parsed.devicesById || {},
+          fcmTokensByDevice: parsed.fcmTokensByDevice || {},
           riderRegistrationsByKey: parsed.riderRegistrationsByKey || {},
           promoCouponsByCode: parsed.promoCouponsByCode || {},
           withdrawalRequestsById: parsed.withdrawalRequestsById || {},
           supportTicketsById: parsed.supportTicketsById || {},
+          remoteFeatureFlags: parsed.remoteFeatureFlags || null,
+          chatMessagesById: parsed.chatMessagesById || {},
+          waitTimerStartByOrder: parsed.waitTimerStartByOrder || {},
+          riderLiveCoordsByOrder: parsed.riderLiveCoordsByOrder || {},
+          codSettlementsById: parsed.codSettlementsById || {},
+          disputeRecordsById: parsed.disputeRecordsById || {},
+          riderDocExpiriesById: parsed.riderDocExpiriesById || {},
+          paymentsByOrder: parsed.paymentsByOrder || {},
         };
       }
     }
@@ -89,18 +101,107 @@ function loadSyncState() {
     resetEpochMs: Date.now(),
     ordersById: {},
     devicesById: {},
+    fcmTokensByDevice: {},
     riderRegistrationsByKey: {},
     promoCouponsByCode: {},
     withdrawalRequestsById: {},
     supportTicketsById: {},
+    remoteFeatureFlags: null,
+    chatMessagesById: {},
+    waitTimerStartByOrder: {},
+    riderLiveCoordsByOrder: {},
+    codSettlementsById: {},
+    disputeRecordsById: {},
+    riderDocExpiriesById: {},
+    paymentsByOrder: {},
   };
 }
 
 let syncState = loadSyncState();
+let lastDailyBackupWriteMs = 0;
+
+function writeDailyBackupSnapshot(force = false) {
+  const now = Date.now();
+  if (!force && now - lastDailyBackupWriteMs < 15000) return;
+  lastDailyBackupWriteMs = now;
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    const dayStr = new Date(now).toISOString().slice(0, 10);
+    const outPath = path.join(BACKUP_DIR, `qd-backup-${dayStr}.json`);
+    fs.writeFileSync(outPath, JSON.stringify(syncState, null, 2), 'utf-8');
+  } catch {}
+}
+
+function syncWithMongoDataApiIfConfigured() {
+  const dataApiUrl = process.env.MONGODB_DATA_API_URL || '';
+  const dataApiKey = process.env.MONGODB_DATA_API_KEY || '';
+  if (!dataApiUrl || !dataApiKey) return;
+  try {
+    const u = new URL(dataApiUrl);
+    const payload = JSON.stringify({
+      collection: 'quickdelivery_snapshots',
+      database: process.env.MONGODB_DB_NAME || 'quickdelivery',
+      dataSource: process.env.MONGODB_CLUSTER || 'Cluster0',
+      filter: { _id: 'live_state_v1' },
+      update: { $set: { state: syncState, updatedAt: new Date().toISOString() } },
+      upsert: true,
+    });
+    const req = https.request(
+      {
+        hostname: u.hostname,
+        port: u.port || 443,
+        path: u.pathname + (u.search || ''),
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': dataApiKey,
+          'Content-Length': Buffer.byteLength(payload),
+        },
+      },
+      res => res.resume()
+    );
+    req.on('error', () => {});
+    req.write(payload);
+    req.end();
+  } catch {}
+}
+
+function sendFcmPushNotifications({ tokens, title, body, data = {} }) {
+  const fcmServerKey = process.env.FCM_SERVER_KEY || '';
+  if (!fcmServerKey || !Array.isArray(tokens) || tokens.length === 0) return;
+  try {
+    const cleanTokens = tokens.filter(t => typeof t === 'string' && t.length > 20 && !t.startsWith('fcm_qd_'));
+    if (cleanTokens.length === 0) return;
+    const payload = JSON.stringify({
+      registration_ids: cleanTokens,
+      priority: 'high',
+      notification: { title, body, sound: 'default' },
+      data,
+    });
+    const req = https.request(
+      {
+        hostname: 'fcm.googleapis.com',
+        path: '/fcm/send',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `key=${fcmServerKey}`,
+          'Content-Length': Buffer.byteLength(payload),
+        },
+      },
+      res => res.resume()
+    );
+    req.on('error', () => {});
+    req.write(payload);
+    req.end();
+  } catch {}
+}
 
 function saveSyncState() {
   try {
     fs.writeFileSync(SYNC_STATE_FILE, JSON.stringify(syncState), 'utf-8');
+    writeDailyBackupSnapshot(false);
+    syncWithMongoDataApiIfConfigured();
   } catch {}
 }
 
@@ -350,11 +451,11 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     </div>
 
     <div class="guide-box">
-      <h2>✨ v5.7.0 Highlights: Play Store-Ready Clean Experience</h2>
+      <h2>✨ v6.1.3 Production Enterprise &amp; Quick Commerce Upgrade</h2>
       <ol class="step-list">
-        <li><b>Customer App:</b> Auto-Capture exact Pickup/Drop address via GPS, Save <b>Home / Office / Shop</b> addresses, apply Admin Promo Coupons, cancel with reason &amp; In-App Helpdesk Tickets.</li>
-        <li><b>Rider Partner App:</b> Clean Accept/Reject top popup (auto-stops ring on action), Clear KYC document check, Same-Day vs Total earnings, Online/COD split &amp; UPI/Bank Payout Requests.</li>
-        <li><b>Admin Console:</b> Allowlist Google Sign-In Gate, Reassign/Cancel active orders, KYC zoom &amp; doc-specific rejection, Dynamic Promo Coupon Manager, Payout &amp; Support Ticket Approvals.</li>
+        <li><b>Customer App:</b> Porter-style Box Capacity Guide (Bike/Scooter/Auto dimensions) + Loading Helper (+₹60), Swiggy/Zomato Animated Route Polyline &amp; "Arriving in X mins" Map, 1-Tap Receiver Live Tracking &amp; Drop OTP Share, and Instant Order Dispute Filing.</li>
+        <li><b>Rider Partner App:</b> Smart Same-Route Order Batching (+₹25 Clubbing Bonus), Customer Helper Request badge, GPS+Time Photo Watermark, and Instant UPI/IMPS vs Weekly Auto-Payout selector.</li>
+        <li><b>Admin Console:</b> Live Zone Supply-vs-Demand Alert + 1-Tap Surge Trigger, Rider COD Cash Settlement Ledger, Dispute &amp; Instant Wallet Refund Desk, Rider DL/RC/Insurance Expiry Tracker, and Peak-Hour Auto-Surge Scheduler.</li>
       </ol>
     </div>
 
@@ -368,7 +469,8 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     <div style="margin-top: 16px; text-align: center; font-size: 12px; color: #A7F3D0;">
       <a href="/privacy-policy" style="color: #6EE7B7; margin: 0 8px;">Privacy Policy</a> •
       <a href="/terms" style="color: #6EE7B7; margin: 0 8px;">Terms of Service</a> •
-      <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a>
+      <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a> •
+      <a href="/api/backup-export" style="color: #6EE7B7; margin: 0 8px;">Cloud Backup (.json)</a>
     </div>
   </div>
 
@@ -450,34 +552,37 @@ function renderLegalPageHtml(kind = 'privacy') {
       </div>`
     : isTerms
     ? `
-      <h1>Terms of Service</h1>
+      <h1>Terms of Service — Quick Delivery Suite</h1>
       <p><b>Effective Date:</b> November 2026 • <b>Contact:</b> ravindergupta141@gmail.com</p>
       <div class="card">
-        <h2>1. Parcel Booking &amp; Permitted Items</h2>
-        <p>Quick Delivery provides on-demand local parcel pickup and drop-off services. Customers must accurately declare parcel weight (maximum 20 kg per shipment) and contents. Prohibited, hazardous, illegal, or restricted goods are strictly banned.</p>
-        <h2>2. OTP Handover &amp; Cancellation</h2>
-        <p>Orders booked via online payment methods require 4-digit Pickup and Drop OTP verification between Customer, Rider Partner, and Recipient. Customers may cancel orders free of charge while the request is searching for a partner before pickup.</p>
-        <h2>3. Partner Safety &amp; Settlement</h2>
-        <p>Delivery partners receive 80% of base trip fare plus 100% of customer tips. Partners must follow road safety laws and speed thresholds.</p>
+        <h2>1. Mandatory Consent, Account Isolation &amp; Permissions</h2>
+        <p>Users must read and explicitly accept the Privacy Policy &amp; Terms before signing up. Each customer account is strictly isolated by its 10-digit mobile number or verified email so order history, live tracking, and saved addresses remain private to that account. Location, Camera, and Notification permissions are required post-login to operate parcel pickup, GPS tracking, and proof-of-delivery features.</p>
+        <h2>2. Parcel Booking &amp; Prohibited Items</h2>
+        <p>Quick Delivery provides on-demand local parcel pickup and drop-off services (maximum 20 kg per shipment). Prohibited, illegal, flammable, hazardous, stolen, or restricted goods are strictly banned; the sender bears full legal responsibility for declared contents.</p>
+        <h2>3. OTP Handover, Wait-Time &amp; Cancellation</h2>
+        <p>Orders require 4-digit Pickup and Drop OTP + digital signature verification. Pre-pickup cancellations after partner dispatch and pickup wait time beyond the free grace window may incur policy fees when enabled by Admin.</p>
+        <h2>4. Partner Safety, KYC &amp; Fair Settlement</h2>
+        <p>Delivery partners receive 80% of base trip fare plus 100% of customer tips. Partners must maintain valid KYC documents, wear helmets/safety gear, obey traffic laws, and upload genuine camera delivery proofs.</p>
       </div>`
     : `
-      <h1>Privacy Policy</h1>
-      <p><b>Developer / Data Controller:</b> Quick Delivery Logistics (<a href="mailto:ravindergupta141@gmail.com">ravindergupta141@gmail.com</a>)<br /><b>Effective Date:</b> November 2026</p>
+      <h1>Privacy Policy — Quick Delivery Suite</h1>
+      <p><b>Apps Covered:</b> Quick Delivery (Customer), Partner Quick Delivery (Rider), and Quick Delivery Admin<br /><b>Developer / Data Controller:</b> Quick Delivery Logistics (<a href="mailto:ravindergupta141@gmail.com">ravindergupta141@gmail.com</a>)<br /><b>Effective Date:</b> November 2026</p>
       <div class="card">
-        <h2>1. Information We Collect</h2>
+        <h2>1. Account-Isolated Information We Collect</h2>
         <ul>
-          <li><b>Account Details:</b> Name, 10-digit mobile number, and email address used for authentication, parcel receipts, and delivery coordination.</li>
-          <li><b>Foreground Location:</b> Approximate and precise GPS coordinates collected only when you actively request pickup/drop location detection or live delivery tracking.</li>
-          <li><b>Camera (User-Initiated):</b> Parcel photos and proof-of-delivery images captured strictly when you press the Camera button.</li>
+          <li><b>Account &amp; Partner Identity:</b> Name, 10-digit mobile number, email address, and (for Riders) KYC documents strictly isolated per account for booking history, GST receipts, and payouts.</li>
+          <li><b>Foreground Location (Required Post-Login):</b> Approximate and precise GPS coordinates collected only while booking, actively navigating, or tracking an active order. No background spying occurs when offline.</li>
+          <li><b>Camera (Required Post-Login, User-Initiated):</b> Parcel pickup/drop proof photos and Rider selfie check-ins captured only when triggered by you. Zero broad storage permissions are requested.</li>
+          <li><b>Notifications (Required Post-Login):</b> Push and local tray alerts strictly for order status updates, OTPs, and live Rider-Customer chat.</li>
         </ul>
         <h2>2. How We Use &amp; Protect Data</h2>
         <ul>
-          <li>Used solely to calculate accurate delivery fares, verify OTP handovers, display live tracking to assigned parties, and issue GST receipts.</li>
-          <li>All data in transit is encrypted over HTTPS (TLS).</li>
-          <li>We do not sell personal data or share it with third-party advertising networks.</li>
+          <li>Used solely to calculate transparent delivery fares, verify OTP &amp; digital signature handovers, display live rider ETA, generate GST/Earning PDFs, and verify online payments.</li>
+          <li>All traffic in transit is encrypted over HTTPS (TLS) with HMAC-SHA256 fare and session integrity sealing.</li>
+          <li>We never sell personal data or share it with third-party advertising networks.</li>
         </ul>
-        <h2>3. Data Retention &amp; Deletion</h2>
-        <p>You may erase your account and local data anytime inside the app via <b>Menu → Delete Account &amp; Data</b>, or review deletion steps at <a href="/delete-account">/delete-account</a>.</p>
+        <h2>3. Data Retention &amp; Account Deletion</h2>
+        <p>You can permanently delete your account and local profile anytime inside the app via <b>Menu → Delete Account &amp; Data</b>, or review web deletion instructions at <a href="/delete-account">/delete-account</a>.</p>
       </div>`;
 
   return `<!DOCTYPE html>
@@ -658,6 +763,20 @@ function configureNginxDirectApkServing() {
             add_header Access-Control-Allow-Headers "Content-Type, Accept";
         }
 
+        location = /api/backup-export {
+            proxy_pass http://localhost:3000/api/backup-export;
+            proxy_set_header Host localhost:3000;
+            add_header Access-Control-Allow-Origin "*";
+        }
+
+        location /api/payments/ {
+            proxy_pass http://localhost:3000/api/payments/;
+            proxy_set_header Host localhost:3000;
+            add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Accept, x-razorpay-signature";
+        }
+
         location = /download {
             alias /var/www/assets/warmup.html;
             default_type text/html;
@@ -733,6 +852,15 @@ function buildSyncResponsePayload() {
     promoCoupons: Object.values(syncState.promoCouponsByCode || {}),
     withdrawalRequests: Object.values(syncState.withdrawalRequestsById || {}),
     supportTickets: Object.values(syncState.supportTicketsById || {}),
+    codSettlements: Object.values(syncState.codSettlementsById || {}),
+    disputeRecords: Object.values(syncState.disputeRecordsById || {}),
+    riderDocExpiries: Object.values(syncState.riderDocExpiriesById || {}),
+    remoteFeatureFlags: syncState.remoteFeatureFlags || null,
+    waitTimerStartByOrder: syncState.waitTimerStartByOrder || {},
+    riderLiveCoordsByOrder: syncState.riderLiveCoordsByOrder || {},
+    chatMessages: Object.values(syncState.chatMessagesById || {}).sort(
+      (a, b) => Number(a.createdAtEpochMs || 0) - Number(b.createdAtEpochMs || 0)
+    ),
   };
 }
 
@@ -763,19 +891,30 @@ const server = http.createServer((req, res) => {
           const now = Date.now();
 
           if (payload.deviceId) {
-            syncState.devicesById[String(payload.deviceId)] = {
-              deviceId: String(payload.deviceId),
-              role: String(payload.role || 'UNIFIED'),
+            const devId = String(payload.deviceId);
+            const roleVal = String(payload.role || 'UNIFIED');
+            syncState.devicesById[devId] = {
+              deviceId: devId,
+              role: roleVal,
               deviceModel: String(payload.deviceModel || 'Android Phone'),
               lat: Number(payload.deviceLat || 0),
               lng: Number(payload.deviceLng || 0),
               lastSeenEpochMs: now,
             };
+            if (payload.fcmToken && String(payload.fcmToken).length > 12) {
+              if (!syncState.fcmTokensByDevice) syncState.fcmTokensByDevice = {};
+              syncState.fcmTokensByDevice[devId] = {
+                token: String(payload.fcmToken),
+                role: roleVal,
+                updatedAtEpochMs: now,
+              };
+            }
           }
 
           if (payload.resetEpochMs && Number(payload.resetEpochMs) > syncState.resetEpochMs) {
             syncState.resetEpochMs = Number(payload.resetEpochMs);
             syncState.ordersById = {};
+            syncState.chatMessagesById = {};
           }
 
           if (Array.isArray(payload.riderRegistrations)) {
@@ -831,6 +970,125 @@ const server = http.createServer((req, res) => {
             }
           }
 
+          if (Array.isArray(payload.codSettlements)) {
+            if (!syncState.codSettlementsById) syncState.codSettlementsById = {};
+            for (const s of payload.codSettlements) {
+              if (!s || !s.settlementId) continue;
+              const sid = String(s.settlementId);
+              const prev = syncState.codSettlementsById[sid];
+              if (!prev || Number(s.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.codSettlementsById[sid] = s;
+              }
+            }
+          }
+
+          if (Array.isArray(payload.disputeRecords)) {
+            if (!syncState.disputeRecordsById) syncState.disputeRecordsById = {};
+            for (const d of payload.disputeRecords) {
+              if (!d || !d.disputeId) continue;
+              const did = String(d.disputeId);
+              const prev = syncState.disputeRecordsById[did];
+              if (!prev || Number(d.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.disputeRecordsById[did] = d;
+              }
+            }
+          }
+
+          if (Array.isArray(payload.riderDocExpiries)) {
+            if (!syncState.riderDocExpiriesById) syncState.riderDocExpiriesById = {};
+            for (const e of payload.riderDocExpiries) {
+              if (!e || !e.riderId) continue;
+              const eid = String(e.riderId);
+              const prev = syncState.riderDocExpiriesById[eid];
+              if (!prev || Number(e.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.riderDocExpiriesById[eid] = e;
+              }
+            }
+          }
+
+          if (payload.remoteFeatureFlags && typeof payload.remoteFeatureFlags === 'object') {
+            const incomingFlags = payload.remoteFeatureFlags;
+            const prevFlags = syncState.remoteFeatureFlags;
+            const inTs = Number(incomingFlags.updatedAtEpochMs || 0);
+            const prevTs = Number((prevFlags && prevFlags.updatedAtEpochMs) || 0);
+            if (!prevFlags || (inTs > 0 && inTs >= prevTs)) {
+              syncState.remoteFeatureFlags = {
+                ...(prevFlags || {}),
+                ...incomingFlags,
+              };
+            }
+          }
+
+          if (payload.waitTimerStartByOrder && typeof payload.waitTimerStartByOrder === 'object') {
+            if (!syncState.waitTimerStartByOrder) syncState.waitTimerStartByOrder = {};
+            for (const [oid, ts] of Object.entries(payload.waitTimerStartByOrder)) {
+              const numTs = Number(ts || 0);
+              if (numTs > 0 && (!syncState.waitTimerStartByOrder[oid] || numTs < syncState.waitTimerStartByOrder[oid])) {
+                syncState.waitTimerStartByOrder[oid] = numTs;
+              }
+            }
+          }
+
+          if (payload.riderLiveCoordsByOrder && typeof payload.riderLiveCoordsByOrder === 'object') {
+            if (!syncState.riderLiveCoordsByOrder) syncState.riderLiveCoordsByOrder = {};
+            for (const [oid, coords] of Object.entries(payload.riderLiveCoordsByOrder)) {
+              if (coords && (Number(coords.lat || 0) !== 0 || Number(coords.lng || 0) !== 0)) {
+                syncState.riderLiveCoordsByOrder[oid] = {
+                  lat: Number(coords.lat || 0),
+                  lng: Number(coords.lng || 0),
+                  updatedAtEpochMs: now,
+                };
+              }
+            }
+          }
+
+          if (Array.isArray(payload.chatMessages)) {
+            if (!syncState.chatMessagesById) syncState.chatMessagesById = {};
+            const newRemoteChatMsgs = [];
+            for (const m of payload.chatMessages) {
+              if (!m || !m.messageId || !m.orderId || !m.messageText) continue;
+              const mid = String(m.messageId);
+              if (mid.startsWith('msg_seed_')) continue;
+              if (!syncState.chatMessagesById[mid]) {
+                const record = {
+                  messageId: mid,
+                  orderId: String(m.orderId),
+                  senderUid: String(m.senderUid || 'sync_uid'),
+                  senderRole: String(m.senderRole || 'RIDER'),
+                  senderName: String(m.senderName || 'Partner'),
+                  messageText: String(m.messageText),
+                  deliveryStage: String(m.deliveryStage || 'IN_TRANSIT'),
+                  timestampLabel: String(m.timestampLabel || 'Just now'),
+                  createdAtEpochMs: Number(m.createdAtEpochMs || now),
+                  syncedToFirestore: Boolean(m.syncedToFirestore),
+                };
+                syncState.chatMessagesById[mid] = record;
+                newRemoteChatMsgs.push(record);
+              }
+            }
+            if (newRemoteChatMsgs.length > 0 && syncState.fcmTokensByDevice) {
+              const latestMsg = newRemoteChatMsgs[newRemoteChatMsgs.length - 1];
+              const targetRole = latestMsg.senderRole === 'RIDER' ? 'CUSTOMER' : 'RIDER';
+              const targetTokens = Object.values(syncState.fcmTokensByDevice)
+                .filter(entry => entry && entry.role === targetRole)
+                .map(entry => entry.token);
+              sendFcmPushNotifications({
+                tokens: targetTokens,
+                title: `New Chat Message (#${latestMsg.orderId})`,
+                body: `${latestMsg.senderName}: ${latestMsg.messageText}`,
+                data: { orderId: latestMsg.orderId, type: 'CHAT' },
+              });
+            }
+            const allMsgs = Object.values(syncState.chatMessagesById);
+            if (allMsgs.length > 500) {
+              allMsgs.sort((a, b) => Number(a.createdAtEpochMs || 0) - Number(b.createdAtEpochMs || 0));
+              const kept = allMsgs.slice(-500);
+              const nextMap = {};
+              for (const km of kept) nextMap[km.messageId] = km;
+              syncState.chatMessagesById = nextMap;
+            }
+          }
+
           if (Array.isArray(payload.orders)) {
             const senderDeviceId = String(payload.deviceId || '');
             const senderRole = String(payload.role || 'UNIFIED');
@@ -859,6 +1117,17 @@ const server = http.createServer((req, res) => {
                     createdByDeviceId: senderDeviceId,
                     updatedAtEpochMs: now,
                   };
+                }
+                if (syncState.ordersById[oid].orderStatus === 'SEARCHING_RIDER' && syncState.fcmTokensByDevice) {
+                  const riderTokens = Object.values(syncState.fcmTokensByDevice)
+                    .filter(entry => entry && entry.role === 'RIDER')
+                    .map(entry => entry.token);
+                  sendFcmPushNotifications({
+                    tokens: riderTokens,
+                    title: `New Parcel Request #${oid}`,
+                    body: `Pickup: ${incoming.pickupFullAddress || 'Nearby'} • Payout ${incoming.riderEarning || ''}`,
+                    data: { orderId: oid, orderStatus: 'SEARCHING_RIDER', targetRole: 'RIDER' },
+                  });
                 }
               } else {
                 let inRank = Number(incoming.statusRank || 1);
@@ -913,6 +1182,112 @@ const server = http.createServer((req, res) => {
       'Access-Control-Allow-Origin': '*',
     });
     res.end(out);
+    return;
+  }
+
+  if (pathname === '/api/backup-export') {
+    writeDailyBackupSnapshot(true);
+    const dayStr = new Date().toISOString().slice(0, 10);
+    const snapshot = JSON.stringify(
+      {
+        exportedAtIso: new Date().toISOString(),
+        version: '6.1.3',
+        ...syncState,
+      },
+      null,
+      2
+    );
+    const buf = Buffer.from(snapshot, 'utf-8');
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="quickdelivery-backup-${dayStr}.json"`,
+      'Content-Length': String(buf.length),
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+    res.end(buf);
+    return;
+  }
+
+  if (pathname === '/api/payments/create-order' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 256 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const orderId = String(parsed.orderId || `QD-${Date.now() % 10000}`);
+        const amountInr = Number(parsed.amountInr || 0);
+        const amountPaise = Math.max(100, Math.round(amountInr * 100));
+        const provider = String(
+          parsed.provider || (syncState.remoteFeatureFlags && syncState.remoteFeatureFlags.gatewayProvider) || 'RAZORPAY'
+        ).toUpperCase();
+        const gatewayOrderId = `${provider.toLowerCase()}_ord_${crypto.randomBytes(6).toString('hex')}`;
+        if (!syncState.paymentsByOrder) syncState.paymentsByOrder = {};
+        syncState.paymentsByOrder[orderId] = {
+          orderId,
+          provider,
+          gatewayOrderId,
+          amountInr,
+          amountPaise,
+          status: 'CREATED',
+          createdAtIso: new Date().toISOString(),
+        };
+        saveSyncState();
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(JSON.stringify({ ok: true, orderId, provider, gatewayOrderId, amountPaise, currency: 'INR' }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid payment order request' }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/payments/razorpay-webhook' && req.method === 'POST') {
+    let rawBody = '';
+    req.on('data', chunk => {
+      rawBody += chunk;
+      if (rawBody.length > 512 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      const secret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+      const sigHeader = String(req.headers['x-razorpay-signature'] || '');
+      if (secret) {
+        const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+        const sigBuf = Buffer.from(sigHeader, 'utf-8');
+        const expBuf = Buffer.from(expected, 'utf-8');
+        if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'Invalid webhook signature' }));
+          return;
+        }
+      }
+      try {
+        const evt = JSON.parse(rawBody || '{}');
+        const paymentEntity = evt?.payload?.payment?.entity || {};
+        const qdOrderId = String(paymentEntity?.notes?.qdOrderId || evt.orderId || '');
+        if (qdOrderId && syncState.ordersById[qdOrderId]) {
+          syncState.ordersById[qdOrderId].paymentStatus = 'VERIFIED_PAID_TO_COMPANY';
+          syncState.ordersById[qdOrderId].updatedAtEpochMs = Date.now();
+          saveSyncState();
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, received: true, orderId: qdOrderId || null }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'Malformed webhook payload' }));
+      }
+    });
     return;
   }
 

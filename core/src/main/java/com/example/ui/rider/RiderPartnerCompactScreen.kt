@@ -62,6 +62,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -100,8 +101,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.cloud.DeliveryProofAndGpsManager
 import com.example.data.cloud.MultiPhoneLiveSyncManager
+import com.example.data.cloud.QuickDeliveryOperationsManager
 import com.example.data.cloud.RiderApprovalWorkflowStatus
 import com.example.data.cloud.RiderRegistrationApprovalManager
+import com.example.data.cloud.RiderSmartToolsPrefs
 import com.example.data.delivery.AutomatedFairRiderAssignmentEngine
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
@@ -120,12 +123,15 @@ import com.example.ui.components.DualDeliveryCelebrationMotivationBanner
 import com.example.ui.components.FcmOrderNotificationManager
 import com.example.ui.components.MotivationAndPromoManager
 import com.example.ui.components.QuickDeliveryDeleteAccountDialog
+import com.example.ui.components.QuickDeliveryMandatoryPermissionsGateScreen
 import com.example.ui.components.QuickDeliveryNextLevelLaunchOverlay
+import com.example.ui.components.QuickDeliveryCuteBunnyLogo
 import com.example.ui.components.QuickDeliveryOfficialLogo
 import com.example.ui.components.QuickDeliveryPrivacyPolicyDialog
 import com.example.ui.components.QuickDeliverySpeedingVehicleIntro
 import com.example.ui.components.QuickDeliverySuggestionBoxCard
 import com.example.ui.components.QuickDeliveryUserAuthScreen
+import com.example.ui.components.hasAllMandatoryAppPermissions
 import com.example.ui.components.RiderFeedbackManager
 import com.example.ui.components.RiderLiveSelfieCallAndExcelManager
 import com.example.ui.components.RiderMandatoryLiveSelfieOnlineGateDialog
@@ -169,6 +175,12 @@ fun RiderPartnerCompactScreen(
     remember(context) { RiderOrderTransferManager.ensureLoaded(context) }
     remember(context) { RiderLiveSelfieCallAndExcelManager.ensureLoaded(context) }
     remember(context) { RiderThemeManager.ensureLoaded(context) }
+    remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
+    remember(context) { RiderSmartToolsPrefs.ensureLoaded(context) }
+    val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+    val voiceAlertEnabled by RiderSmartToolsPrefs.voiceAlertEnabled.collectAsState()
+    val minPayoutFilterInr by RiderSmartToolsPrefs.minPayoutFilterInr.collectAsState()
+    val preferredAreaKeyword by RiderSmartToolsPrefs.preferredAreaKeyword.collectAsState()
     val isDarkMode by RiderThemeManager.isDarkMode.collectAsState()
     val screenBgColor = if (isDarkMode) Color(0xFF0B1320) else RiderSoftBg
     val cardSurfaceColor = if (isDarkMode) Color(0xFF1E293B) else Color.White
@@ -216,6 +228,10 @@ fun RiderPartnerCompactScreen(
         }
     }
 
+    val todayDistanceKm = remember(todayDeliveredOrders) {
+        todayDeliveredOrders.sumOf { it.distanceKm.coerceAtLeast(0.0) }
+    }
+
     remember(context) { MotivationAndPromoManager.restoreSavedLoginFromPhoneStorage(context) }
     remember(context) { RiderRegistrationApprovalManager.ensureLoaded(context) }
     val registrationsMap by RiderRegistrationApprovalManager.registrationsByKey.collectAsState()
@@ -240,9 +256,14 @@ fun RiderPartnerCompactScreen(
     var riderPickupMotivationMessage by remember { mutableStateOf<String?>(null) }
     val riderPostDeliveryMotivation by MotivationAndPromoManager.riderPostDeliveryMotivation.collectAsState()
 
-    LaunchedEffect(orders) {
+    LaunchedEffect(orders, voiceAlertEnabled) {
         MotivationAndPromoManager.observeOrdersForDeliveryMotivation(orders)
         FcmOrderNotificationManager.observeOrdersAndDispatchFcmNotifications(context, orders)
+        if (voiceAlertEnabled) {
+            orders.filter { it.orderStatus == OrderStatus.SEARCHING_RIDER }.forEach { incomingOrder ->
+                RiderSmartToolsPrefs.speakNewOrderIfRider(context, incomingOrder)
+            }
+        }
         if (orders.none { it.orderStatus == OrderStatus.SEARCHING_RIDER }) {
             com.example.security.OrderAlertSoundManager.stopOrderAlert()
         }
@@ -250,7 +271,56 @@ fun RiderPartnerCompactScreen(
 
     var activePhotoOrderId by remember { mutableStateOf<String?>(null) }
     val orderPhotoProofMap = remember { mutableStateMapOf<String, String>() }
+    val orderPhotoBitmapMap = remember { mutableStateMapOf<String, Bitmap>() }
     val orderLiveGpsMap = remember { mutableStateMapOf<String, String>() }
+
+    val todayCodCollectedInr = remember(todayDeliveredOrders) {
+        todayDeliveredOrders
+            .filter { it.paymentMethod == CustomerPaymentMethod.CASH_ON_DELIVERY }
+            .sumOf { o ->
+                o.totalAmount.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+            }
+    }
+
+    val hasAssignedActiveOrder = remember(orders) {
+        orders.any {
+            it.orderStatus == OrderStatus.RIDER_ASSIGNED ||
+                it.orderStatus == OrderStatus.ARRIVED_AT_PICKUP ||
+                it.orderStatus == OrderStatus.PICKED_UP ||
+                it.orderStatus == OrderStatus.IN_TRANSIT
+        }
+    }
+    LaunchedEffect(hasAssignedActiveOrder) {
+        if (!hasAssignedActiveOrder) return@LaunchedEffect
+        while (true) {
+            if (DeliveryProofAndGpsManager.hasLocationPermission(context)) {
+                val freshCoords = runCatching { DeliveryProofAndGpsManager.fetchLiveGpsLocation(context) }.getOrNull()
+                if (freshCoords != null) {
+                    val formatted = String.format(Locale.US, "%.5f, %.5f", freshCoords.first, freshCoords.second)
+                    orders.filter {
+                        it.orderStatus == OrderStatus.RIDER_ASSIGNED ||
+                            it.orderStatus == OrderStatus.ARRIVED_AT_PICKUP ||
+                            it.orderStatus == OrderStatus.PICKED_UP ||
+                            it.orderStatus == OrderStatus.IN_TRANSIT
+                    }.forEach { activeOrd ->
+                        orderLiveGpsMap[activeOrd.orderId] = formatted
+                        QuickDeliveryOperationsManager.updateRiderCoordsForOrder(
+                            context = context,
+                            orderId = activeOrd.orderId,
+                            lat = freshCoords.first,
+                            lng = freshCoords.second
+                        )
+                    }
+                    currentRider?.let { r ->
+                        val updatedR = r.copy(currentLat = freshCoords.first, currentLng = freshCoords.second)
+                        val nextFleet = repository.riders.value.map { if (it.riderId == updatedR.riderId) updatedR else it }
+                        AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, nextFleet)
+                    }
+                }
+            }
+            kotlinx.coroutines.delay(12_000L)
+        }
+    }
 
     // Persist delivered orders moved to Trip History so Rider Home resets cleanly for new orders
     val archivedOrderPrefs = remember(context) {
@@ -259,8 +329,66 @@ fun RiderPartnerCompactScreen(
     var archivedCompletedOrderIds by remember {
         mutableStateOf(archivedOrderPrefs.getStringSet("archived_ids", emptySet())?.toSet() ?: emptySet())
     }
-    val activeHomeOrders = remember(orders, archivedCompletedOrderIds) {
+    val unarchivedHomeOrders = remember(orders, archivedCompletedOrderIds) {
         orders.filter { it.orderStatus != OrderStatus.CANCELLED && it.orderId !in archivedCompletedOrderIds }
+    }
+    val areaQuery = preferredAreaKeyword.trim()
+    val activeHomeOrders = remember(unarchivedHomeOrders, minPayoutFilterInr, areaQuery) {
+        unarchivedHomeOrders.filter { order ->
+            if (order.orderStatus != OrderStatus.SEARCHING_RIDER) {
+                true
+            } else {
+                val earningVal = order.riderEarning
+                    .replace("₹", "")
+                    .replace(",", "")
+                    .trim()
+                    .toDoubleOrNull() ?: 0.0
+                val passesPayout = minPayoutFilterInr <= 0 || earningVal >= minPayoutFilterInr
+                val passesArea = areaQuery.isBlank() ||
+                    order.pickupAddress.fullAddress.contains(areaQuery, ignoreCase = true) ||
+                    order.dropAddress.fullAddress.contains(areaQuery, ignoreCase = true)
+                passesPayout && passesArea
+            }
+        }
+    }
+    val hiddenByFilterCount = (unarchivedHomeOrders.size - activeHomeOrders.size).coerceAtLeast(0)
+
+    val ongoingTripForBatch = remember(activeHomeOrders) {
+        activeHomeOrders.firstOrNull {
+            it.orderStatus == OrderStatus.RIDER_ASSIGNED ||
+                it.orderStatus == OrderStatus.ARRIVED_AT_PICKUP ||
+                it.orderStatus == OrderStatus.PICKED_UP ||
+                it.orderStatus == OrderStatus.IN_TRANSIT
+        }
+    }
+    val sameRouteBatchMatches = remember(activeHomeOrders, ongoingTripForBatch) {
+        val currentTrip = ongoingTripForBatch ?: return@remember emptyList<CustomerOrder>()
+        val pinRegex = Regex("\\b\\d{6}\\b")
+        val tripPins = (pinRegex.findAll(currentTrip.pickupAddress.fullAddress).map { it.value } +
+            pinRegex.findAll(currentTrip.dropAddress.fullAddress).map { it.value }).toSet()
+        val tripTokens = (currentTrip.pickupAddress.fullAddress + " " + currentTrip.dropAddress.fullAddress)
+            .lowercase(Locale.US)
+            .split(Regex("[^a-z0-9]+"))
+            .filter { it.length >= 5 }
+            .toSet()
+        activeHomeOrders.filter { candidate ->
+            if (candidate.orderStatus != OrderStatus.SEARCHING_RIDER || candidate.orderId == currentTrip.orderId) {
+                false
+            } else {
+                val candText = candidate.pickupAddress.fullAddress + " " + candidate.dropAddress.fullAddress
+                val candPins = pinRegex.findAll(candText).map { it.value }.toSet()
+                val sharesPin = tripPins.any { it in candPins }
+                val candTokens = candText.lowercase(Locale.US).split(Regex("[^a-z0-9]+")).filter { it.length >= 5 }
+                val sharesLocality = candTokens.any { it in tripTokens }
+                val hasValidCoords = currentTrip.pickupAddress.lat != 0.0 && candidate.pickupAddress.lat != 0.0
+                val isCloseCoords = if (hasValidCoords) {
+                    val dLat = candidate.pickupAddress.lat - currentTrip.pickupAddress.lat
+                    val dLng = candidate.pickupAddress.lng - currentTrip.pickupAddress.lng
+                    kotlin.math.sqrt(dLat * dLat + dLng * dLng) * 111.0 <= 3.5
+                } else false
+                sharesPin || sharesLocality || isCloseCoords
+            }
+        }
     }
 
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -268,13 +396,68 @@ fun RiderPartnerCompactScreen(
     ) { bitmap: Bitmap? ->
         val orderId = activePhotoOrderId
         if (bitmap != null && orderId != null) {
-            val summary = DeliveryProofAndGpsManager.formatCameraProofSummary(bitmap, "Parcel")
-            orderPhotoProofMap[orderId] = summary
-            currentRider?.let { rider ->
-                repository.sendRiderQuickMessage(orderId, rider, "📷 Parcel photo uploaded")
+            val targetOrder = orders.firstOrNull { it.orderId == orderId }
+            val stageLabel = when (targetOrder?.orderStatus) {
+                OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> "Drop"
+                else -> "Pickup"
             }
+            val fallbackLat = currentRider?.currentLat?.takeIf { it != 0.0 }
+                ?: if (stageLabel == "Drop") targetOrder?.dropAddress?.lat else targetOrder?.pickupAddress?.lat
+            val fallbackLng = currentRider?.currentLng?.takeIf { it != 0.0 }
+                ?: if (stageLabel == "Drop") targetOrder?.dropAddress?.lng else targetOrder?.pickupAddress?.lng
+
+            // Immediately apply visual GPS + Date/Time watermark so preview renders right away
+            val initialWatermarked = DeliveryProofAndGpsManager.stampGpsTimestampWatermark(
+                sourceBitmap = bitmap,
+                orderId = orderId,
+                stageLabel = stageLabel,
+                lat = fallbackLat?.takeIf { it != 0.0 },
+                lng = fallbackLng?.takeIf { it != 0.0 }
+            )
+            orderPhotoBitmapMap[orderId] = initialWatermarked
+
+            val summary = formatWatermarkedRiderPhotoSummary(
+                bitmap = bitmap,
+                stageLabel = stageLabel,
+                lat = fallbackLat,
+                lng = fallbackLng,
+                fallbackGps = orderLiveGpsMap[orderId]
+            )
+            orderPhotoProofMap[orderId] = summary
             isErrorBanner = false
-            statusMessage = "Parcel photo saved for Order #$orderId"
+            statusMessage = "📷 $stageLabel photo watermarked (GPS + Date/Time) & saved for Order #$orderId"
+
+            scope.launch {
+                val (liveWatermarked, rLat, rLng) = DeliveryProofAndGpsManager.applyLiveGpsWatermark(
+                    context = context,
+                    sourceBitmap = bitmap,
+                    orderId = orderId,
+                    stageLabel = stageLabel,
+                    fallbackLat = fallbackLat,
+                    fallbackLng = fallbackLng
+                )
+                orderPhotoBitmapMap[orderId] = liveWatermarked
+                val finalSummary = formatWatermarkedRiderPhotoSummary(
+                    bitmap = liveWatermarked,
+                    stageLabel = stageLabel,
+                    lat = rLat.takeIf { it != 0.0 } ?: fallbackLat,
+                    lng = rLng.takeIf { it != 0.0 } ?: fallbackLng,
+                    fallbackGps = orderLiveGpsMap[orderId]
+                )
+                orderPhotoProofMap[orderId] = finalSummary
+                currentRider?.let { rider ->
+                    repository.sendRiderQuickMessage(orderId, rider, finalSummary)
+                }
+                if (targetOrder != null) {
+                    com.example.ui.components.OrderLiveChatManager.sendChatMessage(
+                        context = context,
+                        order = targetOrder,
+                        senderRole = "RIDER",
+                        senderName = currentRider?.name ?: riderDisplayName,
+                        messageText = finalSummary
+                    )
+                }
+            }
         }
     }
 
@@ -346,8 +529,9 @@ fun RiderPartnerCompactScreen(
         return
     }
 
-    // Rider authentication state
+    // Rider authentication & mandatory permissions gate state
     var isRiderLoggedIn by remember { mutableStateOf(MotivationAndPromoManager.riderAuthenticatedInSession) }
+    var allRiderPermissionsGranted by remember { mutableStateOf(hasAllMandatoryAppPermissions(context)) }
     if (!isRiderLoggedIn) {
         QuickDeliveryUserAuthScreen(
             roleTitle = "Rider Partner",
@@ -370,8 +554,25 @@ fun RiderPartnerCompactScreen(
                 MotivationAndPromoManager.riderApprovalBannerMessage = null
                 MotivationAndPromoManager.riderAuthenticatedInSession = true
                 isRiderLoggedIn = true
+                allRiderPermissionsGranted = hasAllMandatoryAppPermissions(context)
                 MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                 statusMessage = "Welcome, Partner $name!"
+            }
+        )
+        return
+    }
+
+    if (!allRiderPermissionsGranted) {
+        QuickDeliveryMandatoryPermissionsGateScreen(
+            roleTitle = "Rider Partner",
+            prefsKeyPrefix = "rider",
+            accentColor = RiderOrange,
+            onAllPermissionsGranted = {
+                allRiderPermissionsGranted = true
+            },
+            onLogout = {
+                MotivationAndPromoManager.logoutRider(context)
+                isRiderLoggedIn = false
             }
         )
         return
@@ -763,7 +964,7 @@ fun RiderPartnerCompactScreen(
                                     tint = Color.White
                                 )
                             }
-                            QuickDeliveryOfficialLogo(size = 28.dp, borderColor = QuickDeliveryOrange)
+                            QuickDeliveryCuteBunnyLogo(size = 30.dp, borderColor = QuickDeliveryOrange)
                             Spacer(modifier = Modifier.width(6.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -1393,7 +1594,78 @@ fun RiderPartnerCompactScreen(
                             )
                         }
                     }
+                    if (todayCodCollectedInr > 0.0) {
+                        val codLimit = remoteFlags.maxCodLimitInr.coerceAtLeast(500).toDouble()
+                        val codRatio = (todayCodCollectedInr / codLimit).toFloat().coerceIn(0f, 1f)
+                        HorizontalDivider(color = Color(0xFFE2E8F0))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "💵 COD Cash-in-Hand (Floating Limit)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = primaryHeadingColor
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "₹%.0f / ₹%.0f", todayCodCollectedInr, codLimit),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (codRatio >= 0.85f) PorterRed else RiderTeal
+                                )
+                            }
+                            LinearProgressIndicator(
+                                progress = { codRatio },
+                                color = if (codRatio >= 0.85f) PorterRed else RiderOrange,
+                                trackColor = Color(0xFFE2E8F0),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(5.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                            )
+                        }
+                    }
                 }
+            }
+
+            item(key = "rider_remote_alerts_and_mission") {
+                RiderRemoteAlertsAndMissionCard(
+                    flags = remoteFlags,
+                    todayDeliveredCount = todayDeliveredOrders.size,
+                    riderName = riderDisplayName,
+                    riderPhone = riderPhone,
+                    isDarkMode = isDarkMode
+                )
+            }
+
+            item(key = "rider_shift_and_smart_filter") {
+                RiderShiftAndSmartFilterCard(
+                    todayDeliveredCount = todayDeliveredOrders.size,
+                    todayDistanceKm = todayDistanceKm,
+                    todaySameDayEarningInr = todaySameDayEarningInr,
+                    riderSharePercent = remoteFlags.riderSharePercent,
+                    voiceAlertEnabled = voiceAlertEnabled,
+                    onToggleVoiceAlert = { enabled ->
+                        RiderSmartToolsPrefs.setVoiceAlertEnabled(context, enabled)
+                    },
+                    minPayoutFilterInr = minPayoutFilterInr,
+                    onMinPayoutChange = { minInr ->
+                        RiderSmartToolsPrefs.setMinPayoutFilter(context, minInr)
+                    },
+                    preferredAreaKeyword = preferredAreaKeyword,
+                    onAreaKeywordChange = { kw ->
+                        RiderSmartToolsPrefs.setPreferredAreaKeyword(context, kw)
+                    },
+                    hiddenByFilterCount = hiddenByFilterCount,
+                    isDarkMode = isDarkMode
+                )
             }
 
 
@@ -1484,6 +1756,67 @@ fun RiderPartnerCompactScreen(
                     }
                 }
             } else {
+                if (sameRouteBatchMatches.isNotEmpty() && ongoingTripForBatch != null) {
+                    item(key = "rider_smart_same_route_batch_card") {
+                        val batchOrder = sameRouteBatchMatches.first()
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB)),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.5.dp, Color(0xFFD97706)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rider_smart_batch_match_card")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "🔗 Smart Same-Route Batch Match (+₹${remoteFlags.sameRouteBatchBonusInr} Clubbing Bonus)",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF92400E)
+                                )
+                                Text(
+                                    text = "Along route with #${ongoingTripForBatch.orderId}: New Order #${batchOrder.orderId} (${batchOrder.riderEarning})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                                Text(
+                                    text = "${batchOrder.pickupAddress.fullAddress.take(40)} → ${batchOrder.dropAddress.fullAddress.take(40)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF475569),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Button(
+                                    onClick = {
+                                        val baseRider = currentRider ?: riders.firstOrNull()
+                                        if (baseRider != null) {
+                                            repository.acceptOrderByRider(batchOrder.orderId, baseRider)
+                                            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                            isErrorBanner = false
+                                            statusMessage = "🔗 Batch Order #${batchOrder.orderId} accepted (+₹${remoteFlags.sameRouteBatchBonusInr} clubbing bonus eligible)!"
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("rider_accept_batch_btn")
+                                ) {
+                                    Text(
+                                        text = "Accept Same-Route Batch (+₹${remoteFlags.sameRouteBatchBonusInr})",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 item(key = "rider_section_2_orders_header") {
                     Text(
                         text = "Active Order (${activeHomeOrders.size})",
@@ -1499,6 +1832,7 @@ fun RiderPartnerCompactScreen(
                         riderDisplayName = riderDisplayName,
                         tipAmountInr = tipsByOrder[order.orderId] ?: 0,
                         photoProofNote = orderPhotoProofMap[order.orderId],
+                        photoProofBitmap = orderPhotoBitmapMap[order.orderId],
                         onAcceptOrder = {
                             com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
                             val baseRider = currentRider ?: riders.firstOrNull()
@@ -1655,6 +1989,7 @@ fun RiderPartnerCompactScreen(
                                 statusMessage = "Customer Drop Digital Signature is required."
                                 return@RiderProgressiveOrderCard
                             }
+                            MultiPhoneLiveSyncManager.ensureOrderSealedForRepository(repository, order.orderId)
                             repository.verifyDeliveryOtpByRider(
                                 order.orderId,
                                 otpToVerify,
@@ -1709,6 +2044,7 @@ fun RiderPartnerCompactScreen(
                             archivedCompletedOrderIds = nextArchived
                             archivedOrderPrefs.edit().putStringSet("archived_ids", nextArchived).apply()
                             orderPhotoProofMap.remove(completedOrderId)
+                            orderPhotoBitmapMap.remove(completedOrderId)
                             orderLiveGpsMap.remove(completedOrderId)
                             riderPickupMotivationMessage = null
                             isErrorBanner = false
@@ -1732,7 +2068,7 @@ fun RiderPartnerCompactScreen(
     }
     QuickDeliveryNextLevelLaunchOverlay(
         appTitle = "Partner Quick Delivery",
-        appRoleBadge = "Superfast Rider Dispatch • 80% Partner Share + 100% Tips",
+        appRoleBadge = "Superfast Rider Dispatch • ${remoteFlags.riderSharePercent}% Partner Share + 100% Tips",
         accentColor = RiderTeal,
         secondaryAccentColor = RiderOrange
     )
@@ -1745,6 +2081,7 @@ private fun RiderProgressiveOrderCard(
     riderDisplayName: String,
     tipAmountInr: Int,
     photoProofNote: String?,
+    photoProofBitmap: Bitmap?,
     onAcceptOrder: () -> Unit,
     onRejectOrder: () -> Unit,
     onCapturePhotoProof: () -> Unit,
@@ -1768,6 +2105,19 @@ private fun RiderProgressiveOrderCard(
     val orderPickupProof = pickupProofsByOrder[order.orderId]
     val orderDeliveryProof = deliveryProofsByOrder[order.orderId]
     val isPrepaidOrder = order.paymentMethod != CustomerPaymentMethod.CASH_ON_DELIVERY
+    val cardContext = LocalContext.current
+    val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+    val waitTimersByOrder by QuickDeliveryOperationsManager.waitTimerStartByOrder.collectAsState()
+    val waitStartedAt = waitTimersByOrder[order.orderId]
+    var waitTickerSeconds by remember(order.orderId, waitStartedAt) { mutableStateOf(0) }
+    LaunchedEffect(order.orderId, waitStartedAt, remoteFlags.waitTimeAndCancelRuleEnabled) {
+        if (remoteFlags.waitTimeAndCancelRuleEnabled && waitStartedAt != null && waitStartedAt > 0L) {
+            while (true) {
+                waitTickerSeconds += 1
+                kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
 
     var riderHasConfirmedAccept by rememberSaveable(order.orderId) {
         mutableStateOf(
@@ -1956,6 +2306,51 @@ private fun RiderProgressiveOrderCard(
                 }
             )
 
+            // Customer Delivery Instructions Banner (Swiggy/Zomato/Porter Style)
+            val parsedInstructions = remember(order.packageDetails.description) {
+                val desc = order.packageDetails.description
+                if (desc.contains("[Instructions:")) {
+                    desc.substringAfter("[Instructions:").substringBefore("]").trim()
+                } else {
+                    ""
+                }
+            }
+            if (parsedInstructions.isNotBlank()) {
+                Surface(
+                    color = Color(0xFFFFFBEB),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Color(0xFFF59E0B)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "📝 Customer Instructions: $parsedInstructions",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF92400E),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                    )
+                }
+            }
+
+            if (order.packageDetails.description.contains("[Helper Needed]")) {
+                Surface(
+                    color = Color(0xFFFFF7ED),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Color(0xFFEA580C)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rider_helper_needed_badge_${order.orderId}")
+                ) {
+                    Text(
+                        text = "💪 Customer Requested Loading / Unloading Helper (Add-on Paid)",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF9A3412),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                    )
+                }
+            }
+
             // 2. Quick Call Customer + Toggle Chat Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2010,6 +2405,68 @@ private fun RiderProgressiveOrderCard(
                             fontWeight = FontWeight.ExtraBold,
                             color = RiderNavy
                         )
+
+                        if (remoteFlags.waitTimeAndCancelRuleEnabled) {
+                            val waitInfo = remember(order.orderId, waitTimersByOrder, remoteFlags, waitTickerSeconds) {
+                                QuickDeliveryOperationsManager.computeWaitFeeInfo(order.orderId, remoteFlags)
+                            }
+                            if (waitInfo == null) {
+                                OutlinedButton(
+                                    onClick = {
+                                        QuickDeliveryOperationsManager.startWaitTimerAtPickup(
+                                            context = cardContext,
+                                            repository = SharedOrderRepository.getInstance(cardContext),
+                                            orderId = order.orderId
+                                        )
+                                        onNavigationMessage("⏱️ Wait timer started (${remoteFlags.freeWaitMinutes}m free)")
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("rider_start_wait_timer_btn_${order.orderId}")
+                                ) {
+                                    Text(
+                                        text = "⏱️ Reached Pickup Gate — Start Wait Timer (${remoteFlags.freeWaitMinutes}m free)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = RiderOrange
+                                    )
+                                }
+                            } else {
+                                val mm = waitInfo.elapsedSeconds / 60
+                                val ss = waitInfo.elapsedSeconds % 60
+                                val isOvertime = waitInfo.overtimeMinutes > 0
+                                Surface(
+                                    color = if (isOvertime) Color(0xFFFEF2F2) else Color(0xFFFFFBEB),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, if (isOvertime) Color(0xFFDC2626) else RiderOrange),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = if (isOvertime) {
+                                            String.format(
+                                                Locale.US,
+                                                "⏱️ Pickup Wait: %02d:%02d • Overtime +₹%d Wait Fee",
+                                                mm,
+                                                ss,
+                                                waitInfo.waitFeeInr
+                                            )
+                                        } else {
+                                            String.format(
+                                                Locale.US,
+                                                "⏱️ Pickup Wait: %02d:%02d • Free (%dm limit)",
+                                                mm,
+                                                ss,
+                                                remoteFlags.freeWaitMinutes
+                                            )
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = if (isOvertime) Color(0xFFB91C1C) else Color(0xFF92400E),
+                                        modifier = Modifier.padding(10.dp)
+                                    )
+                                }
+                            }
+                        }
 
                         if (isPrepaidOrder) {
                             OutlinedTextField(
@@ -2067,8 +2524,28 @@ private fun RiderProgressiveOrderCard(
                             Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (photoProofNote != null) "📷 Pickup Photo Attached ✓" else "📷 Take Pickup Parcel Photo (Optional)",
+                                text = if (photoProofNote != null) "📷 Retake Pickup Photo (GPS + Time)" else "📷 Take Pickup Parcel Photo (GPS + Time)",
                                 style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        if (photoProofBitmap != null) {
+                            Image(
+                                bitmap = photoProofBitmap.asImageBitmap(),
+                                contentDescription = "Watermarked Pickup Parcel Photo",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(175.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF0D1B2A))
+                                    .testTag("rider_pickup_watermarked_photo_preview_${order.orderId}")
+                            )
+                        }
+                        if (!photoProofNote.isNullOrBlank()) {
+                            Text(
+                                text = photoProofNote,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = RiderTeal
                             )
                         }
 
@@ -2177,8 +2654,28 @@ private fun RiderProgressiveOrderCard(
                             Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (photoProofNote != null) "📷 Drop Photo Attached ✓" else "📷 Take Drop Photo (Optional)",
+                                text = if (photoProofNote != null) "📷 Retake Drop Photo (GPS + Time)" else "📷 Take Drop Photo (GPS + Time)",
                                 style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        if (photoProofBitmap != null) {
+                            Image(
+                                bitmap = photoProofBitmap.asImageBitmap(),
+                                contentDescription = "Watermarked Drop Parcel Photo",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(175.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF0D1B2A))
+                                    .testTag("rider_drop_watermarked_photo_preview_${order.orderId}")
+                            )
+                        }
+                        if (!photoProofNote.isNullOrBlank()) {
+                            Text(
+                                text = photoProofNote,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = RiderTeal
                             )
                         }
 

@@ -425,21 +425,10 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.clickable { currentPage = AdminDedicatedPage.DASHBOARD }
                                 ) {
-                                    Surface(
-                                        color = SidebarActiveTeal,
-                                        shape = RoundedCornerShape(9.dp),
-                                        border = BorderStroke(1.5.dp, SidebarMintText),
-                                        modifier = Modifier.size(34.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = "QD",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = Color.White
-                                            )
-                                        }
-                                    }
+                                    QuickDeliveryCuteBunnyLogo(
+                                        size = 36.dp,
+                                        borderColor = SidebarMintText
+                                    )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column {
                                         Row(
@@ -988,6 +977,7 @@ fun QuickDeliveryEnterpriseAdminSuite(
                     )
 
                     AdminDedicatedPage.COMPLAINTS_SOS -> EnterpriseComplaintsAndSosPage(
+                        orders = filteredOrdersByGlobal,
                         sosAlerts = sosAlerts,
                         suggestions = suggestions,
                         riderRatings = riderRatings,
@@ -1476,6 +1466,15 @@ private fun EnterpriseDashboardOverviewPage(
                     }
                 }
             }
+        }
+
+        // 1B. Live Stuck Order Auto-Dispatch Alert & Pin-Code Demand Heatmap
+        item(key = "dashboard_stuck_alert_and_heatmap") {
+            AdminStuckOrderAlertAndHeatmapCards(
+                orders = orders,
+                riders = riders,
+                repository = repository
+            )
         }
 
         // 2. Revenue (80% Rider / 20% Admin) & Order Status Funnel Cards (Stacked on Mobile, 2-Column on Desktop)
@@ -3884,6 +3883,10 @@ private fun EnterpriseKycPage(
             com.example.ui.rider.AdminPendingRiderApprovalsSection()
         }
 
+        item(key = "kyc_doc_expiry_tracker") {
+            AdminRiderDocExpiryCard(riders = riders)
+        }
+
         item(key = "kyc_paginated_table") {
             AdminEnterprisePaginatedTableCard(
                 title = "Rider KYC & Document Compliance Queue (.xlsx Export)",
@@ -4175,6 +4178,13 @@ private fun EnterprisePaymentsSettlementsPage(
             }
         }
 
+        item(key = "payments_cod_settlement_ledger") {
+            AdminCodSettlementLedgerCard(
+                orders = orders,
+                riders = riders
+            )
+        }
+
         // Rider Payout Withdrawal Requests Queue
         item(key = "payments_withdrawal_requests_card") {
             Card(
@@ -4224,8 +4234,9 @@ private fun EnterprisePaymentsSettlementsPage(
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = DashNavy
                                             )
+                                            val modeLabel = if (req.payoutMode == "WEEKLY_AUTO") "📅 Weekly Auto" else "⚡ Instant UPI/IMPS"
                                             Text(
-                                                text = "UPI/Bank: ${req.payoutDestination} • ${req.createdAtLabel}",
+                                                text = "$modeLabel • ${req.payoutDestination} • ${req.createdAtLabel}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = Color(0xFF475569)
                                             )
@@ -4653,6 +4664,7 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
    ============================================================================ */
 @Composable
 private fun EnterpriseComplaintsAndSosPage(
+    orders: List<CustomerOrder> = emptyList(),
     sosAlerts: List<SosSupportAlert>,
     suggestions: List<AppSuggestionEntry>,
     riderRatings: Map<String, RiderDeliveryFeedback>,
@@ -4672,6 +4684,10 @@ private fun EnterpriseComplaintsAndSosPage(
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item(key = "complaints_dispute_refund_desk") {
+            AdminDisputeRefundDeskCard(orders = orders)
+        }
+
         // Emergency SOS Live Incident Console
         item(key = "complaints_sos_header_card") {
             Card(
@@ -5336,6 +5352,16 @@ private fun EnterpriseSettingsPage(
         // 2B. Dynamic Customer Promo Coupon Manager (Synced Live to Customer Checkout)
         item(key = "settings_promo_coupon_manager") {
             AdminPromoCouponManagerCard()
+        }
+
+        // 2C. Master Feature Switches (Scheduled, Multi-Drop, Surge, Insurance, Referral, COD Cap, Commission %, Maintenance, Broadcast & PIN)
+        item(key = "settings_remote_feature_switches") {
+            AdminRemoteFeatureSwitchesCard(repository = repository)
+        }
+
+        // 2D. Peak-Hour Auto-Surge Scheduler + Porter Helper & Batch Controls
+        item(key = "settings_peak_auto_surge") {
+            AdminPeakHourAutoSurgeCard(repository = repository)
         }
 
         // 3. System Automation, Safety Guards & Administrative Actions
