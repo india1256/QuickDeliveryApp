@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -314,7 +315,7 @@ object MotivationAndPromoManager {
             val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone).ifBlank {
                 if (cleanRole == "customer" && email.isNotBlank()) "" else "9876543210"
             }
-            val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email).ifBlank { "$cleanRole@quickdelivery.in" }
+            val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email).ifBlank { "$cleanRole@quickdelivery.co.in" }
             val signedToken = QuickDeliverySecurityGuard.issueRoleSessionToken(
                 context = context,
                 role = cleanRole,
@@ -2033,8 +2034,8 @@ fun QuickDeliveryPrivacyPolicyDialog(
     onDismiss: () -> Unit,
     onAcceptAndAgree: (() -> Unit)? = null
 ) {
-    val publicPrivacyUrl = "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/privacy-policy"
-    val publicTermsUrl = "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/terms"
+    val publicPrivacyUrl = com.example.data.cloud.QuickDeliveryBrandLinks.PRIVACY_POLICY_URL
+    val publicTermsUrl = com.example.data.cloud.QuickDeliveryBrandLinks.TERMS_OF_SERVICE_URL
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2079,7 +2080,7 @@ fun QuickDeliveryPrivacyPolicyDialog(
                     color = Color(0xFF334155)
                 )
                 Text(
-                    text = "Account & Data Deletion: Delete your profile anytime from Menu → Delete Account & Data, or email ravindergupta141@gmail.com.",
+                    text = "Account & Data Deletion: Delete your profile anytime from Menu → Delete Account & Data, visit ${com.example.data.cloud.QuickDeliveryBrandLinks.DELETE_ACCOUNT_URL}, or email ${com.example.data.cloud.QuickDeliveryBrandLinks.SUPPORT_EMAIL}.",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF0F766E)
@@ -2166,7 +2167,7 @@ fun QuickDeliveryDeleteAccountDialog(
         },
         text = {
             Text(
-                text = "This will permanently erase your saved profile, session tokens, and local login backup for \"$accountIdentifier\" from this device and sign you out. To request server log deletion as well, contact ravindergupta141@gmail.com.",
+                text = "This will permanently erase your saved profile, session tokens, and local login backup for \"$accountIdentifier\" from this device and sign you out. To request server log deletion as well, visit ${com.example.data.cloud.QuickDeliveryBrandLinks.DELETE_ACCOUNT_URL} or email ${com.example.data.cloud.QuickDeliveryBrandLinks.SUPPORT_EMAIL}.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF334155)
             )
@@ -2675,39 +2676,60 @@ fun LiveRiderContinuousTrackingCard(
                 }
             }
 
-            if (waitFeeInfo != null && (order.orderStatus == OrderStatus.RIDER_ASSIGNED || order.orderStatus == OrderStatus.ARRIVED_AT_PICKUP)) {
-                val mins = waitFeeInfo.elapsedSeconds / 60
-                val secs = waitFeeInfo.elapsedSeconds % 60
-                val isOvertime = waitFeeInfo.overtimeMinutes > 0
-                Surface(
-                    color = if (isOvertime) Color(0xFFFEF2F2) else Color(0xFFFFFBEB),
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, if (isOvertime) Color(0xFFDC2626) else Color(0xFFF59E0B)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = if (isOvertime) {
-                            String.format(
-                                Locale.US,
-                                "⏱️ Rider waiting at Pickup (%02d:%02d) • Overtime Wait Fee: +₹%d",
-                                mins,
-                                secs,
-                                waitFeeInfo.waitFeeInr
-                            )
-                        } else {
-                            String.format(
-                                Locale.US,
-                                "⏱️ Rider at Pickup Gate (%02d:%02d) • %dm free wait window",
-                                mins,
-                                secs,
-                                remoteFlags.freeWaitMinutes
-                            )
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isOvertime) Color(0xFFB91C1C) else Color(0xFF92400E),
-                        modifier = Modifier.padding(10.dp)
-                    )
+            if (remoteFlags.waitTimeAndCancelRuleEnabled && (order.orderStatus == OrderStatus.RIDER_ASSIGNED || order.orderStatus == OrderStatus.ARRIVED_AT_PICKUP)) {
+                if (waitFeeInfo != null) {
+                    val mins = waitFeeInfo.elapsedSeconds / 60
+                    val secs = waitFeeInfo.elapsedSeconds % 60
+                    val isOvertime = waitFeeInfo.overtimeMinutes > 0
+                    Surface(
+                        color = if (isOvertime) Color(0xFFFEF2F2) else Color(0xFFFFFBEB),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, if (isOvertime) Color(0xFFDC2626) else Color(0xFFF59E0B)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_live_wait_timer_card")
+                    ) {
+                        Text(
+                            text = if (isOvertime) {
+                                String.format(
+                                    Locale.US,
+                                    "⏱️ Rider waiting at Pickup (%02d:%02d) • Overtime Wait Fee: +₹%d",
+                                    mins,
+                                    secs,
+                                    waitFeeInfo.waitFeeInr
+                                )
+                            } else {
+                                String.format(
+                                    Locale.US,
+                                    "⏱️ Rider at Pickup Gate (%02d:%02d) • %dm free wait window",
+                                    mins,
+                                    secs,
+                                    remoteFlags.freeWaitMinutes
+                                )
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOvertime) Color(0xFFB91C1C) else Color(0xFF92400E),
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                } else {
+                    Surface(
+                        color = Color(0xFFF0F9FF),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Color(0xFFBAE6FD)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_wait_policy_info_card")
+                    ) {
+                        Text(
+                            text = "⏱️ Pickup Wait Policy: First ${remoteFlags.freeWaitMinutes} mins FREE at pickup gate, then ₹${remoteFlags.waitFeePerMinuteInr}/min overtime.",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF0369A1),
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
                 }
             }
 
@@ -2728,25 +2750,63 @@ fun LiveRiderContinuousTrackingCard(
             }
 
             if (!isRiderAcceptedOrBeyond) {
-                // Waiting for Rider to Accept Order in Rider Partner App
+                val isDeclinedReSearching = order.rejectedByRiderIds.isNotEmpty() ||
+                    order.latestRiderQuickNote?.contains("Declined", ignoreCase = true) == true ||
+                    order.latestRiderQuickNote?.contains("Rejected", ignoreCase = true) == true
+                // Waiting or Re-Searching for a New Rider Partner
                 Surface(
-                    color = Color(0xFFFFFBEB),
+                    color = if (isDeclinedReSearching) Color(0xFFFFF7ED) else Color(0xFFFFFBEB),
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Color(0xFFF59E0B)),
-                    modifier = Modifier.fillMaxWidth()
+                    border = BorderStroke(
+                        width = if (isDeclinedReSearching) 1.5.dp else 1.dp,
+                        color = if (isDeclinedReSearching) Color(0xFFEA580C) else Color(0xFFF59E0B)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(
+                            if (isDeclinedReSearching) {
+                                "customer_rider_declined_researching_banner"
+                            } else {
+                                "customer_waiting_for_rider_banner"
+                            }
+                        )
                 ) {
                     Column(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "⏳ Waiting for Rider Partner to Accept Order...",
+                            text = if (isDeclinedReSearching) {
+                                "🔄 Previous Rider Declined — Searching for New Rider..."
+                            } else {
+                                "⏳ Waiting for Rider Partner to Accept Order..."
+                            },
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF92400E)
+                            color = Color(0xFF9A3412)
                         )
+                        LinearProgressIndicator(
+                            color = if (isDeclinedReSearching) Color(0xFFEA580C) else Color(0xFF00A896),
+                            trackColor = Color(0xFFFDE68A),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                        )
+                        if (isDeclinedReSearching && !order.latestRiderQuickNote.isNullOrBlank()) {
+                            Text(
+                                text = "🔔 Update: ${order.latestRiderQuickNote}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFB45309)
+                            )
+                        }
                         Text(
-                            text = "Your booking (#${order.orderId}) has been sent to nearby online Rider Partners. As soon as a Rider taps Accept in the Rider Partner App, live GPS map tracking and Rider contact details will appear here automatically.",
+                            text = if (isDeclinedReSearching) {
+                                "We sent you an alert and automatically dispatched Order #${order.orderId} to the next nearest online Rider Partner. Your OTPs remain intact."
+                            } else {
+                                "Your booking (#${order.orderId}) has been sent to nearby online Rider Partners. As soon as a Rider taps Accept in the Rider Partner App, live GPS map tracking and Rider contact details will appear here automatically."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF78350F)
                         )

@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Quick Delivery — Customer App</title>
+  <link rel="canonical" href="https://quickdelivery.co.in/customer-apk" />
+  <title>Quick Delivery — Customer App • quickdelivery.co.in</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -166,7 +167,7 @@
     <div class="header-box">
       <span class="badge">Direct Instant APK Download • 1 Link = 1 Single App</span>
       <h1>Quick Delivery — Customer App</h1>
-      <p>Ab koi "Connecting to server" ya waiting nahi! Niche green button dabayein ya auto-download start hone dein — <b>Chrome seedha .apk file (30.2 MB) download karega</b>.</p>
+      <p>Ab koi "Connecting to server" ya waiting nahi! Niche green button dabayein ya auto-download start hone dein — <b>Chrome seedha .apk file (30.6 MB) download karega</b>.</p>
     </div>
 
     <div id="progress-panel">
@@ -180,7 +181,7 @@
     <div class="grid">
       
       <div class="apk-card" style="border-color: #10B981;">
-        <div class="apk-title" style="color: #6EE7B7;">Quick Delivery (Customer App) • 30.2 MB</div>
+        <div class="apk-title" style="color: #6EE7B7;">Quick Delivery (Customer App) • 30.6 MB</div>
         <div class="apk-desc">Installs ONLY the <b>Quick Delivery</b> customer booking app. Instant parcel booking, Auto-Capture exact address, UPI/COD checkout, GST receipts &amp; live tracking.</div>
         <a class="dl-btn" style="background: #059669;" href="/dl/QuickDelivery-Customer.apk" download="QuickDelivery-Customer.apk" onclick="onDirectApkClick('QuickDelivery-Customer.apk')">
           Download Quick Delivery (Customer APK)
@@ -194,11 +195,11 @@
     </div>
 
     <div class="guide-box">
-      <h2>✨ v6.1.2 Production Launch Highlights</h2>
+      <h2>✨ v6.3.1 quickdelivery.co.in • Cloud Firestore &amp; Enterprise Suite</h2>
       <ol class="step-list">
-        <li><b>Customer App:</b> Instant 8-language switching (Hindi, Marathi, Gujarati, Tamil, Telugu, Bengali, Kannada &amp; English), Sign-Up-only Privacy Policy consent, and Delivery Instructions chips synced live to Rider.</li>
-        <li><b>Rider Partner App:</b> Live GPS Latitude/Longitude + Date/Time watermark stamped directly onto every Pickup &amp; Drop proof photo, COD Cash-in-Hand limit tracker, and Customer Instructions banner.</li>
-        <li><b>Admin Console:</b> 13 Master Feature Switches, Cloud JSON Auto-Backup &amp; MongoDB sync hook, Razorpay/Cashfree Webhook Verification, and Play Store Privacy Policy Console.</li>
+        <li><b>Customer App:</b> Clean Booking Flow, Address Autocomplete, Saved Address Labels, Phonebook Picker, Proximity Arrival OTP, Post-Delivery Rating/Tip &amp; Optional B2B Dukaan Monthly Postpaid / Bulk Dispatch (only visible when enabled by Admin).</li>
+        <li><b>Rider Partner App:</b> 30s Ringing Offer Countdown with Distance &amp; ₹/km Payout, Rejection Reason Tracking &amp; Auto Re-Search, Reached Pickup Gate Check-In, Unreachable Call Logger &amp; Complete Earnings / TDS Breakdown.</li>
+        <li><b>Admin Enterprise:</b> Permanent Cloud Firestore Cross-Device Sync, Remote Feature Switches (B2B Postpaid, Razorpay 80/20 Split &amp; Auto-KYC API — all safely OFF by default until activated), Consolidated GST Invoices &amp; Play Store .aab Release Readiness.</li>
       </ol>
     </div>
 
@@ -209,7 +210,8 @@
       </div>
     </div>
 
-    <div style="margin-top: 16px; text-align: center; font-size: 12px; color: #A7F3D0;">
+    <div style="margin-top: 16px; text-align: center; font-size: 12px; color: #A7F3D0; line-height: 1.8;">
+      <div><b>Official Domain:</b> <a href="https://quickdelivery.co.in" style="color: #6EE7B7;">quickdelivery.co.in</a> • <b>Support:</b> <a href="mailto:support@quickdelivery.co.in" style="color: #6EE7B7;">support@quickdelivery.co.in</a></div>
       <a href="/privacy-policy" style="color: #6EE7B7; margin: 0 8px;">Privacy Policy</a> •
       <a href="/terms" style="color: #6EE7B7; margin: 0 8px;">Terms of Service</a> •
       <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a> •
@@ -226,7 +228,7 @@
       const statsEl = document.getElementById('prog-stats');
       if (panel && titleEl && statsEl) {
         panel.style.display = 'block';
-        titleEl.textContent = 'Downloading ' + fileName + ' (' + '30.2 MB' + ')...';
+        titleEl.textContent = 'Downloading ' + fileName + ' (' + '30.6 MB' + ')...';
         statsEl.textContent = 'Check your Chrome notification bar or Downloads folder — ' + fileName + ' is downloading directly.';
       }
     }
@@ -247,17 +249,19 @@
         const data = await res.json();
         const devices = data.connectedDevices || [];
         const orders = data.orders || [];
+        const sec = data.securityStats || {};
         const el = document.getElementById('live-sync-summary');
         if (!el) return;
         const devHtml = devices.length
           ? devices.map(d => '<b>' + d.role + '</b> (' + d.deviceModel + ')').join(' &nbsp;|&nbsp; ')
           : 'System Online — Ready for Customer, Rider Partner & Admin connections.';
+        const secHtml = '<div style="margin-top:6px;font-size:12px;color:#A7F3D0;">Anti-Spam Security Shield Active • Blocked Fake Orders: <b>' + (sec.blockedFakeOrders || 0) + '</b> • Rate-Limited Floods: <b>' + (sec.rateLimitedRequests || 0) + '</b></div>';
         const ordHtml = orders.length
           ? '<ul style="margin:8px 0 0 0;padding-left:18px;">' + orders.map(o =>
               '<li><b>' + o.orderId + '</b> — ' + o.orderStatus + ' | ' + o.totalAmount + '</li>'
             ).join('') + '</ul>'
           : '<div style="margin-top:6px;color:#A7F3D0;">No active orders in queue.</div>';
-        el.innerHTML = '<div><b>Connected Devices (' + devices.length + '):</b> ' + devHtml + '</div>' + ordHtml;
+        el.innerHTML = '<div><b>Connected Devices (' + devices.length + '):</b> ' + devHtml + '</div>' + secHtml + ordHtml;
       } catch (e) {}
     }
     setInterval(refreshLiveSync, 3000);

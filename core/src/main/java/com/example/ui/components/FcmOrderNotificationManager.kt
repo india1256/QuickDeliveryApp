@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import java.util.concurrent.ConcurrentHashMap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -330,8 +331,11 @@ object FcmOrderNotificationManager {
 
     private val DEMO_ORDER_IDS = setOf("QD-7001", "QD-6204", "QD-5910", "QD-5402", "ORD-1001", "ORD-1002")
 
+    private val observedRejectionCounts = ConcurrentHashMap<String, Int>()
+
     fun clearAllNotifications() {
         observedOrderStatuses.clear()
+        observedRejectionCounts.clear()
         _fcmMessages.value = emptyList()
         _latestCustomerBanner.value = null
         _latestRiderBanner.value = null
@@ -339,7 +343,7 @@ object FcmOrderNotificationManager {
 
     /**
      * Observes `orders` and automatically dispatches targeted Customer + Rider FCM push notifications
-     * whenever an order is created or transitions to a new `OrderStatus`.
+     * whenever an order is created, transitions to a new `OrderStatus`, or a Rider declines and re-search begins.
      */
     fun observeOrdersAndDispatchFcmNotifications(
         context: Context,
@@ -357,15 +361,19 @@ object FcmOrderNotificationManager {
         realOrders.forEach { order ->
             subscribeToOrderTopic(order.orderId)
             val previousStatus = observedOrderStatuses[order.orderId]
+            val prevRejectCount = observedRejectionCounts[order.orderId] ?: 0
+            val currentRejectCount = order.rejectedByRiderIds.size
             if (previousStatus == null) {
                 observedOrderStatuses[order.orderId] = order.orderStatus
+                observedRejectionCounts[order.orderId] = currentRejectCount
                 dispatchOrderStatusPair(
                     context = context,
                     order = order,
                     postToSystemTray = !isInitialSeed
                 )
-            } else if (previousStatus != order.orderStatus) {
+            } else if (previousStatus != order.orderStatus || currentRejectCount > prevRejectCount) {
                 observedOrderStatuses[order.orderId] = order.orderStatus
+                observedRejectionCounts[order.orderId] = currentRejectCount
                 dispatchOrderStatusPair(
                     context = context,
                     order = order,
@@ -391,11 +399,24 @@ object FcmOrderNotificationManager {
         val pickupShort = order.pickupAddress.landmark.ifBlank { order.pickupAddress.fullAddress.take(32) }
         val dropShort = order.dropAddress.landmark.ifBlank { order.dropAddress.fullAddress.take(32) }
 
+        val isDeclinedReSearch = status == OrderStatus.SEARCHING_RIDER &&
+            (order.rejectedByRiderIds.isNotEmpty() ||
+                order.latestRiderQuickNote?.contains("Declined", ignoreCase = true) == true)
+
         val (customerTitle, customerBody) = when (status) {
-            OrderStatus.SEARCHING_RIDER -> Pair(
-                "🔍 Order #${order.orderId} Confirmed — Finding Rider",
-                "Searching nearest verified ${order.vehicleType.title} partner from $pickupShort to $dropShort (Fare: $totalFare)."
-            )
+            OrderStatus.SEARCHING_RIDER -> if (isDeclinedReSearch) {
+                val noteSummary = order.latestRiderQuickNote?.takeIf { it.isNotBlank() }
+                    ?: "Previous rider couldn't complete this pickup."
+                Pair(
+                    "🔄 Rider Declined (#${order.orderId}) — Searching New Rider",
+                    "$noteSummary Searching for another nearby verified ${order.vehicleType.title} Rider Partner now!"
+                )
+            } else {
+                Pair(
+                    "🔍 Order #${order.orderId} Confirmed — Finding Rider",
+                    "Searching nearest verified ${order.vehicleType.title} partner from $pickupShort to $dropShort (Fare: $totalFare)."
+                )
+            }
             OrderStatus.RIDER_ASSIGNED -> Pair(
                 "🏍️ Rider $riderName Assigned (#${order.orderId})",
                 "$riderName (${order.vehicleType.title}) accepted your order! Live map tracking & Direct Call are active."
@@ -430,7 +451,11 @@ object FcmOrderNotificationManager {
 
         val (riderTitle, riderBody) = when (status) {
             OrderStatus.SEARCHING_RIDER -> Pair(
-                "📦 New Order #${order.orderId} Available Nearby",
+                if (isDeclinedReSearch) {
+                    "📦 Re-Queued Order #${order.orderId} Available Nearby"
+                } else {
+                    "📦 New Order #${order.orderId} Available Nearby"
+                },
                 "80% Partner Payout: $riderEarning80 • Pickup: $pickupShort → Drop: $dropShort (${order.packageDetails.weightKg} kg)."
             )
             OrderStatus.RIDER_ASSIGNED -> Pair(
@@ -619,10 +644,14 @@ object FcmOrderNotificationManager {
         if (!hasNotificationPermission(context)) return
 
         val appRole = resolveCurrentAppRole(context)
-        // Strict role isolation so Customer app NEVER rings/vibrates for Rider dispatch or Order Confirm!
+        val isDeclinedReSearchCustomerAlert = record.targetRole == FcmTargetAppRole.CUSTOMER &&
+            record.orderStatus == OrderStatus.SEARCHING_RIDER &&
+            record.title.contains("Rider Declined", ignoreCase = true)
+
+        // Strict role isolation so Customer app NEVER rings/vibrates for Rider dispatch or initial Order Confirm!
         if (appRole == "CUSTOMER") {
             if (record.targetRole == FcmTargetAppRole.RIDER) return
-            if (record.orderStatus == OrderStatus.SEARCHING_RIDER) return
+            if (record.orderStatus == OrderStatus.SEARCHING_RIDER && !isDeclinedReSearchCustomerAlert) return
         } else if (appRole == "RIDER") {
             if (record.targetRole == FcmTargetAppRole.CUSTOMER) return
         } else if (appRole == "ADMIN") {

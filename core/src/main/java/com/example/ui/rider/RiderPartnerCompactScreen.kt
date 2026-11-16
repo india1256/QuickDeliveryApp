@@ -68,6 +68,8 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -256,15 +258,28 @@ fun RiderPartnerCompactScreen(
     var riderPickupMotivationMessage by remember { mutableStateOf<String?>(null) }
     val riderPostDeliveryMotivation by MotivationAndPromoManager.riderPostDeliveryMotivation.collectAsState()
 
-    LaunchedEffect(orders, voiceAlertEnabled) {
+    val rejectedOrderPrefs = remember(context) {
+        context.getSharedPreferences("quick_delivery_rider_rejected_orders_v1", android.content.Context.MODE_PRIVATE)
+    }
+    var locallyRejectedOrderIds by remember {
+        mutableStateOf(rejectedOrderPrefs.getStringSet("rejected_ids", emptySet())?.toSet() ?: emptySet())
+    }
+
+    LaunchedEffect(orders, voiceAlertEnabled, locallyRejectedOrderIds) {
         MotivationAndPromoManager.observeOrdersForDeliveryMotivation(orders)
         FcmOrderNotificationManager.observeOrdersAndDispatchFcmNotifications(context, orders)
+        val myRiderId = currentRider?.riderId
+        val eligibleIncoming = orders.filter { ord ->
+            ord.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                ord.orderId !in locallyRejectedOrderIds &&
+                (myRiderId == null || myRiderId !in ord.rejectedByRiderIds)
+        }
         if (voiceAlertEnabled) {
-            orders.filter { it.orderStatus == OrderStatus.SEARCHING_RIDER }.forEach { incomingOrder ->
+            eligibleIncoming.forEach { incomingOrder ->
                 RiderSmartToolsPrefs.speakNewOrderIfRider(context, incomingOrder)
             }
         }
-        if (orders.none { it.orderStatus == OrderStatus.SEARCHING_RIDER }) {
+        if (eligibleIncoming.isEmpty()) {
             com.example.security.OrderAlertSoundManager.stopOrderAlert()
         }
     }
@@ -329,8 +344,14 @@ fun RiderPartnerCompactScreen(
     var archivedCompletedOrderIds by remember {
         mutableStateOf(archivedOrderPrefs.getStringSet("archived_ids", emptySet())?.toSet() ?: emptySet())
     }
-    val unarchivedHomeOrders = remember(orders, archivedCompletedOrderIds) {
-        orders.filter { it.orderStatus != OrderStatus.CANCELLED && it.orderId !in archivedCompletedOrderIds }
+    val unarchivedHomeOrders = remember(orders, archivedCompletedOrderIds, locallyRejectedOrderIds, currentRider?.riderId) {
+        val myRiderId = currentRider?.riderId
+        orders.filter { ord ->
+            ord.orderStatus != OrderStatus.CANCELLED &&
+                ord.orderId !in archivedCompletedOrderIds &&
+                !(ord.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                    (ord.orderId in locallyRejectedOrderIds || (myRiderId != null && myRiderId in ord.rejectedByRiderIds)))
+        }
     }
     val areaQuery = preferredAreaKeyword.trim()
     val activeHomeOrders = remember(unarchivedHomeOrders, minPayoutFilterInr, areaQuery) {
@@ -633,6 +654,39 @@ fun RiderPartnerCompactScreen(
         }
     }
 
+    var deferredBankSetupForSession by rememberSaveable(riderRegRecord?.riderKey) { mutableStateOf(false) }
+    if (riderRegRecord != null &&
+        riderRegRecord.approvalStatus == RiderApprovalWorkflowStatus.APPROVED &&
+        riderRegRecord.reLoggedInAfterApproval &&
+        !riderRegRecord.hasBankAccountDetails &&
+        !deferredBankSetupForSession
+    ) {
+        BackHandler {
+            deferredBankSetupForSession = true
+        }
+        RiderBankAccountFormScreen(
+            riderName = riderDisplayName.ifBlank { riderRegRecord.name },
+            riderPhone = riderPhone.ifBlank { riderRegRecord.phone },
+            riderEmail = riderEmail.ifBlank { riderRegRecord.email },
+            riderId = currentRider?.riderId ?: riderRegRecord.riderId,
+            existingRecord = riderRegRecord,
+            isOnboardingStep = true,
+            onBankDetailsSaved = { saved ->
+                isErrorBanner = false
+                statusMessage = "🏦 Bank Account (${saved.bankName} ${saved.maskedBankAccountNumber}) saved & synced with Admin!"
+            },
+            onSkipOrClose = {
+                deferredBankSetupForSession = true
+            },
+            onSignOut = {
+                MotivationAndPromoManager.logoutRider(context)
+                isRiderLoggedIn = false
+            },
+            modifier = modifier
+        )
+        return
+    }
+
     LaunchedEffect(
         riderRegRecord?.riderKey,
         riderRegRecord?.approvalStatus,
@@ -667,12 +721,16 @@ fun RiderPartnerCompactScreen(
     var showRiderPrivacyPolicyDialog by rememberSaveable { mutableStateOf(false) }
     var showRiderDeleteAccountDialog by rememberSaveable { mutableStateOf(false) }
     var showPartnerSupportDialog by rememberSaveable { mutableStateOf(false) }
+    var showBankAccountDialog by rememberSaveable { mutableStateOf(false) }
+    var orderPendingRejection by remember { mutableStateOf<CustomerOrder?>(null) }
     val selfieCheckIns by RiderLiveSelfieCallAndExcelManager.selfieCheckIns.collectAsState()
     val partnerSupportTickets by com.example.data.cloud.QuickDeliveryOperationsManager.supportTickets.collectAsState()
 
-    val hasRiderSubNavigation = showRiderDeleteAccountDialog ||
+    val hasRiderSubNavigation = orderPendingRejection != null ||
+        showRiderDeleteAccountDialog ||
         showRiderPrivacyPolicyDialog ||
         showPartnerSupportDialog ||
+        showBankAccountDialog ||
         showLiveSelfieOnlineGateDialog ||
         showTopSosEmergencyDialog ||
         showRiderSuggestionDialog ||
@@ -690,9 +748,11 @@ fun RiderPartnerCompactScreen(
 
     BackHandler(enabled = hasRiderSubNavigation) {
         when {
+            orderPendingRejection != null -> orderPendingRejection = null
             showRiderDeleteAccountDialog -> showRiderDeleteAccountDialog = false
             showRiderPrivacyPolicyDialog -> showRiderPrivacyPolicyDialog = false
             showPartnerSupportDialog -> showPartnerSupportDialog = false
+            showBankAccountDialog -> showBankAccountDialog = false
             showLiveSelfieOnlineGateDialog -> showLiveSelfieOnlineGateDialog = false
             showTopSosEmergencyDialog -> showTopSosEmergencyDialog = false
             showRiderSuggestionDialog -> showRiderSuggestionDialog = false
@@ -874,6 +934,16 @@ fun RiderPartnerCompactScreen(
                     onOpenKycDocuments = {
                         scope.launch { drawerState.close() }
                         showKycCenterDialog = true
+                    },
+                    onOpenBankAccount = {
+                        scope.launch { drawerState.close() }
+                        showBankAccountDialog = true
+                    },
+                    hasBankDetails = riderRegRecord?.hasBankAccountDetails == true,
+                    bankSummary = if (riderRegRecord?.hasBankAccountDetails == true) {
+                        "${riderRegRecord.bankName} ${riderRegRecord.maskedBankAccountNumber} • ${riderRegRecord.bankIfscCode}"
+                    } else {
+                        "Add Bank A/C, IFSC & UPI for Payouts"
                     },
                     onOpenSuggestionBox = {
                         scope.launch { drawerState.close() }
@@ -1171,13 +1241,64 @@ fun RiderPartnerCompactScreen(
                 )
             }
 
+            if (showBankAccountDialog) {
+                RiderBankAccountFormDialog(
+                    riderName = riderDisplayName.ifBlank { riderRegRecord?.name ?: "Rider Partner" },
+                    riderPhone = riderPhone.ifBlank { riderRegRecord?.phone.orEmpty() },
+                    riderEmail = riderEmail.ifBlank { riderRegRecord?.email.orEmpty() },
+                    riderId = currentRider?.riderId ?: riderRegRecord?.riderId.orEmpty(),
+                    existingRecord = riderRegRecord,
+                    onBankDetailsSaved = { saved ->
+                        showBankAccountDialog = false
+                        isErrorBanner = false
+                        statusMessage = "🏦 Payout Bank Account (${saved.bankName} ${saved.maskedBankAccountNumber}) saved & synced!"
+                    },
+                    onDismiss = { showBankAccountDialog = false }
+                )
+            }
+
             if (showCashoutDialog) {
+                val bankHasDetails = riderRegRecord?.hasBankAccountDetails == true
+                val destDisplay = if (bankHasDetails && riderRegRecord != null) {
+                    "${riderRegRecord.bankName} ${riderRegRecord.maskedBankAccountNumber}"
+                } else {
+                    ""
+                }
                 PorterInstantCashoutDialog(
                     amount = cashoutAmount,
+                    bankAccountDisplay = destDisplay,
+                    ifscDisplay = riderRegRecord?.bankIfscCode.orEmpty(),
+                    accountHolderDisplay = riderRegRecord?.bankAccountHolderName.orEmpty(),
+                    upiIdDisplay = riderRegRecord?.bankUpiId.orEmpty(),
+                    hasBankDetails = bankHasDetails,
+                    onEditBankAccount = {
+                        showCashoutDialog = false
+                        showBankAccountDialog = true
+                    },
                     onConfirm = { amount ->
                         showCashoutDialog = false
-                        statusMessage = "⚡ Instant Payout of ₹${amount.toInt()} transferred to HDFC Bank (•••• 4092) via IMPS! Ref: QUICK${System.currentTimeMillis() % 1000000}"
-                        isErrorBanner = false
+                        val destFull = if (riderRegRecord != null && riderRegRecord.hasBankAccountDetails) {
+                            "${riderRegRecord.bankAccountHolderName} | ${riderRegRecord.bankName} A/C ${riderRegRecord.bankAccountNumber} | IFSC: ${riderRegRecord.bankIfscCode}" +
+                                if (riderRegRecord.bankUpiId.isNotBlank()) " | UPI: ${riderRegRecord.bankUpiId}" else ""
+                        } else {
+                            ""
+                        }
+                        val req = com.example.data.cloud.QuickDeliveryOperationsManager.submitRiderWithdrawalRequest(
+                            context = context,
+                            riderId = currentRider?.riderId ?: riderRegRecord?.riderId ?: "RIDER-101",
+                            riderName = riderDisplayName.ifBlank { currentRider?.name ?: "Rider Partner" },
+                            riderPhone = riderPhone.ifBlank { currentRider?.mobile.orEmpty() },
+                            amountInr = amount,
+                            payoutDestination = destFull
+                        )
+                        if (req != null) {
+                            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                            statusMessage = "✅ Payout Request #${req.requestId} (₹${amount.toInt()}) sent to Admin for ${riderRegRecord?.bankName ?: "Bank"} ${riderRegRecord?.maskedBankAccountNumber ?: ""}!"
+                            isErrorBanner = false
+                        } else {
+                            statusMessage = "⚠️ Add Bank Account details & ensure balance ≥ ₹50 before Cashout."
+                            isErrorBanner = true
+                        }
                     },
                     onDismiss = { showCashoutDialog = false }
                 )
@@ -1320,7 +1441,7 @@ fun RiderPartnerCompactScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "Raise a support ticket directly to Quick Delivery Admin Ops & view live replies:",
+                                text = "Raise a support ticket directly to Admin Ops or email ${com.example.data.cloud.QuickDeliveryBrandLinks.SUPPORT_EMAIL}:",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF475569)
                             )
@@ -1367,7 +1488,7 @@ fun RiderPartnerCompactScreen(
                                     if (created != null) {
                                         MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                                         ticketMessage = ""
-                                        statusMessage = "✅ Support ticket ${created.ticketId} sent to Admin Desk."
+                                        statusMessage = "✅ Ticket ${created.ticketId} sent to Admin Desk & queued for ${com.example.data.cloud.QuickDeliveryBrandLinks.SUPPORT_EMAIL}."
                                         isErrorBanner = false
                                     }
                                 },
@@ -1377,7 +1498,46 @@ fun RiderPartnerCompactScreen(
                                     .fillMaxWidth()
                                     .testTag("rider_submit_ticket_btn")
                             ) {
-                                Text("Submit Support Ticket", fontWeight = FontWeight.Bold)
+                                Text("Submit Ticket (Admin + Mail Alert)", fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    val mailSubject = "[Rider Partner Help] $ticketCategory${if (ticketOrderId.isNotBlank()) " • Order #$ticketOrderId" else ""}"
+                                    val mailBody = buildString {
+                                        appendLine("Partner Name: $riderDisplayName")
+                                        appendLine("Mobile: ${riderPhone.ifBlank { "Not provided" }}")
+                                        if (ticketOrderId.isNotBlank()) appendLine("Order ID: #$ticketOrderId")
+                                        appendLine("Category: $ticketCategory")
+                                        appendLine()
+                                        appendLine("Issue Details:")
+                                        appendLine(ticketMessage.ifBlank { "(Describe your issue here)" })
+                                    }
+                                    runCatching {
+                                        context.startActivity(
+                                            com.example.data.cloud.QuickDeliveryBrandLinks.buildSupportMailtoIntent(
+                                                subject = mailSubject,
+                                                body = mailBody
+                                            )
+                                        )
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_email_support_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Email,
+                                    contentDescription = "Email Partner Support",
+                                    tint = RiderNavy,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Email ${com.example.data.cloud.QuickDeliveryBrandLinks.SUPPORT_EMAIL}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = RiderNavy
+                                )
                             }
                             if (riderTickets.isNotEmpty()) {
                                 HorizontalDivider()
@@ -1461,6 +1621,138 @@ fun RiderPartnerCompactScreen(
                         statusMessage = "Your partner account data has been deleted from this device."
                     },
                     onDismiss = { showRiderDeleteAccountDialog = false }
+                )
+            }
+
+            orderPendingRejection?.let { rejectTarget ->
+                val rejectReasonOptions = listOf(
+                    "Pickup location too far",
+                    "Vehicle puncture / Breakdown",
+                    "Heavy traffic / Road closed",
+                    "Parcel too heavy / Oversize",
+                    "Customer unreachable at pickup",
+                    "Other reason"
+                )
+                var selectedRejectReason by remember(rejectTarget.orderId) {
+                    mutableStateOf(rejectReasonOptions.first())
+                }
+                var customRejectNote by remember(rejectTarget.orderId) { mutableStateOf("") }
+                val isOtherSelected = selectedRejectReason == "Other reason"
+                val canConfirmReject = if (isOtherSelected) customRejectNote.trim().length >= 3 else selectedRejectReason.isNotBlank()
+
+                AlertDialog(
+                    onDismissRequest = { orderPendingRejection = null },
+                    title = {
+                        Text(
+                            text = "Reject Order #${rejectTarget.orderId}?",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = RiderNavy
+                        )
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Select a mandatory reason to decline. Customer will be notified automatically and another nearby Rider will be searched:",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF475569)
+                            )
+                            rejectReasonOptions.forEach { reasonOption ->
+                                val isChosen = selectedRejectReason == reasonOption
+                                Surface(
+                                    color = if (isChosen) Color(0xFFFEF2F2) else Color(0xFFF8FAFC),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(
+                                        width = if (isChosen) 1.2.dp else 1.dp,
+                                        color = if (isChosen) Color(0xFFDC2626) else Color(0xFFE2E8F0)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { selectedRejectReason = reasonOption }
+                                        .testTag("rider_reject_reason_${reasonOption.lowercase().replace(" ", "_").replace("/", "_")}")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        RadioButton(
+                                            selected = isChosen,
+                                            onClick = { selectedRejectReason = reasonOption },
+                                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFDC2626))
+                                        )
+                                        Text(
+                                            text = reasonOption,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Medium,
+                                            color = RiderNavy
+                                        )
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = customRejectNote,
+                                onValueChange = { customRejectNote = it },
+                                label = {
+                                    Text(if (isOtherSelected) "Enter reason details *" else "Additional note (optional)")
+                                },
+                                placeholder = { Text("e.g., Flat tyre near main road") },
+                                singleLine = false,
+                                maxLines = 2,
+                                isError = isOtherSelected && customRejectNote.trim().length < 3,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_reject_custom_reason_input")
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            enabled = canConfirmReject,
+                            onClick = {
+                                val detail = customRejectNote.trim()
+                                val finalReason = if (isOtherSelected) {
+                                    detail
+                                } else if (detail.isNotEmpty()) {
+                                    "$selectedRejectReason ($detail)"
+                                } else {
+                                    selectedRejectReason
+                                }
+                                val rejectingRiderId = (currentRider?.riderId ?: rejectTarget.assignedRiderId ?: "RIDER-LOCAL")
+                                    .ifBlank { "RIDER-LOCAL" }
+
+                                com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(rejectTarget.orderId)
+                                val nextRejected = locallyRejectedOrderIds + rejectTarget.orderId
+                                locallyRejectedOrderIds = nextRejected
+                                rejectedOrderPrefs.edit().putStringSet("rejected_ids", nextRejected).apply()
+                                QuickDeliveryOperationsManager.clearWaitTimerForOrder(context, rejectTarget.orderId)
+
+                                AutomatedFairRiderAssignmentEngine.markRiderDeclinedAndReleaseOrder(
+                                    repository = repository,
+                                    orderId = rejectTarget.orderId,
+                                    rejectingRiderId = rejectingRiderId,
+                                    reason = finalReason
+                                )
+                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                orderPendingRejection = null
+                                isErrorBanner = false
+                                statusMessage = "❌ Order #${rejectTarget.orderId} declined ($finalReason). Re-searching new rider for customer."
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                            modifier = Modifier.testTag("rider_confirm_reject_reason_btn")
+                        ) {
+                            Text("Confirm Reject", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        OutlinedButton(onClick = { orderPendingRejection = null }) {
+                            Text("Keep Order")
+                        }
+                    }
                 )
             }
 
@@ -1641,11 +1933,16 @@ fun RiderPartnerCompactScreen(
                     todayDeliveredCount = todayDeliveredOrders.size,
                     riderName = riderDisplayName,
                     riderPhone = riderPhone,
+                    isRiderOnline = currentRider?.isOnline == true,
+                    activeZoneHints = listOfNotNull(preferredAreaKeyword.takeIf { it.isNotBlank() }),
                     isDarkMode = isDarkMode
                 )
             }
 
             item(key = "rider_shift_and_smart_filter") {
+                val searchingOrdersSnapshot = remember(orders) {
+                    orders.filter { it.orderStatus == OrderStatus.SEARCHING_RIDER }
+                }
                 RiderShiftAndSmartFilterCard(
                     todayDeliveredCount = todayDeliveredOrders.size,
                     todayDistanceKm = todayDistanceKm,
@@ -1664,6 +1961,8 @@ fun RiderPartnerCompactScreen(
                         RiderSmartToolsPrefs.setPreferredAreaKeyword(context, kw)
                     },
                     hiddenByFilterCount = hiddenByFilterCount,
+                    searchingOrders = searchingOrdersSnapshot,
+                    flags = remoteFlags,
                     isDarkMode = isDarkMode
                 )
             }
@@ -1896,32 +2195,25 @@ fun RiderPartnerCompactScreen(
                             }
                         },
                         onRejectOrder = {
+                            orderPendingRejection = order
+                        },
+                        onAutoOfferExpired = {
+                            val rejectingRiderId = (currentRider?.riderId ?: order.assignedRiderId ?: "RIDER-LOCAL")
+                                .ifBlank { "RIDER-LOCAL" }
                             com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
-                            runCatching {
-                                val field = repository.javaClass.getDeclaredField("_orders")
-                                field.isAccessible = true
-                                @Suppress("UNCHECKED_CAST")
-                                val flow = field.get(repository) as? kotlinx.coroutines.flow.MutableStateFlow<List<CustomerOrder>>
-                                if (flow != null) {
-                                    flow.value = flow.value.map { existing ->
-                                        if (existing.orderId == order.orderId) {
-                                            existing.copy(
-                                                orderStatus = OrderStatus.CANCELLED,
-                                                assignedRiderId = null,
-                                                assignedRiderName = null,
-                                                assignedRiderPhone = null,
-                                                assignedRiderVehicle = null,
-                                                latestRiderQuickNote = "Order declined by Rider Partner."
-                                            )
-                                        } else {
-                                            existing
-                                        }
-                                    }
-                                }
-                            }
-                            isErrorBanner = false
-                            statusMessage = "❌ Order #${order.orderId} Rejected."
+                            val nextRejected = locallyRejectedOrderIds + order.orderId
+                            locallyRejectedOrderIds = nextRejected
+                            rejectedOrderPrefs.edit().putStringSet("rejected_ids", nextRejected).apply()
+                            QuickDeliveryOperationsManager.clearWaitTimerForOrder(context, order.orderId)
+                            AutomatedFairRiderAssignmentEngine.markRiderDeclinedAndReleaseOrder(
+                                repository = repository,
+                                orderId = order.orderId,
+                                rejectingRiderId = rejectingRiderId,
+                                reason = "30s Offer Countdown Expired"
+                            )
                             MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                            isErrorBanner = false
+                            statusMessage = "⏱️ Offer #${order.orderId} (30s) timed out — forwarded to next online rider."
                         },
                         onCapturePhotoProof = {
                             activePhotoOrderId = order.orderId
@@ -2084,6 +2376,7 @@ private fun RiderProgressiveOrderCard(
     photoProofBitmap: Bitmap?,
     onAcceptOrder: () -> Unit,
     onRejectOrder: () -> Unit,
+    onAutoOfferExpired: () -> Unit = {},
     onCapturePhotoProof: () -> Unit,
     onCompletePickupWithSignature: (enteredOtp: String, senderName: String, signatureSvg: String) -> Unit,
     onCompleteDropWithSignature: (enteredOtp: String, receiverName: String, signatureSvg: String) -> Unit,
@@ -2108,6 +2401,8 @@ private fun RiderProgressiveOrderCard(
     val cardContext = LocalContext.current
     val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
     val waitTimersByOrder by QuickDeliveryOperationsManager.waitTimerStartByOrder.collectAsState()
+    val unreachableMap by QuickDeliveryOperationsManager.unreachableByOrder.collectAsState()
+    val unreachableRec = unreachableMap[order.orderId]
     val waitStartedAt = waitTimersByOrder[order.orderId]
     var waitTickerSeconds by remember(order.orderId, waitStartedAt) { mutableStateOf(0) }
     LaunchedEffect(order.orderId, waitStartedAt, remoteFlags.waitTimeAndCancelRuleEnabled) {
@@ -2128,6 +2423,23 @@ private fun RiderProgressiveOrderCard(
     val awaitingAcceptDecision = order.orderStatus == OrderStatus.SEARCHING_RIDER ||
         (order.orderStatus == OrderStatus.RIDER_ASSIGNED && !riderHasConfirmedAccept)
 
+    // 30-second Ringing Offer Countdown (Auto-forwards to next rider when timer hits 0)
+    var offerSecondsLeft by remember(order.orderId, awaitingAcceptDecision) { mutableStateOf(30) }
+    LaunchedEffect(order.orderId, awaitingAcceptDecision) {
+        if (awaitingAcceptDecision) {
+            while (offerSecondsLeft > 0) {
+                kotlinx.coroutines.delay(1000L)
+                offerSecondsLeft -= 1
+            }
+            onAutoOfferExpired()
+        }
+    }
+    val earnDouble = remember(order.riderEarning) {
+        order.riderEarning.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+    }
+    val distKmSafe = order.distanceKm.coerceAtLeast(0.5)
+    val perKmRate = earnDouble / distKmSafe
+
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -2144,7 +2456,7 @@ private fun RiderProgressiveOrderCard(
             modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // 1. VERY TOP: ACCEPT / REJECT REQUEST (Shown First on Incoming Orders)
+            // 1. VERY TOP: ACCEPT / REJECT REQUEST WITH 30s COUNTDOWN + DISTANCE/₹-PER-KM
             if (awaitingAcceptDecision) {
                 Surface(
                     color = Color(0xFFFFF7ED),
@@ -2156,12 +2468,73 @@ private fun RiderProgressiveOrderCard(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "🔔 New Order Request — Accept or Reject",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF9A3412)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "🔔 New Order Request",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF9A3412)
+                            )
+                            Surface(
+                                color = if (offerSecondsLeft <= 10) Color(0xFFDC2626) else RiderOrange,
+                                shape = RoundedCornerShape(999.dp)
+                            ) {
+                                Text(
+                                    text = "⏱️ ${offerSecondsLeft}s",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White,
+                                    modifier = Modifier
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                        .testTag("rider_offer_countdown_${order.orderId}")
+                                )
+                            }
+                        }
+                        LinearProgressIndicator(
+                            progress = { (offerSecondsLeft / 30f).coerceIn(0f, 1f) },
+                            color = if (offerSecondsLeft <= 10) Color(0xFFDC2626) else RiderOrange,
+                            trackColor = Color(0xFFFED7AA),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(3.dp))
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                color = Color(0xFFECFDF5),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFF6EE7B7))
+                            ) {
+                                Text(
+                                    text = String.format(Locale.US, "📍 %.1f km • ₹%.0f/km", order.distanceKm, perKmRate),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF065F46),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                            Surface(
+                                color = Color(0xFFEFF6FF),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFFBFDBFE))
+                            ) {
+                                Text(
+                                    text = order.paymentMethod.shortBadge,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1D4ED8),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2388,6 +2761,26 @@ private fun RiderProgressiveOrderCard(
                 )
             }
 
+            if ((order.orderStatus == OrderStatus.RIDER_ASSIGNED || order.orderStatus == OrderStatus.ARRIVED_AT_PICKUP) &&
+                orderPickupProof == null
+            ) {
+                OutlinedButton(
+                    onClick = { onRejectOrder() },
+                    border = BorderStroke(1.dp, Color(0xFFDC2626)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rider_release_order_with_reason_btn_${order.orderId}")
+                ) {
+                    Text(
+                        text = "❌ Unable to Pickup? Reject / Release Order (Select Reason)",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
             HorizontalDivider()
 
             // 3. STEP-BY-STEP PICKUP / DROP SIGNATURE & ORDER DELIVERED COMPLETION
@@ -2406,6 +2799,91 @@ private fun RiderProgressiveOrderCard(
                             color = RiderNavy
                         )
 
+                        // Upgrade #7: 1-Tap Reached Pickup Gate (100m Check-In) -> Pushes Customer sticky OTP alert
+                        if (order.orderStatus == OrderStatus.RIDER_ASSIGNED) {
+                            Button(
+                                onClick = {
+                                    QuickDeliveryOperationsManager.markRiderReachedPickupGate(
+                                        context = cardContext,
+                                        repository = SharedOrderRepository.getInstance(cardContext),
+                                        orderId = order.orderId,
+                                        riderName = order.assignedRiderName ?: riderDisplayName
+                                    )
+                                    onNavigationMessage("📍 Arrived at Pickup Gate! Customer notified to keep OTP & parcel ready.")
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = RiderTeal),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_reached_pickup_gate_btn_${order.orderId}")
+                            ) {
+                                Text(
+                                    text = "📍 I've Reached Pickup Gate (Notify Customer OTP)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White
+                                )
+                            }
+                        } else {
+                            Surface(
+                                color = Color(0xFFECFDF5),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFF10B981)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "✓ At Pickup Gate — Customer OTP Alert Active",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF065F46),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+
+                        // Upgrade #8: Customer Unreachable / Log Call Attempt
+                        if (unreachableRec == null) {
+                            OutlinedButton(
+                                onClick = {
+                                    QuickDeliveryOperationsManager.reportCustomerUnreachable(
+                                        context = cardContext,
+                                        repository = SharedOrderRepository.getInstance(cardContext),
+                                        orderId = order.orderId,
+                                        riderId = order.assignedRiderId ?: "RIDER-LOCAL",
+                                        riderName = order.assignedRiderName ?: riderDisplayName
+                                    )
+                                    onNavigationMessage("📵 Customer Unreachable logged & synced to Customer + Admin.")
+                                },
+                                border = BorderStroke(1.dp, Color(0xFFD97706)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB45309)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_customer_unreachable_btn_${order.orderId}")
+                            ) {
+                                Text(
+                                    text = "📵 Customer Not Picking Up / Log Unreachable",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        } else {
+                            Surface(
+                                color = Color(0xFFFEF2F2),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "📵 Unreachable Call Attempt Logged at ${unreachableRec.reportedAtLabel}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF991B1B),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+
                         if (remoteFlags.waitTimeAndCancelRuleEnabled) {
                             val waitInfo = remember(order.orderId, waitTimersByOrder, remoteFlags, waitTickerSeconds) {
                                 QuickDeliveryOperationsManager.computeWaitFeeInfo(order.orderId, remoteFlags)
@@ -2418,14 +2896,15 @@ private fun RiderProgressiveOrderCard(
                                             repository = SharedOrderRepository.getInstance(cardContext),
                                             orderId = order.orderId
                                         )
-                                        onNavigationMessage("⏱️ Wait timer started (${remoteFlags.freeWaitMinutes}m free)")
+                                        onNavigationMessage("⏱️ Wait timer started (${remoteFlags.freeWaitMinutes}m free, then ₹${remoteFlags.waitFeePerMinuteInr}/min)")
                                     },
+                                    border = BorderStroke(1.2.dp, RiderOrange),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("rider_start_wait_timer_btn_${order.orderId}")
                                 ) {
                                     Text(
-                                        text = "⏱️ Reached Pickup Gate — Start Wait Timer (${remoteFlags.freeWaitMinutes}m free)",
+                                        text = "⏱️ Reached Pickup Gate — Start Wait Timer (${remoteFlags.freeWaitMinutes}m free, ₹${remoteFlags.waitFeePerMinuteInr}/min)",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = RiderOrange
@@ -2434,28 +2913,36 @@ private fun RiderProgressiveOrderCard(
                             } else {
                                 val mm = waitInfo.elapsedSeconds / 60
                                 val ss = waitInfo.elapsedSeconds % 60
+                                val remainingFreeSec = (waitInfo.freeSeconds - waitInfo.elapsedSeconds).coerceAtLeast(0L)
+                                val rMm = remainingFreeSec / 60
+                                val rSs = remainingFreeSec % 60
                                 val isOvertime = waitInfo.overtimeMinutes > 0
                                 Surface(
                                     color = if (isOvertime) Color(0xFFFEF2F2) else Color(0xFFFFFBEB),
                                     shape = RoundedCornerShape(10.dp),
                                     border = BorderStroke(1.dp, if (isOvertime) Color(0xFFDC2626) else RiderOrange),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("rider_live_wait_timer_badge_${order.orderId}")
                                 ) {
                                     Text(
                                         text = if (isOvertime) {
                                             String.format(
                                                 Locale.US,
-                                                "⏱️ Pickup Wait: %02d:%02d • Overtime +₹%d Wait Fee",
+                                                "⏱️ Pickup Wait: %02d:%02d • Overtime %dm (+₹%d Wait Fee)",
                                                 mm,
                                                 ss,
+                                                waitInfo.overtimeMinutes,
                                                 waitInfo.waitFeeInr
                                             )
                                         } else {
                                             String.format(
                                                 Locale.US,
-                                                "⏱️ Pickup Wait: %02d:%02d • Free (%dm limit)",
+                                                "⏱️ Pickup Wait: %02d:%02d • Free time left: %02d:%02d (%dm free)",
                                                 mm,
                                                 ss,
+                                                rMm,
+                                                rSs,
                                                 remoteFlags.freeWaitMinutes
                                             )
                                         },

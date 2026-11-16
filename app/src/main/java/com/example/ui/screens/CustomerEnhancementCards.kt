@@ -67,11 +67,17 @@ private val EnhGreen = Color(0xFF059669)
 
 @Composable
 fun CustomerRemoteAlertsBanner(
-    flags: AdminRemoteFeatureFlags
+    flags: AdminRemoteFeatureFlags,
+    activePinCode: String = ""
 ) {
     var dismissedEpochMs by remember { mutableLongStateOf(0L) }
+    val targetMatches = flags.adminBroadcastTarget == "ALL" ||
+        flags.adminBroadcastTarget == "CUSTOMER" ||
+        (flags.adminBroadcastTarget.startsWith("PIN:") &&
+            activePinCode.isNotBlank() &&
+            flags.adminBroadcastTarget.removePrefix("PIN:").trim() == activePinCode.trim())
     val showBroadcast = flags.adminBroadcastMessage.isNotBlank() &&
-        (flags.adminBroadcastTarget == "ALL" || flags.adminBroadcastTarget == "CUSTOMER") &&
+        targetMatches &&
         flags.adminBroadcastEpochMs > 0L &&
         flags.adminBroadcastEpochMs != dismissedEpochMs
 
@@ -374,7 +380,7 @@ fun CustomerReferralWalletCard(
                             type = "text/plain"
                             putExtra(
                                 Intent.EXTRA_TEXT,
-                                "Send parcels fast with Quick Delivery! Use my invite code $ownCode to earn ₹${flags.referralBonusInr} off: https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/customer-apk"
+                                "Send parcels fast with Quick Delivery! Use my invite code $ownCode to earn ₹${flags.referralBonusInr} off: ${com.example.data.cloud.QuickDeliveryBrandLinks.CUSTOMER_APK_URL}"
                             )
                         }
                         runCatching {
@@ -515,7 +521,7 @@ fun CustomerShareLiveTrackingButton(
                 if (!order.assignedRiderName.isNullOrBlank()) {
                     appendLine("Rider: ${order.assignedRiderName} (${order.assignedRiderPhone.orEmpty()})")
                 }
-                append("Track / Download Quick Delivery: https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/customer-apk")
+                append("Track / Download Quick Delivery: ${com.example.data.cloud.QuickDeliveryBrandLinks.CUSTOMER_APK_URL}")
             }
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
@@ -602,7 +608,7 @@ fun CustomerSendReceiverOtpCard(
                     appendLine("Rider Partner: ${order.assignedRiderName} (${order.assignedRiderPhone.orEmpty()})")
                 }
                 appendLine("DROP OTP (Share with Rider at Delivery): ${order.deliveryOtp}")
-                append("Live Track Link: https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/customer-apk")
+                append("Live Track Link: ${com.example.data.cloud.QuickDeliveryBrandLinks.CUSTOMER_APK_URL}")
             }
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
@@ -768,4 +774,194 @@ fun CustomerOrderDisputeCard(
         }
     }
 }
+
+@Composable
+fun CustomerProximityOtpAlertBanner(
+    order: CustomerOrder
+) {
+    val riderCoordsMap by QuickDeliveryOperationsManager.riderLiveCoordsByOrder.collectAsState()
+    val unreachableMap by QuickDeliveryOperationsManager.unreachableByOrder.collectAsState()
+    val unreachableRec = unreachableMap[order.orderId]
+
+    val etaInfo = remember(order, riderCoordsMap) {
+        QuickDeliveryOperationsManager.computeLiveRiderEtaKmAndMins(order)
+    }
+    val distMeters = etaInfo?.first?.let { (it * 1000.0).toInt().coerceAtLeast(10) }
+    val isNearby = (etaInfo != null && etaInfo.first <= 0.25) ||
+        order.orderStatus == com.example.data.model.OrderStatus.ARRIVED_AT_PICKUP
+
+    val isDropStage = order.orderStatus == com.example.data.model.OrderStatus.PICKED_UP ||
+        order.orderStatus == com.example.data.model.OrderStatus.IN_TRANSIT
+    val activeOtp = if (isDropStage) order.deliveryOtp else order.pickupOtp
+    val otpLabel = if (isDropStage) "Drop OTP" else "Pickup OTP"
+
+    if (isNearby && order.orderStatus != com.example.data.model.OrderStatus.DELIVERED && order.orderStatus != com.example.data.model.OrderStatus.CANCELLED) {
+        Surface(
+            color = Color(0xFFECFDF5),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.5.dp, EnhGreen),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("customer_proximity_otp_alert_banner")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        text = if (distMeters != null) {
+                            "🏍️ Rider only ${distMeters}m away — Keep $otpLabel Ready!"
+                        } else {
+                            "🏍️ Rider Reached Gate — Keep $otpLabel Ready!"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF065F46)
+                    )
+                    Text(
+                        text = "${order.assignedRiderName ?: "Rider Partner"} is arriving now",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF047857)
+                    )
+                }
+                Surface(
+                    color = EnhGreen,
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        text = activeOtp,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    if (unreachableRec != null &&
+        order.orderStatus != com.example.data.model.OrderStatus.DELIVERED &&
+        order.orderStatus != com.example.data.model.OrderStatus.CANCELLED
+    ) {
+        Surface(
+            color = Color(0xFFFEF2F2),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.2.dp, Color(0xFFEF4444)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("customer_unreachable_alert_banner")
+        ) {
+            Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(18.dp))
+                Text(
+                    text = "📵 Rider tried reaching you (${unreachableRec.reportedAtLabel}): Please answer call or share gate access.",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF991B1B)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CustomerAddressAutocompleteRow(
+    query: String,
+    savedAddresses: List<com.example.data.cloud.SavedCustomerAddress>,
+    pastOrders: List<CustomerOrder>,
+    isPickup: Boolean,
+    accentColor: Color,
+    onSelectSaved: (com.example.data.cloud.SavedCustomerAddress) -> Unit,
+    onSelectRecentText: (String) -> Unit
+) {
+    val cleanQuery = query.trim()
+    if (cleanQuery.length < 2) return
+
+    val matchingSaved = remember(cleanQuery, savedAddresses) {
+        savedAddresses.filter { addr ->
+            (addr.areaStreet.contains(cleanQuery, ignoreCase = true) ||
+                addr.label.contains(cleanQuery, ignoreCase = true) ||
+                addr.landmark.contains(cleanQuery, ignoreCase = true)) &&
+                !addr.areaStreet.equals(cleanQuery, ignoreCase = true)
+        }.take(2)
+    }
+
+    val matchingRecent = remember(cleanQuery, pastOrders, isPickup, matchingSaved) {
+        pastOrders.mapNotNull { ord ->
+            val raw = if (isPickup) ord.pickupAddress.fullAddress else ord.dropAddress.fullAddress
+            raw.trim().takeIf { text ->
+                text.contains(cleanQuery, ignoreCase = true) &&
+                    !text.equals(cleanQuery, ignoreCase = true) &&
+                    matchingSaved.none { s -> text.contains(s.areaStreet, ignoreCase = true) }
+            }
+        }.distinct().take(2)
+    }
+
+    if (matchingSaved.isEmpty() && matchingRecent.isEmpty()) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(if (isPickup) "pickup_address_autocomplete_list" else "drop_address_autocomplete_list"),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        matchingSaved.forEach { addr ->
+            Surface(
+                color = accentColor.copy(alpha = 0.08f),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, accentColor.copy(alpha = 0.3f)),
+                onClick = { onSelectSaved(addr) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.AddLocationAlt, contentDescription = null, tint = accentColor, modifier = Modifier.size(14.dp))
+                    Text(
+                        text = "${addr.label}: ${addr.areaStreet} (${addr.pinCode})",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = EnhNavy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        matchingRecent.forEach { text ->
+            Surface(
+                color = Color(0xFFF8FAFC),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                onClick = { onSelectRecentText(text) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.Replay, contentDescription = null, tint = EnhSlate, modifier = Modifier.size(14.dp))
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = EnhNavy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
 

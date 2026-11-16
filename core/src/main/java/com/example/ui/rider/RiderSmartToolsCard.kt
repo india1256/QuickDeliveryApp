@@ -74,12 +74,19 @@ fun RiderRemoteAlertsAndMissionCard(
     todayDeliveredCount: Int,
     riderName: String,
     riderPhone: String,
-    isDarkMode: Boolean = false
+    isDarkMode: Boolean = false,
+    isRiderOnline: Boolean = true,
+    activeZoneHints: List<String> = emptyList()
 ) {
     val context = LocalContext.current
     var dismissedBroadcastEpoch by remember { mutableLongStateOf(0L) }
+    val target = flags.adminBroadcastTarget.trim().uppercase()
+    val targetMatches = target == "ALL" ||
+        target == "RIDER" ||
+        (target == "ONLINE_RIDERS" && isRiderOnline) ||
+        (target.startsWith("PIN:") && activeZoneHints.any { it.contains(target.removePrefix("PIN:").trim(), ignoreCase = true) })
     val showBroadcast = flags.adminBroadcastMessage.isNotBlank() &&
-        (flags.adminBroadcastTarget == "ALL" || flags.adminBroadcastTarget == "RIDER") &&
+        targetMatches &&
         dismissedBroadcastEpoch != flags.adminBroadcastEpochMs
 
     val hasAnyContent = flags.maintenanceBannerEnabled ||
@@ -341,7 +348,9 @@ fun RiderShiftAndSmartFilterCard(
     preferredAreaKeyword: String,
     onAreaKeywordChange: (String) -> Unit,
     hiddenByFilterCount: Int,
-    isDarkMode: Boolean = false
+    isDarkMode: Boolean = false,
+    searchingOrders: List<com.example.data.model.CustomerOrder> = emptyList(),
+    flags: AdminRemoteFeatureFlags? = null
 ) {
     val cardBg = if (isDarkMode) Color(0xFF1E293B) else Color.White
     val tileBg = if (isDarkMode) Color(0xFF0F172A) else Color(0xFFF8FAFC)
@@ -541,6 +550,81 @@ fun RiderShiftAndSmartFilterCard(
                     .fillMaxWidth()
                     .testTag("rider_area_keyword_filter_input")
             )
+
+            // High-Demand Area & Peak Surge Heat Chips (Derived from Open Orders & Admin Zones)
+            val demandHotspots = remember(searchingOrders, flags) {
+                val counts = linkedMapOf<String, Int>()
+                searchingOrders.forEach { ord ->
+                    val token = ord.pickupAddress.fullAddress.split(",")
+                        .map { it.trim() }
+                        .lastOrNull { it.length in 3..22 && !it.all(Char::isDigit) }
+                        ?: ord.pickupAddress.fullAddress.substringBefore(",").trim().take(18)
+                    if (token.isNotBlank()) {
+                        counts[token] = (counts[token] ?: 0) + 1
+                    }
+                }
+                flags?.activeSurgeZoneCsv.orEmpty().split(',')
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .forEach { zone -> counts.putIfAbsent(zone, 1) }
+                counts.entries.sortedByDescending { it.value }.take(5).map { it.key to it.value }
+            }
+            val effectiveSurge = flags?.effectiveSurgeMultiplier() ?: 1.0
+            if (demandHotspots.isNotEmpty() || effectiveSurge > 1.01) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "🔥 High-Demand Hotspots (Tap to filter)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = SmartOrange
+                        )
+                        if (effectiveSurge > 1.01) {
+                            Surface(
+                                color = Color(0xFFFFF7ED),
+                                shape = RoundedCornerShape(6.dp),
+                                border = BorderStroke(1.dp, SmartOrange.copy(alpha = 0.5f))
+                            ) {
+                                Text(
+                                    text = "⚡ ${String.format(Locale.US, "%.2fx", effectiveSurge)} Surge Active",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF9A3412),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    if (demandHotspots.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            demandHotspots.forEach { (area, cnt) ->
+                                val isChosen = preferredAreaKeyword.equals(area, ignoreCase = true)
+                                FilterChip(
+                                    selected = isChosen,
+                                    onClick = { onAreaKeywordChange(if (isChosen) "" else area) },
+                                    label = {
+                                        Text(
+                                            text = "🔥 $area ($cnt)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("rider_demand_hotspot_chip_${area.lowercase()}")
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             if (hiddenByFilterCount > 0) {
                 Surface(

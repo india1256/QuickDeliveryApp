@@ -226,6 +226,9 @@ fun PorterRiderDrawerContent(
     onOpenGuidelines: () -> Unit,
     onOpenSafety: () -> Unit = onOpenSupport,
     onOpenKycDocuments: () -> Unit = onOpenProfile,
+    onOpenBankAccount: () -> Unit = {},
+    hasBankDetails: Boolean = false,
+    bankSummary: String = "",
     onOpenSuggestionBox: () -> Unit = {},
     onInstantCashout: (Double) -> Unit = {},
     onSimulateBalance: (Double) -> Unit,
@@ -644,6 +647,18 @@ fun PorterRiderDrawerContent(
                 )
             }
 
+            item {
+                PorterDrawerMenuItem(
+                    icon = Icons.Default.AccountBalance,
+                    title = "Bank Account & Payout Setup",
+                    subtitle = bankSummary.ifBlank { "Add Bank A/C, IFSC & UPI to receive earnings" },
+                    badge = if (hasBankDetails) "LINKED ✓" else "ADD A/C",
+                    badgeColor = if (hasBankDetails) PorterGreen else PorterOrange,
+                    onClick = onOpenBankAccount,
+                    tag = "drawer_item_bank_account"
+                )
+            }
+
             // 4. NOTIFICATIONS & SUPPORT SECTION
             item {
                 HorizontalDivider(
@@ -677,7 +692,7 @@ fun PorterRiderDrawerContent(
                 PorterDrawerMenuItem(
                     icon = Icons.Default.Help,
                     title = "Help Desk & Partner Support",
-                    subtitle = "Raise Support Ticket & View Admin Replies",
+                    subtitle = "Support Ticket • support@quickdelivery.co.in",
                     onClick = onOpenSupport,
                     tag = "drawer_item_support"
                 )
@@ -2195,6 +2210,12 @@ private fun DailyBreakdownRow(
 @Composable
 fun PorterInstantCashoutDialog(
     amount: Double,
+    bankAccountDisplay: String = "",
+    ifscDisplay: String = "",
+    accountHolderDisplay: String = "",
+    upiIdDisplay: String = "",
+    hasBankDetails: Boolean = false,
+    onEditBankAccount: (() -> Unit)? = null,
     onConfirm: (Double) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2235,7 +2256,7 @@ fun PorterInstantCashoutDialog(
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Instant Payout Cashout",
+                            text = "Payout Cashout Request",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = PorterNavy
@@ -2271,7 +2292,7 @@ fun PorterInstantCashoutDialog(
                             color = PorterGreen
                         )
                         Text(
-                            text = "Zero convenience fee • IMPS 24x7 Fast Transfer",
+                            text = "Zero convenience fee • Admin-verified IMPS / UPI Transfer",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF15803D)
                         )
@@ -2285,30 +2306,76 @@ fun PorterInstantCashoutDialog(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Destination Account", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
-                        Text("HDFC Bank •••• 4092", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("UPI ID", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
-                        Text("rider@okhdfcbank", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                    if (hasBankDetails) {
+                        if (accountHolderDisplay.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Account Holder", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                                Text(accountHolderDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Destination Bank", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                            Text(bankAccountDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                        }
+                        if (ifscDisplay.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("IFSC Code", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                                Text(ifscDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                            }
+                        }
+                        if (upiIdDisplay.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("UPI ID", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                                Text(upiIdDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "⚠️ Bank Account details abhi add nahi hui hain. Paisa transfer karwane ke liye pehle apna Bank A/C aur IFSC add karein.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFB45309)
+                        )
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text("Transfer Mode", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
-                        Text("Immediate (Within 60 sec)", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterTeal)
+                        Text("Admin Verified IMPS / UPI", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterTeal)
+                    }
+                }
+
+                if (onEditBankAccount != null) {
+                    OutlinedButton(
+                        onClick = onEditBankAccount,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("cashout_edit_bank_btn")
+                    ) {
+                        Icon(Icons.Default.AccountBalance, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (hasBankDetails) "Change / Update Bank Account" else "Add Bank Account Now →",
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 
                 Button(
+                    enabled = hasBankDetails && amount >= 50.0,
                     onClick = { onConfirm(amount) },
                     colors = ButtonDefaults.buttonColors(containerColor = PorterTeal),
                     shape = RoundedCornerShape(10.dp),
@@ -2317,7 +2384,13 @@ fun PorterInstantCashoutDialog(
                         .testTag("confirm_instant_cashout_btn")
                 ) {
                     Text(
-                        text = "Confirm & Cashout ₹${amount.toInt()} Now",
+                        text = if (!hasBankDetails) {
+                            "Add Bank Account to Enable Cashout"
+                        } else if (amount < 50.0) {
+                            "Minimum Cashout ₹50 (Current: ₹${amount.toInt()})"
+                        } else {
+                            "Confirm & Request ₹${amount.toInt()} Payout"
+                        },
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )

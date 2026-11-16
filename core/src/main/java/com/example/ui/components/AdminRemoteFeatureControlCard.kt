@@ -102,7 +102,7 @@ fun AdminRemoteFeatureSwitchesCard(
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.5.dp, CtrlTeal),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("admin_remote_feature_switches_card")
@@ -113,18 +113,18 @@ fun AdminRemoteFeatureSwitchesCard(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Default.Tune, contentDescription = null, tint = CtrlTeal)
+                AdminIconBadge(icon = Icons.Default.Tune, tint = CtrlTeal, sizeDp = 36)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Master Feature Switches (Live Remote Control)",
+                        text = "Feature Control & Remote Config",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        color = CtrlTeal
+                        color = CtrlNavy
                     )
                     Text(
-                        text = "Turn ON/OFF Customer & Rider features anytime — synced live across all phones",
+                        text = "Manage live capabilities across Customer & Rider Partner apps",
                         style = MaterialTheme.typography.labelSmall,
                         color = CtrlSlate
                     )
@@ -455,13 +455,12 @@ fun AdminRemoteFeatureSwitchesCard(
 
             HorizontalDivider()
 
-            // 10. 1-Tap Broadcast Announcement
+            // 10. 1-Tap Broadcast Announcement + Corporate Templates
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Campaign, contentDescription = null, tint = CtrlOrange, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AdminIconBadge(icon = Icons.Default.Campaign, tint = CtrlOrange, sizeDp = 30)
                     Text(
-                        text = "1-Tap Live Broadcast Announcement",
+                        text = "Live Fleet & Customer Broadcast",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.ExtraBold,
                         color = CtrlNavy
@@ -476,6 +475,24 @@ fun AdminRemoteFeatureSwitchesCard(
                             selected = broadcastTarget == key,
                             onClick = { broadcastTarget = key },
                             label = { Text(label, fontWeight = FontWeight.Bold) }
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        "Rain Surge" to "Weather Advisory: Heavy rain in key hubs. Dynamic surge active; allow 10 extra mins.",
+                        "Peak Bonus" to "Rider Incentive: Complete 5 deliveries during peak hours today for +150 bonus.",
+                        "Service Update" to "Quick Delivery Express: Zero-fee priority dispatch available in active zones."
+                    ).forEach { (chipLabel, templateText) ->
+                        FilterChip(
+                            selected = broadcastDraft == templateText,
+                            onClick = { broadcastDraft = templateText },
+                            label = { Text(chipLabel, style = MaterialTheme.typography.labelSmall) }
                         )
                     }
                 }
@@ -706,7 +723,7 @@ fun AdminRemoteFeatureSwitchesCard(
                         )
                     }
                     Text(
-                        text = "• Daily Auto-Backup + /api/backup-export active\n• Payment Webhook: /api/payments/razorpay-webhook\n• Privacy Policy: /privacy-policy (Play Console ready)",
+                        text = "• Domain: ${com.example.data.cloud.QuickDeliveryBrandLinks.PRIMARY_DOMAIN}\n• Backup Export: /api/backup-export active\n• Privacy Policy: ${com.example.data.cloud.QuickDeliveryBrandLinks.PRIVACY_POLICY_URL}",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF0F766E)
                     )
@@ -716,7 +733,7 @@ fun AdminRemoteFeatureSwitchesCard(
                     ) {
                         Button(
                             onClick = {
-                                val uri = Uri.parse("https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/api/backup-export")
+                                val uri = Uri.parse(com.example.data.cloud.QuickDeliveryBrandLinks.BACKUP_EXPORT_URL)
                                 runCatching {
                                     context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
@@ -735,7 +752,7 @@ fun AdminRemoteFeatureSwitchesCard(
                         }
                         OutlinedButton(
                             onClick = {
-                                val uri = Uri.parse("https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/privacy-policy")
+                                val uri = Uri.parse(com.example.data.cloud.QuickDeliveryBrandLinks.PRIVACY_POLICY_URL)
                                 runCatching {
                                     context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
@@ -753,6 +770,15 @@ fun AdminRemoteFeatureSwitchesCard(
                     }
                 }
             }
+
+            HorizontalDivider()
+
+            // 15. Future Expansion Switches (B2B Postpaid Default OFF, 80/20 Route Split Default OFF, Auto-KYC API Default OFF), B2B Credit Desk & Play Store .aab Readiness
+            AdminB2bAndEnterpriseReleaseCard(
+                repository = repository,
+                flags = flags,
+                onPushFlagUpdate = { transform, note -> pushUpdate(transform, note) }
+            )
         }
     }
 }

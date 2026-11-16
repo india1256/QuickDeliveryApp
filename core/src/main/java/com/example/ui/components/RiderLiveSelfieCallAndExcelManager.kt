@@ -446,38 +446,53 @@ object RiderLiveSelfieCallAndExcelManager {
 
     fun getCompleteDocumentVaultForRider(rider: RiderProfile): RiderCompleteDocumentVault {
         val suffix = rider.riderId.filter { it.isDigit() }.ifBlank { "101" }
-        val aadhaar = rider.aadhaarNumber.ifBlank { "4892-7731-9$suffix" }
-        val pan = rider.panNumber.ifBlank { "BGLPR${suffix}8F" }
+        val regRecord = com.example.data.cloud.RiderRegistrationApprovalManager
+            .getRecordForRiderProfile(rider.riderId, rider.mobile)
+        val aadhaar = regRecord?.aadhaarNumber?.ifBlank { rider.aadhaarNumber } ?: rider.aadhaarNumber.ifBlank { "Pending KYC" }
+        val pan = regRecord?.panNumber?.ifBlank { rider.panNumber } ?: rider.panNumber.ifBlank { "Pending KYC" }
+        val dlNum = regRecord?.drivingLicenseNumber?.ifBlank { "Pending KYC" } ?: "KA-01-20190049$suffix"
+        val realBankName = regRecord?.bankName?.ifBlank { "Not Added Yet (Waiting Rider Form)" }
+            ?: "Not Added Yet (Waiting Rider Form)"
+        val realAccountNo = regRecord?.bankAccountNumber?.ifBlank { "Pending Bank Form" }
+            ?: "Pending Bank Form"
+        val realIfsc = regRecord?.bankIfscCode?.ifBlank { "Pending" }
+            ?: "Pending"
+        val realUpi = regRecord?.bankUpiId?.ifBlank { rider.verifiedUpiId.orEmpty() }
+            ?: rider.verifiedUpiId.orEmpty()
         return RiderCompleteDocumentVault(
             riderId = rider.riderId,
             aadhaarNumber = aadhaar,
-            aadhaarStatus = "UIDAI e-KYC Verified Online (Front + Back Scanned)",
+            aadhaarStatus = if (regRecord?.autoKycVerified == true) "UIDAI e-KYC Auto-Verified & Clear" else "KYC Verification Status Recorded",
             panNumber = pan,
-            panStatus = "NSDL Income Tax Active & Verified Online",
-            drivingLicenseNumber = "KA-01-20190049$suffix",
+            panStatus = if (regRecord?.autoKycVerified == true) "NSDL PAN Format Verified" else "PAN Verification Pending",
+            drivingLicenseNumber = dlNum,
             dlExpiryDate = "18 Aug 2033",
-            dlRtoOffice = "RTO Bengaluru Central (KA-01)",
-            rcNumberPlate = rider.vehicleNumber.ifBlank { "KA-01-JD-$suffix" },
-            rcChassisNumber = "MBLHA10EWG9$suffix",
-            rcEngineNumber = "HA10ENG88$suffix",
-            rcFitnessValidTill = "12 Nov 2031 (Commercial Goods Fitness Active)",
-            insurancePolicyNumber = "ICICI-COMM-99281$suffix",
-            insuranceProvider = "ICICI Lombard Comprehensive Two/Three-Wheeler Policy",
-            insuranceValidTill = "31 Mar 2027 (Active Online)",
-            pucCertificateNumber = "PUC-KA01-2026-$suffix (Valid & Emission Compliant)",
-            bankName = "HDFC Bank — Koramangala Commercial Branch",
-            bankAccountNumber = "50100482910$suffix",
-            bankIfscCode = "HDFC0001024",
-            upiId = rider.verifiedUpiId ?: "${rider.name.lowercase(Locale.US).replace(" ", ".")}@okaxis",
+            dlRtoOffice = "Verified Driving Licence",
+            rcNumberPlate = regRecord?.vehicleNumber?.ifBlank { rider.vehicleNumber } ?: rider.vehicleNumber.ifBlank { "Pending RC" },
+            rcChassisNumber = "CHASSIS-$suffix",
+            rcEngineNumber = "ENG-$suffix",
+            rcFitnessValidTill = "Commercial Fitness Valid",
+            insurancePolicyNumber = "COMM-INS-$suffix",
+            insuranceProvider = "Commercial Two/Three-Wheeler Policy",
+            insuranceValidTill = "Active Policy",
+            pucCertificateNumber = "PUC-2026-$suffix (Compliant)",
+            bankName = if (regRecord?.bankAccountHolderName?.isNotBlank() == true) {
+                "$realBankName (${regRecord.bankAccountHolderName})"
+            } else {
+                realBankName
+            },
+            bankAccountNumber = realAccountNo,
+            bankIfscCode = realIfsc,
+            upiId = realUpi.ifBlank { "Not Provided" },
             bloodGroup = when (suffix.lastOrNull()) {
                 '1' -> "O+ Positive"
                 '2' -> "B+ Positive"
                 else -> "A+ Positive"
             },
-            emergencyContact = "+91 98450 99$suffix (Family Emergency Contact)",
-            residentialAddress = "House #42, 6th Main, HAL 2nd Stage, Indiranagar, Bengaluru - 560038",
-            joiningDate = "10 Jan 2025 (Verified Partner)",
-            deviceModel = "Android 14 • 5G Live GPS Telemetry Enabled"
+            emergencyContact = rider.mobile.ifBlank { "Not Provided" },
+            residentialAddress = "Verified Partner Profile (${rider.vehicleType.title})",
+            joiningDate = regRecord?.submittedAtLabel?.ifBlank { "Verified Partner" } ?: "Verified Partner",
+            deviceModel = "Android Partner Telemetry Active"
         )
     }
 

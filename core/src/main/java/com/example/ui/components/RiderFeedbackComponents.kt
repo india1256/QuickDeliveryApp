@@ -475,6 +475,91 @@ object RiderFeedbackManager {
             }
         }
     }
+
+    fun exportRatingsAndTipsToJsonArray(): JSONArray {
+        val arr = JSONArray()
+        val feedbacks = _feedbackByOrder.value
+        val tips = _tipsByOrder.value
+        val allOrderIds = (feedbacks.keys + tips.keys).distinct()
+        allOrderIds.forEach { orderId ->
+            val fb = feedbacks[orderId]
+            val tipInr = maxOf(tips[orderId] ?: 0, fb?.tipAmountInr ?: 0)
+            if (fb != null || tipInr > 0) {
+                arr.put(
+                    JSONObject().apply {
+                        put("orderId", orderId)
+                        put("riderId", fb?.riderId ?: "")
+                        put("riderName", fb?.riderName ?: "Rider Partner")
+                        put("customerName", fb?.customerName ?: "Customer")
+                        put("starRating", fb?.starRating ?: 5)
+                        put("complimentTags", JSONArray(fb?.complimentTags ?: emptyList<String>()))
+                        put("comment", fb?.comment ?: "")
+                        put("submittedAt", fb?.submittedAt ?: "")
+                        put("tipAmountInr", tipInr)
+                        put("hasRating", fb != null)
+                        put("updatedAtEpochMs", System.currentTimeMillis())
+                    }
+                )
+            }
+        }
+        return arr
+    }
+
+    fun mergeRatingsAndTipsFromJsonArray(context: Context, arr: JSONArray?) {
+        if (arr == null || arr.length() == 0) return
+        ensureLoaded(context)
+        var feedbackChanged = false
+        var tipsChanged = false
+        val nextFeedback = _feedbackByOrder.value.toMutableMap()
+        val nextTips = _tipsByOrder.value.toMutableMap()
+
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val orderId = obj.optString("orderId", "").trim()
+            if (orderId.isEmpty()) continue
+            val tipInr = obj.optInt("tipAmountInr", 0).coerceAtLeast(0)
+            if (tipInr > (nextTips[orderId] ?: 0)) {
+                nextTips[orderId] = tipInr
+                tipsChanged = true
+            }
+            val hasRating = obj.optBoolean("hasRating", true)
+            if (hasRating && obj.has("starRating")) {
+                val tagsJson = obj.optJSONArray("complimentTags") ?: JSONArray()
+                val tags = mutableListOf<String>()
+                for (t in 0 until tagsJson.length()) {
+                    tags.add(tagsJson.optString(t))
+                }
+                val incoming = RiderDeliveryFeedback(
+                    orderId = orderId,
+                    riderId = obj.optString("riderId", ""),
+                    riderName = obj.optString("riderName", "Rider Partner"),
+                    customerName = obj.optString("customerName", "Customer"),
+                    starRating = obj.optInt("starRating", 5).coerceIn(1, 5),
+                    complimentTags = tags.filter { it.isNotBlank() },
+                    comment = obj.optString("comment", ""),
+                    submittedAt = obj.optString("submittedAt", ""),
+                    tipAmountInr = maxOf(tipInr, nextTips[orderId] ?: 0)
+                )
+                val existing = nextFeedback[orderId]
+                if (existing == null ||
+                    incoming.tipAmountInr > existing.tipAmountInr ||
+                    (incoming.comment.isNotBlank() && existing.comment.isBlank()) ||
+                    incoming.starRating != existing.starRating
+                ) {
+                    nextFeedback[orderId] = incoming
+                    feedbackChanged = true
+                }
+            }
+        }
+        if (tipsChanged) {
+            _tipsByOrder.value = nextTips
+            persistTips(context, nextTips)
+        }
+        if (feedbackChanged) {
+            _feedbackByOrder.value = nextFeedback
+            persist(context, nextFeedback)
+        }
+    }
 }
 
 private val StarGold = Color(0xFFF59E0B)

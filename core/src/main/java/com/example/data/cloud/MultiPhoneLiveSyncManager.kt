@@ -42,7 +42,12 @@ data class LivePhoneSyncStatus(
     val syncedOrdersCount: Int = 0,
     val connectedPhonesCount: Int = 1,
     val connectedRolesSummary: String = "Ready for 3-Phone Live Sync",
-    val lastSyncTimeLabel: String = "Connecting..."
+    val lastSyncTimeLabel: String = "Connecting...",
+    val activeEndpointHost: String = "",
+    val lastLatencyMs: Long = 0L,
+    val blockedFakeOrdersCount: Int = 0,
+    val rateLimitedRequestsCount: Int = 0,
+    val lastSyncError: String = ""
 )
 
 /**
@@ -59,8 +64,12 @@ object MultiPhoneLiveSyncManager {
 
     private val LIVE_SYNC_ENDPOINTS = listOf(
         "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/api/live-sync",
+        QuickDeliveryBrandLinks.LIVE_SYNC_API_URL,
         "https://ais-pre-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/api/live-sync"
     )
+
+    @Volatile
+    private var lastWorkingEndpoint: String? = null
 
     private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val alertedOrderIds = ConcurrentHashMap.newKeySet<String>()
@@ -296,20 +305,50 @@ object MultiPhoneLiveSyncManager {
             opsJson.optJSONObject("riderLiveCoordsByOrder")?.let { rcObj ->
                 put("riderLiveCoordsByOrder", rcObj)
             }
+            opsJson.optJSONArray("orderTimelineEvents")?.let { tlArr ->
+                put("orderTimelineEvents", tlArr)
+            }
+            opsJson.optJSONArray("unreachableByOrder")?.let { unArr ->
+                put("unreachableByOrder", unArr)
+            }
+            opsJson.optJSONArray("b2bAccounts")?.let { b2bArr ->
+                put("b2bAccounts", b2bArr)
+            }
+            com.example.ui.components.RiderFeedbackManager.ensureLoaded(context)
+            put("orderRatings", com.example.ui.components.RiderFeedbackManager.exportRatingsAndTipsToJsonArray())
             put("chatMessages", com.example.ui.components.OrderLiveChatManager.exportAllMessagesToJsonArray())
         }
 
+        val orderedEndpoints = buildList {
+            lastWorkingEndpoint?.let { add(it) }
+            LIVE_SYNC_ENDPOINTS.forEach { if (it != lastWorkingEndpoint) add(it) }
+        }
+        val syncTs = System.currentTimeMillis()
+        val syncSig = com.example.security.QuickDeliverySecurityGuard.computeSyncIntegritySignature(
+            deviceId = deviceId,
+            role = activeRole,
+            timestampEpochMs = syncTs
+        )
+
         var responseJson: JSONObject? = null
-        for (endpoint in LIVE_SYNC_ENDPOINTS) {
+        var winningHost = ""
+        var winningLatencyMs = 0L
+        var lastErrMsg = ""
+        for (endpoint in orderedEndpoints) {
+            val startMs = System.currentTimeMillis()
             val attempt = runCatching {
                 val url = URL(endpoint)
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 3500
-                    readTimeout = 3500
+                    connectTimeout = 2500
+                    readTimeout = 3000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.3.1")
+                    setRequestProperty("X-QD-App-Role", activeRole)
+                    setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
+                    setRequestProperty("X-QD-Sync-Sig", syncSig)
                 }
                 OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
                     writer.write(requestPayload.toString())
@@ -318,18 +357,33 @@ object MultiPhoneLiveSyncManager {
                 val code = conn.responseCode
                 if (code in 200..299) {
                     val text = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
-                    JSONObject(text)
+                    val parsed = JSONObject(text)
+                    if (parsed.has("orders") || parsed.optBoolean("ok", false)) parsed else null
                 } else {
+                    lastErrMsg = "HTTP $code from ${url.host}"
                     null
                 }
+            }.onFailure { err ->
+                lastErrMsg = err.message?.take(80) ?: "Network unreachable"
             }.getOrNull()
             if (attempt != null) {
                 responseJson = attempt
+                lastWorkingEndpoint = endpoint
+                winningHost = runCatching { URL(endpoint).host }.getOrDefault(endpoint)
+                winningLatencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
                 break
+            } else if (lastWorkingEndpoint == endpoint) {
+                lastWorkingEndpoint = null
             }
         }
 
-        val root = responseJson ?: return@withContext
+        val root = responseJson ?: run {
+            _syncStatus.value = _syncStatus.value.copy(
+                isConnected = false,
+                lastSyncError = lastErrMsg.ifBlank { "Server unreachable — check internet" }
+            )
+            return@withContext
+        }
         val serverResetEpochMs = root.optLong("resetEpochMs", 0L)
         val mutableOrdersFlow = getMutableOrdersFlow(repo)
 
@@ -346,6 +400,10 @@ object MultiPhoneLiveSyncManager {
             root.optJSONArray("riderRegistrations")
         )
         QuickDeliveryOperationsManager.mergeFromServerPayload(context, root)
+        com.example.ui.components.RiderFeedbackManager.mergeRatingsAndTipsFromJsonArray(
+            context,
+            root.optJSONArray("orderRatings")
+        )
         val newlySyncedMessages = com.example.ui.components.OrderLiveChatManager.mergeFromServerJsonArray(
             context,
             root.optJSONArray("chatMessages")
@@ -384,13 +442,16 @@ object MultiPhoneLiveSyncManager {
 
                 val remoteOrder = deserializeOrderFromJson(itemObj) ?: continue
                 val existingLocal = currentById[orderId]
+                val myRiderId = repo.riders.value.firstOrNull()?.riderId
 
                 if (existingLocal == null) {
                     currentById[orderId] = remoteOrder
                     listChanged = true
                     val effectiveRole = _lockedPhoneRole.value
+                    val alreadyRejectedByMe = myRiderId != null && myRiderId in remoteOrder.rejectedByRiderIds
                     if ((effectiveRole == "RIDER" || activeRole == "RIDER") &&
                         remoteOrder.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                        !alreadyRejectedByMe &&
                         OrderAlertSoundManager.shouldAlertForOrder(orderId) &&
                         alertedOrderIds.add(orderId)
                     ) {
@@ -401,30 +462,64 @@ object MultiPhoneLiveSyncManager {
                 } else {
                     val localRank = statusRank(existingLocal.orderStatus)
                     val remoteRank = statusRank(remoteOrder.orderStatus)
-                    val riderJustAssigned = existingLocal.assignedRiderId.isNullOrBlank() && !remoteOrder.assignedRiderId.isNullOrBlank()
-                    val noteChanged = existingLocal.latestRiderQuickNote != remoteOrder.latestRiderQuickNote &&
-                        !remoteOrder.latestRiderQuickNote.isNullOrBlank()
+                    val mergedRejectedIds = (existingLocal.rejectedByRiderIds + remoteOrder.rejectedByRiderIds).distinct()
+                    val rejectionExpandedFromRemote = remoteOrder.rejectedByRiderIds.size > existingLocal.rejectedByRiderIds.size ||
+                        mergedRejectedIds.size > existingLocal.rejectedByRiderIds.size
+                    val isRiderRejectionRollback = remoteOrder.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                        rejectionExpandedFromRemote &&
+                        (existingLocal.orderStatus == OrderStatus.SEARCHING_RIDER ||
+                            existingLocal.orderStatus == OrderStatus.RIDER_ASSIGNED ||
+                            existingLocal.orderStatus == OrderStatus.ARRIVED_AT_PICKUP)
+                    val staleAssignForRejectedRider = existingLocal.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                        remoteOrder.orderStatus == OrderStatus.RIDER_ASSIGNED &&
+                        !remoteOrder.assignedRiderId.isNullOrBlank() &&
+                        remoteOrder.assignedRiderId in mergedRejectedIds
 
-                    if (remoteRank > localRank || riderJustAssigned || noteChanged) {
-                        val mergedOrder = ensureValidLocalFareSeal(
+                    if (isRiderRejectionRollback) {
+                        val mergedRollback = ensureValidLocalFareSeal(
                             existingLocal.copy(
-                                orderStatus = if (remoteRank >= localRank) remoteOrder.orderStatus else existingLocal.orderStatus,
-                                assignedRiderId = remoteOrder.assignedRiderId ?: existingLocal.assignedRiderId,
-                                assignedRiderName = remoteOrder.assignedRiderName ?: existingLocal.assignedRiderName,
-                                assignedRiderPhone = remoteOrder.assignedRiderPhone ?: existingLocal.assignedRiderPhone,
-                                assignedRiderVehicle = remoteOrder.assignedRiderVehicle ?: existingLocal.assignedRiderVehicle,
+                                orderStatus = OrderStatus.SEARCHING_RIDER,
+                                assignedRiderId = null,
+                                assignedRiderName = null,
+                                assignedRiderPhone = null,
+                                assignedRiderVehicle = null,
+                                rejectedByRiderIds = mergedRejectedIds,
                                 latestRiderQuickNote = remoteOrder.latestRiderQuickNote ?: existingLocal.latestRiderQuickNote,
                                 pickupOtp = remoteOrder.pickupOtp.ifBlank { existingLocal.pickupOtp },
                                 deliveryOtp = remoteOrder.deliveryOtp.ifBlank { existingLocal.deliveryOtp }
                             )
                         )
-                        currentById[orderId] = mergedOrder
+                        currentById[orderId] = mergedRollback
+                        QuickDeliveryOperationsManager.clearWaitTimerForOrder(context, orderId)
                         listChanged = true
-                    } else {
-                        val sealedLocal = ensureValidLocalFareSeal(existingLocal)
-                        if (sealedLocal.fareSeal != existingLocal.fareSeal) {
-                            currentById[orderId] = sealedLocal
+                    } else if (!staleAssignForRejectedRider) {
+                        val riderJustAssigned = existingLocal.assignedRiderId.isNullOrBlank() && !remoteOrder.assignedRiderId.isNullOrBlank()
+                        val noteChanged = existingLocal.latestRiderQuickNote != remoteOrder.latestRiderQuickNote &&
+                            !remoteOrder.latestRiderQuickNote.isNullOrBlank()
+                        val rejectListGrew = mergedRejectedIds.size > existingLocal.rejectedByRiderIds.size
+
+                        if (remoteRank > localRank || riderJustAssigned || noteChanged || rejectListGrew) {
+                            val mergedOrder = ensureValidLocalFareSeal(
+                                existingLocal.copy(
+                                    orderStatus = if (remoteRank >= localRank) remoteOrder.orderStatus else existingLocal.orderStatus,
+                                    assignedRiderId = remoteOrder.assignedRiderId ?: existingLocal.assignedRiderId,
+                                    assignedRiderName = remoteOrder.assignedRiderName ?: existingLocal.assignedRiderName,
+                                    assignedRiderPhone = remoteOrder.assignedRiderPhone ?: existingLocal.assignedRiderPhone,
+                                    assignedRiderVehicle = remoteOrder.assignedRiderVehicle ?: existingLocal.assignedRiderVehicle,
+                                    rejectedByRiderIds = mergedRejectedIds,
+                                    latestRiderQuickNote = remoteOrder.latestRiderQuickNote ?: existingLocal.latestRiderQuickNote,
+                                    pickupOtp = remoteOrder.pickupOtp.ifBlank { existingLocal.pickupOtp },
+                                    deliveryOtp = remoteOrder.deliveryOtp.ifBlank { existingLocal.deliveryOtp }
+                                )
+                            )
+                            currentById[orderId] = mergedOrder
                             listChanged = true
+                        } else {
+                            val sealedLocal = ensureValidLocalFareSeal(existingLocal)
+                            if (sealedLocal.fareSeal != existingLocal.fareSeal) {
+                                currentById[orderId] = sealedLocal
+                                listChanged = true
+                            }
                         }
                     }
                 }
@@ -447,6 +542,9 @@ object MultiPhoneLiveSyncManager {
             val r = dev.optString("role", "PHONE")
             rolesList.add(r)
         }
+        val secStatsObj = root.optJSONObject("securityStats")
+        val blockedOrdersCount = secStatsObj?.optInt("blockedFakeOrders", 0) ?: 0
+        val rateLimitedCount = secStatsObj?.optInt("rateLimitedRequests", 0) ?: 0
         val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
         _syncStatus.value = LivePhoneSyncStatus(
             isConnected = true,
@@ -454,7 +552,12 @@ object MultiPhoneLiveSyncManager {
             syncedOrdersCount = repo.orders.value.size,
             connectedPhonesCount = connectedDevicesArr.length().coerceAtLeast(1),
             connectedRolesSummary = if (rolesList.isEmpty()) activeRole else rolesList.distinct().joinToString(" + "),
-            lastSyncTimeLabel = timeStr
+            lastSyncTimeLabel = timeStr,
+            activeEndpointHost = winningHost,
+            lastLatencyMs = winningLatencyMs,
+            blockedFakeOrdersCount = blockedOrdersCount,
+            rateLimitedRequestsCount = rateLimitedCount,
+            lastSyncError = ""
         )
     }
 
@@ -496,6 +599,7 @@ object MultiPhoneLiveSyncManager {
             put("assignedRiderName", order.assignedRiderName ?: "")
             put("assignedRiderPhone", order.assignedRiderPhone ?: "")
             put("assignedRiderVehicle", order.assignedRiderVehicle ?: "")
+            put("rejectedByRiderIds", JSONArray().apply { order.rejectedByRiderIds.forEach { put(it) } })
             put("latestRiderQuickNote", order.latestRiderQuickNote ?: "")
             put("paymentMethod", order.paymentMethod.name)
             put("paymentStatus", order.paymentStatus.name)
@@ -572,6 +676,13 @@ object MultiPhoneLiveSyncManager {
         val assignedRiderPhone = obj.optString("assignedRiderPhone", "").ifBlank { null }
         val assignedRiderVehicle = obj.optString("assignedRiderVehicle", "").ifBlank { null }
         val latestNote = obj.optString("latestRiderQuickNote", "").ifBlank { null }
+        val rejectedIds = mutableListOf<String>()
+        obj.optJSONArray("rejectedByRiderIds")?.let { arr ->
+            for (j in 0 until arr.length()) {
+                val rid = arr.optString(j, "").trim()
+                if (rid.isNotEmpty() && rid !in rejectedIds) rejectedIds.add(rid)
+            }
+        }
 
         ensureValidLocalFareSeal(
             CustomerOrder(
@@ -594,6 +705,7 @@ object MultiPhoneLiveSyncManager {
                 assignedRiderName = assignedRiderName,
                 assignedRiderPhone = assignedRiderPhone,
                 assignedRiderVehicle = assignedRiderVehicle,
+                rejectedByRiderIds = rejectedIds,
                 latestRiderQuickNote = latestNote,
                 paymentMethod = payMethod,
                 paymentStatus = payStatus,

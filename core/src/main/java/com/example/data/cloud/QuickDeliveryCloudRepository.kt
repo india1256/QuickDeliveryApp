@@ -356,6 +356,59 @@ data class CloudOrderChatMessage(
     }
 }
 
+@IgnoreExtraProperties
+data class CloudRemoteConfigDoc(
+    @DocumentId val id: String = "global_flags",
+    val flagsJson: String = "{}",
+    val b2bPostpaidEnabled: Boolean = false,
+    val razorpayRouteSplitEnabled: Boolean = false,
+    val autoKycApiEnabled: Boolean = false,
+    val updatedByEmail: String? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@IgnoreExtraProperties
+data class CloudB2bDukaanAccount(
+    @DocumentId val accountId: String = "",
+    val ownerUid: String = "",
+    val shopName: String = "",
+    val ownerName: String = "",
+    val ownerPhone: String = "",
+    val gstin: String = "URD",
+    val pickupAddress: String = "",
+    val status: String = "PENDING_ADMIN_APPROVAL",
+    val approvedCreditLimitInr: Int = 0,
+    val usedCreditPaise: Long = 0L,
+    val totalBilledOrders: Int = 0,
+    val gstInvoiceNumber: String = "INV-B2B-2026-1001",
+    val lastSettledEpochMs: Long? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    fun toCreateMap(isAdminCaller: Boolean = false): Map<String, Any> {
+        val map = mutableMapOf<String, Any>(
+            "accountId" to accountId,
+            "ownerUid" to ownerUid,
+            "shopName" to shopName,
+            "ownerName" to ownerName,
+            "ownerPhone" to ownerPhone,
+            "gstin" to gstin,
+            "pickupAddress" to pickupAddress,
+            "status" to if (isAdminCaller) status else "PENDING_ADMIN_APPROVAL",
+            "approvedCreditLimitInr" to if (isAdminCaller) approvedCreditLimitInr else 0,
+            "usedCreditPaise" to if (isAdminCaller) usedCreditPaise else 0L,
+            "totalBilledOrders" to if (isAdminCaller) totalBilledOrders else 0,
+            "gstInvoiceNumber" to gstInvoiceNumber,
+            "createdAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        if (lastSettledEpochMs != null && lastSettledEpochMs >= 0L) {
+            map["lastSettledEpochMs"] = lastSettledEpochMs
+        }
+        return map
+    }
+}
+
 /**
  * Cloud Firestore Repository for cross-device Customer, Rider, and Admin synchronization.
  * Always initialized with R.string.firestore_database_id.
@@ -801,6 +854,243 @@ class QuickDeliveryCloudRepository(private val db: FirebaseFirestore) {
                 if (error is Exception) handleFirestoreError(error, OperationType.LIST, path)
                 throw error
             }
+    }
+
+    suspend fun publishRemoteConfigFlags(
+        flags: AdminRemoteFeatureFlags,
+        updatedByEmail: String? = null
+    ): Result<Unit> = runCatching {
+        requireUserId()
+        val docRef = db.collection("remote_config").document("global_flags")
+        try {
+            val payload = mutableMapOf<String, Any>(
+                "flagsJson" to flags.toJson().toString(),
+                "b2bPostpaidEnabled" to flags.b2bPostpaidEnabled,
+                "razorpayRouteSplitEnabled" to flags.razorpayRouteSplitEnabled,
+                "autoKycApiEnabled" to flags.autoKycApiEnabled,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            val cleanEmail = updatedByEmail?.trim()?.take(120)
+            if (!cleanEmail.isNullOrBlank()) {
+                payload["updatedByEmail"] = cleanEmail
+            }
+            docRef.set(payload).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    fun observeRemoteConfigFlags(): Flow<AdminRemoteFeatureFlags?> {
+        val path = "remote_config/global_flags"
+        return db.collection("remote_config")
+            .document("global_flags")
+            .snapshots()
+            .map { snapshot ->
+                val doc = snapshot.toObject(
+                    CloudRemoteConfigDoc::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ) ?: return@map null
+                runCatching { AdminRemoteFeatureFlags.fromJson(JSONObject(doc.flagsJson)) }.getOrNull()
+            }
+            .catch { error ->
+                if (error is Exception) handleFirestoreError(error, OperationType.GET, path)
+                throw error
+            }
+    }
+
+    suspend fun createB2bAccountRequest(account: CloudB2bDukaanAccount): Result<String> = runCatching {
+        val uid = requireUserId()
+        val cleanId = QuickDeliverySecurityGuard.sanitizeIdentifier(account.accountId, 64).ifBlank {
+            "B2B-${UUID.randomUUID().toString().replace("-", "").take(6).uppercase()}"
+        }
+        val cleanShop = QuickDeliverySecurityGuard.sanitizeText(account.shopName, 100).ifBlank { "Dukaan Partner" }
+        val cleanOwner = QuickDeliverySecurityGuard.sanitizeText(account.ownerName, 80).ifBlank { "Owner" }
+        val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(account.ownerPhone).padStart(10, '9')
+        val cleanGstin = account.gstin.trim().uppercase().replace("[^A-Z0-9\\-]".toRegex(), "").ifBlank { "URD" }.take(20)
+        val cleanAddr = QuickDeliverySecurityGuard.sanitizeText(account.pickupAddress, 300).ifBlank { "Shop Address" }
+        val cleanInv = QuickDeliverySecurityGuard.sanitizeIdentifier(account.gstInvoiceNumber, 64).ifBlank { "INV-B2B-2026-1001" }
+        val docRef = db.collection("b2b_accounts").document(cleanId)
+        try {
+            val sanitized = account.copy(
+                accountId = cleanId,
+                ownerUid = uid,
+                shopName = cleanShop,
+                ownerName = cleanOwner,
+                ownerPhone = cleanPhone,
+                gstin = cleanGstin,
+                pickupAddress = cleanAddr,
+                status = "PENDING_ADMIN_APPROVAL",
+                approvedCreditLimitInr = 0,
+                usedCreditPaise = 0L,
+                totalBilledOrders = 0,
+                gstInvoiceNumber = cleanInv
+            )
+            docRef.set(sanitized.toCreateMap(isAdminCaller = false)).await()
+            cleanId
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+            throw e
+        }
+    }
+
+    fun observeMyB2bAccounts(ownerUid: String = requireUserId()): Flow<List<CloudB2bDukaanAccount>> {
+        val path = "b2b_accounts"
+        return db.collection(path)
+            .whereEqualTo("ownerUid", ownerUid)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(
+                    CloudB2bDukaanAccount::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                )
+            }
+            .catch { error ->
+                if (error is Exception) handleFirestoreError(error, OperationType.LIST, path)
+                throw error
+            }
+    }
+
+    fun observeAllB2bAccountsForAdmin(): Flow<List<CloudB2bDukaanAccount>> {
+        val path = "b2b_accounts"
+        return db.collection(path)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.toObjects(
+                    CloudB2bDukaanAccount::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                )
+            }
+            .catch { error ->
+                if (error is Exception) handleFirestoreError(error, OperationType.LIST, path)
+                throw error
+            }
+    }
+
+    suspend fun approveOrUpdateB2bAccountByAdmin(
+        accountId: String,
+        status: String,
+        approvedCreditLimitInr: Int,
+        resetUsedCreditToZero: Boolean = false
+    ): Result<Unit> = runCatching {
+        requireUserId()
+        val safeId = QuickDeliverySecurityGuard.sanitizeIdentifier(accountId, 64)
+        val docRef = db.collection("b2b_accounts").document(safeId)
+        try {
+            val updates = mutableMapOf<String, Any>(
+                "status" to status,
+                "approvedCreditLimitInr" to approvedCreditLimitInr.coerceIn(0, 1000000),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            if (resetUsedCreditToZero) {
+                updates["usedCreditPaise"] = 0L
+                updates["lastSettledEpochMs"] = System.currentTimeMillis()
+            }
+            docRef.update(updates).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun chargeB2bPostpaidOrder(
+        accountId: String,
+        chargePaise: Long
+    ): Result<CloudB2bDukaanAccount> = runCatching {
+        val uid = requireUserId()
+        require(chargePaise > 0L) { "B2B charge must be positive." }
+        val safeId = QuickDeliverySecurityGuard.sanitizeIdentifier(accountId, 64)
+        val docRef = db.collection("b2b_accounts").document(safeId)
+        try {
+            db.runTransaction { transaction ->
+                val snap = transaction.get(docRef)
+                val current = snap.toObject(
+                    CloudB2bDukaanAccount::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                ) ?: throw IllegalStateException("B2B account not found.")
+                if (current.ownerUid != uid) {
+                    throw IllegalStateException("Unauthorized B2B account owner.")
+                }
+                if (current.status != "APPROVED") {
+                    throw IllegalStateException("B2B account is ${current.status}; Admin approval required.")
+                }
+                val limitPaise = current.approvedCreditLimitInr.toLong() * 100L
+                val nextUsed = current.usedCreditPaise + chargePaise
+                if (nextUsed > limitPaise) {
+                    throw IllegalStateException("Monthly B2B credit limit exceeded (Limit: ₹${current.approvedCreditLimitInr}).")
+                }
+                val nextCount = current.totalBilledOrders + 1
+                transaction.update(
+                    docRef,
+                    mapOf(
+                        "usedCreditPaise" to nextUsed,
+                        "totalBilledOrders" to nextCount,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                current.copy(usedCreditPaise = nextUsed, totalBilledOrders = nextCount)
+            }.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun upsertUserProfile(
+        name: String,
+        phone: String,
+        email: String,
+        role: String
+    ): Result<Unit> = runCatching {
+        val uid = requireUserId()
+        val cleanRole = when (role.trim().uppercase()) {
+            "RIDER" -> "RIDER"
+            "ADMIN" -> "ADMIN"
+            else -> "CUSTOMER"
+        }
+        val cleanName = QuickDeliverySecurityGuard.sanitizeText(name, 80).ifBlank { "Quick User" }
+        val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone).padStart(10, '9')
+        val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email)
+        val docRef = db.collection("user_profiles").document(uid)
+        try {
+            val payload = mutableMapOf<String, Any>(
+                "id" to uid,
+                "name" to cleanName,
+                "phone" to cleanPhone,
+                "role" to cleanRole,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            if (cleanEmail.isNotBlank()) {
+                payload["email"] = cleanEmail
+            }
+            val snap = docRef.get().await()
+            if (snap.exists()) {
+                val updates = mutableMapOf<String, Any>(
+                    "name" to cleanName,
+                    "phone" to cleanPhone,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (cleanEmail.isNotBlank()) {
+                    updates["email"] = cleanEmail
+                }
+                docRef.update(updates).await()
+            } else {
+                docRef.set(payload).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
     }
 }
 

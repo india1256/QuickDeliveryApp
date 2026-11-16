@@ -1325,12 +1325,46 @@ object AutomatedFairRiderAssignmentEngine {
                         assignedRiderName = null,
                         assignedRiderPhone = null,
                         assignedRiderVehicle = null,
-                        rejectedByRiderIds = (ord.rejectedByRiderIds + excludedRiderId).distinct()
+                        rejectedByRiderIds = (ord.rejectedByRiderIds + excludedRiderId).distinct(),
+                        latestRiderQuickNote = reason
                     )
                 } else {
                     ord
                 }
             }
+        }
+    }
+
+    /**
+     * Marks `rejectingRiderId` as excluded for `orderId` and releases the order back to
+     * `SEARCHING_RIDER` (keeping pickup/delivery OTPs intact) so multi-phone sync dispatches
+     * the order to another nearby online Rider Partner and notifies the Customer.
+     */
+    fun markRiderDeclinedAndReleaseOrder(
+        repository: SharedOrderRepository,
+        orderId: String,
+        rejectingRiderId: String,
+        reason: String
+    ) {
+        synchronized(lock) {
+            val rider = repository.riders.value.firstOrNull { it.riderId == rejectingRiderId }
+            val note = "Rider Declined ($reason) — Searching for new nearby rider..."
+            releaseOrderToSearchingInRepository(
+                repository = repository,
+                orderId = orderId,
+                excludedRiderId = rejectingRiderId,
+                reason = note
+            )
+            val set = timedOutRiderIdsByOrder.getOrPut(orderId) { ConcurrentHashMap.newKeySet() }
+            set.add(rejectingRiderId)
+            _activeOffersByOrder.value = _activeOffersByOrder.value - orderId
+            recordAudit(
+                orderId = orderId,
+                eventType = "RIDER_DECLINED_SEARCHING_NEXT",
+                riderId = rejectingRiderId,
+                riderName = rider?.name,
+                detail = "Rider ${rider?.name ?: rejectingRiderId} declined Order #$orderId ($reason). Re-searching new nearby rider."
+            )
         }
     }
 

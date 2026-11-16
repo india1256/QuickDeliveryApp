@@ -49,6 +49,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -74,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.QuickDeliveryOperationsManager
+import com.example.data.cloud.RiderRegistrationApprovalManager
 import com.example.data.cloud.WithdrawalStatus
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
@@ -137,9 +139,23 @@ fun RiderEarningsDashboardScreen(
     remember(context) { RiderFeedbackManager.ensureLoaded(context) }
     remember(context) { RiderThemeManager.ensureLoaded(context) }
     remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
+    remember(context) { RiderRegistrationApprovalManager.ensureLoaded(context) }
     val isDarkMode by RiderThemeManager.isDarkMode.collectAsState()
     val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
     val allWithdrawals by QuickDeliveryOperationsManager.withdrawalRequests.collectAsState()
+    val registrationsMap by RiderRegistrationApprovalManager.registrationsByKey.collectAsState()
+    val savedBankRecord = remember(registrationsMap, rider.riderId, rider.mobile, rider.email) {
+        RiderRegistrationApprovalManager.getRecordForIdentity(context, rider.mobile, rider.email)
+            ?: RiderRegistrationApprovalManager.getRecordForRiderProfile(rider.riderId, rider.mobile)
+    }
+    val defaultBankDest = remember(savedBankRecord, rider.verifiedUpiId) {
+        if (savedBankRecord != null && savedBankRecord.hasBankAccountDetails) {
+            "${savedBankRecord.bankName} A/C ${savedBankRecord.bankAccountNumber} | IFSC: ${savedBankRecord.bankIfscCode}" +
+                if (savedBankRecord.bankUpiId.isNotBlank()) " | UPI: ${savedBankRecord.bankUpiId}" else ""
+        } else {
+            rider.verifiedUpiId.orEmpty()
+        }
+    }
     val riderWithdrawals = remember(allWithdrawals, rider.riderId) {
         allWithdrawals.filter { it.riderId == rider.riderId || it.riderPhone == rider.mobile }
     }
@@ -157,8 +173,27 @@ fun RiderEarningsDashboardScreen(
     var selectedOnlineMethod by remember { mutableStateOf(CustomerPaymentMethod.GATEWAY_UPI) }
     var selectedUpiApp by remember { mutableStateOf(UpiAppOption.GOOGLE_PAY) }
     var withdrawAmountInput by remember { mutableStateOf("") }
-    var withdrawDestinationInput by remember { mutableStateOf(rider.verifiedUpiId.orEmpty()) }
+    var withdrawDestinationInput by remember(defaultBankDest) { mutableStateOf(defaultBankDest) }
     var withdrawFeedback by remember { mutableStateOf<String?>(null) }
+    var showEditBankDialog by remember { mutableStateOf(false) }
+
+    if (showEditBankDialog) {
+        RiderBankAccountFormDialog(
+            riderName = rider.name,
+            riderPhone = rider.mobile,
+            riderEmail = rider.email,
+            riderId = rider.riderId,
+            existingRecord = savedBankRecord,
+            onBankDetailsSaved = { saved ->
+                showEditBankDialog = false
+                withdrawDestinationInput = "${saved.bankName} A/C ${saved.bankAccountNumber} | IFSC: ${saved.bankIfscCode}" +
+                    if (saved.bankUpiId.isNotBlank()) " | UPI: ${saved.bankUpiId}" else ""
+                withdrawFeedback = "✅ Bank Account (${saved.bankName} ${saved.maskedBankAccountNumber}) saved & synced!"
+                onStatusUpdate(withdrawFeedback.orEmpty(), false)
+            },
+            onDismiss = { showEditBankDialog = false }
+        )
+    }
 
     // Calculate live today's metrics from active/delivered orders + rider profile
     val deliveredOrders = remember(orders) {
@@ -616,6 +651,84 @@ fun RiderEarningsDashboardScreen(
                                 text = "📄 Download Monthly Earning Statement PDF",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2B. Clean Net Payout & Commission / Fee Breakdown Card
+            item(key = "rider_net_payout_breakdown_card") {
+                val periodGrossFareInr = remember(deliveredOrders, activePeriodBaseEarnings, remoteFlags.riderSharePercent) {
+                    val directSum = deliveredOrders.sumOf { parseInrString(it.totalAmount) }
+                    if (directSum > 0.0) directSum else activePeriodBaseEarnings / (remoteFlags.riderSharePercent.coerceIn(50, 100) / 100.0)
+                }
+                val platformShareInr = (periodGrossFareInr - activePeriodBaseEarnings).coerceAtLeast(0.0)
+                val waitBonusesTotalInr = remember(deliveredOrders, remoteFlags) {
+                    deliveredOrders.sumOf { ord ->
+                        QuickDeliveryOperationsManager.computeWaitFeeInfo(ord.orderId, remoteFlags)?.waitFeeInr ?: 0
+                    }
+                }
+                val batchBonusesTotalInr = remember(deliveredOrders, remoteFlags) {
+                    if (deliveredOrders.size >= 2) remoteFlags.sameRouteBatchBonusInr else 0
+                }
+                val netTakeHomeInr = activePeriodBaseEarnings + activePeriodTips + waitBonusesTotalInr + batchBonusesTotalInr
+                val cardSurface = if (isDarkMode) Color(0xFF1E293B) else Color.White
+                val cardTextColor = if (isDarkMode) Color(0xFFF8FAFC) else DashNavy
+                val mutedTextColor = if (isDarkMode) Color(0xFF94A3B8) else Color(0xFF475569)
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = cardSurface),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, DashEmerald.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rider_net_payout_breakdown_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "🧾 Net Payout & Commission Breakdown",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = cardTextColor
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Gross Customer Fare (${activePeriodDeliveries} trips)", style = MaterialTheme.typography.bodySmall, color = mutedTextColor)
+                            Text(String.format(Locale.US, "₹%.0f", periodGrossFareInr), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = cardTextColor)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Platform Service Fee (${remoteFlags.platformCommissionPercent}%)", style = MaterialTheme.typography.bodySmall, color = Color(0xFFDC2626))
+                            Text(String.format(Locale.US, "-₹%.0f", platformShareInr), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Rider Base Payout (${remoteFlags.riderSharePercent}%)", style = MaterialTheme.typography.bodySmall, color = mutedTextColor)
+                            Text(String.format(Locale.US, "₹%.0f", activePeriodBaseEarnings), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = cardTextColor)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Customer Tips (100% Partner Kept)", style = MaterialTheme.typography.bodySmall, color = DashGold)
+                            Text("+₹$activePeriodTips", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = DashGold)
+                        }
+                        if (waitBonusesTotalInr > 0 || batchBonusesTotalInr > 0) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Wait-Time & Route-Batch Bonuses", style = MaterialTheme.typography.bodySmall, color = DashEmerald)
+                                Text("+₹${waitBonusesTotalInr + batchBonusesTotalInr}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = DashEmerald)
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("TDS / Statutory Fee (Zero for < ₹5L)", style = MaterialTheme.typography.bodySmall, color = mutedTextColor)
+                            Text("₹0", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = mutedTextColor)
+                        }
+                        HorizontalDivider(color = Color(0xFFCBD5E1).copy(alpha = 0.5f))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Net Take-Home Payout", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = cardTextColor)
+                            Text(
+                                text = String.format(Locale.US, "₹%.0f", netTakeHomeInr),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = DashEmerald
                             )
                         }
                     }
@@ -1207,12 +1320,75 @@ fun RiderEarningsDashboardScreen(
                                 modifier = Modifier.padding(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(
-                                    text = "Withdraw Payout to UPI / Bank (Min ₹50 • Available: ₹${withdrawableInr.toInt()})",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = DashNavy
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Withdraw Payout to Bank / UPI (Min ₹50 • Available: ₹${withdrawableInr.toInt()})",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = DashNavy,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                Surface(
+                                    color = if (savedBankRecord?.hasBankAccountDetails == true) Color(0xFFECFDF5) else Color(0xFFFFF7ED),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (savedBankRecord?.hasBankAccountDetails == true) Color(0xFFA7F3D0) else Color(0xFFFED7AA)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            if (savedBankRecord != null && savedBankRecord.hasBankAccountDetails) {
+                                                Text(
+                                                    text = "🏦 ${savedBankRecord.bankName} ${savedBankRecord.maskedBankAccountNumber} (${savedBankRecord.bankIfscCode})",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = Color(0xFF065F46)
+                                                )
+                                                Text(
+                                                    text = "Holder: ${savedBankRecord.bankAccountHolderName}" +
+                                                        if (savedBankRecord.bankUpiId.isNotBlank()) " • UPI: ${savedBankRecord.bankUpiId}" else "",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color(0xFF047857)
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "⚠️ Bank Account Not Linked Yet",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = Color(0xFFB45309)
+                                                )
+                                                Text(
+                                                    text = "Apna Bank Account & IFSC add karein taaki Admin paisa transfer kar sakein.",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color(0xFF92400E)
+                                                )
+                                            }
+                                        }
+                                        OutlinedButton(
+                                            onClick = { showEditBankDialog = true },
+                                            modifier = Modifier.testTag("earnings_edit_bank_btn")
+                                        ) {
+                                            Text(
+                                                text = if (savedBankRecord?.hasBankAccountDetails == true) "Edit Bank" else "Add Bank",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()

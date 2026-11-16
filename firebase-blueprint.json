@@ -320,6 +320,131 @@
         "phone",
         "role"
       ]
+    },
+    "RemoteConfigDoc": {
+      "title": "RemoteConfigDoc",
+      "description": "Admin-controlled global feature flags including future B2B postpaid, Razorpay Route split, and auto-KYC switches.",
+      "type": "object",
+      "properties": {
+        "flagsJson": {
+          "type": "string",
+          "description": "Serialized JSON payload of AdminRemoteFeatureFlags."
+        },
+        "b2bPostpaidEnabled": {
+          "type": "boolean",
+          "description": "Future rollout switch for B2B / Dukaan monthly postpaid billing (default false)."
+        },
+        "razorpayRouteSplitEnabled": {
+          "type": "boolean",
+          "description": "Automated Razorpay Route 80/20 split switch (default false)."
+        },
+        "autoKycApiEnabled": {
+          "type": "boolean",
+          "description": "Automated DigiLocker/DL KYC verification switch (default false)."
+        },
+        "updatedByEmail": {
+          "type": "string",
+          "description": "Email of the Admin who pushed the config update."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest config update."
+        }
+      },
+      "required": [
+        "flagsJson",
+        "b2bPostpaidEnabled",
+        "razorpayRouteSplitEnabled",
+        "autoKycApiEnabled",
+        "updatedAt"
+      ]
+    },
+    "B2bDukaanAccount": {
+      "title": "B2bDukaanAccount",
+      "description": "Dukaan / Business monthly postpaid credit account gated behind Admin B2B feature toggle.",
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "description": "Unique B2B account ID (e.g. B2B-1001)."
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the Dukaan owner."
+        },
+        "shopName": {
+          "type": "string",
+          "description": "Business / Dukaan display name."
+        },
+        "ownerName": {
+          "type": "string",
+          "description": "Owner contact name."
+        },
+        "ownerPhone": {
+          "type": "string",
+          "description": "10-digit business mobile number."
+        },
+        "gstin": {
+          "type": "string",
+          "description": "Optional 15-character GSTIN or URD."
+        },
+        "pickupAddress": {
+          "type": "string",
+          "description": "Registered shop pickup address."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING_ADMIN_APPROVAL", "APPROVED", "SUSPENDED"],
+          "description": "Admin approval status for monthly postpaid billing."
+        },
+        "approvedCreditLimitInr": {
+          "type": "integer",
+          "description": "Credit limit approved by Admin in INR (0 until approved)."
+        },
+        "usedCreditPaise": {
+          "type": "integer",
+          "description": "Current outstanding postpaid balance in paise."
+        },
+        "totalBilledOrders": {
+          "type": "integer",
+          "description": "Count of orders billed to the monthly postpaid ledger."
+        },
+        "gstInvoiceNumber": {
+          "type": "string",
+          "description": "Current monthly consolidated GST invoice reference."
+        },
+        "lastSettledEpochMs": {
+          "type": "integer",
+          "description": "Epoch milliseconds when Admin last marked monthly bill settled."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "accountId",
+        "ownerUid",
+        "shopName",
+        "ownerName",
+        "ownerPhone",
+        "gstin",
+        "pickupAddress",
+        "status",
+        "approvedCreditLimitInr",
+        "usedCreditPaise",
+        "totalBilledOrders",
+        "gstInvoiceNumber",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -352,6 +477,18 @@
         "$ref": "#/entities/UserProfile"
       },
       "description": "Per-user profile document locked to the authenticated owner and protected against role escalation."
+    },
+    "/remote_config/{configId}": {
+      "schema": {
+        "$ref": "#/entities/RemoteConfigDoc"
+      },
+      "description": "Global Admin feature switches persisted permanently in Cloud Firestore."
+    },
+    "/b2b_accounts/{accountId}": {
+      "schema": {
+        "$ref": "#/entities/B2bDukaanAccount"
+      },
+      "description": "B2B / Dukaan monthly postpaid credit accounts managed by Admin."
     }
   }
 }

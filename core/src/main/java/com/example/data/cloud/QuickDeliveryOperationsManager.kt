@@ -359,6 +359,153 @@ data class CustomerSupportTicket(
     }
 }
 
+data class OrderTimelineEvent(
+    val eventId: String,
+    val orderId: String,
+    val title: String,
+    val detail: String,
+    val actorRole: String,
+    val timestampLabel: String,
+    val createdAtEpochMs: Long = System.currentTimeMillis()
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("eventId", eventId)
+        put("orderId", orderId)
+        put("title", title)
+        put("detail", detail)
+        put("actorRole", actorRole)
+        put("timestampLabel", timestampLabel)
+        put("createdAtEpochMs", createdAtEpochMs)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): OrderTimelineEvent? {
+            val id = obj.optString("eventId", "").trim()
+            val oid = obj.optString("orderId", "").trim()
+            val title = obj.optString("title", "").trim()
+            if (id.isEmpty() || oid.isEmpty() || title.isEmpty()) return null
+            return OrderTimelineEvent(
+                eventId = id,
+                orderId = oid,
+                title = title,
+                detail = obj.optString("detail", ""),
+                actorRole = obj.optString("actorRole", "SYSTEM"),
+                timestampLabel = obj.optString("timestampLabel", ""),
+                createdAtEpochMs = obj.optLong("createdAtEpochMs", System.currentTimeMillis())
+            )
+        }
+    }
+}
+
+data class CustomerUnreachableRecord(
+    val orderId: String,
+    val riderId: String,
+    val riderName: String,
+    val reportedAtLabel: String,
+    val note: String = "Customer not responding at pickup/drop gate",
+    val updatedAtEpochMs: Long = System.currentTimeMillis()
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("orderId", orderId)
+        put("riderId", riderId)
+        put("riderName", riderName)
+        put("reportedAtLabel", reportedAtLabel)
+        put("note", note)
+        put("updatedAtEpochMs", updatedAtEpochMs)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): CustomerUnreachableRecord? {
+            val oid = obj.optString("orderId", "").trim()
+            if (oid.isEmpty()) return null
+            return CustomerUnreachableRecord(
+                orderId = oid,
+                riderId = obj.optString("riderId", ""),
+                riderName = obj.optString("riderName", "Rider Partner"),
+                reportedAtLabel = obj.optString("reportedAtLabel", ""),
+                note = obj.optString("note", "Customer not responding"),
+                updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
+            )
+        }
+    }
+}
+
+enum class B2bDukaanStatus {
+    PENDING_ADMIN_APPROVAL,
+    APPROVED,
+    SUSPENDED;
+
+    companion object {
+        fun fromString(raw: String?): B2bDukaanStatus = when (raw?.trim()?.uppercase()) {
+            "APPROVED" -> APPROVED
+            "SUSPENDED" -> SUSPENDED
+            else -> PENDING_ADMIN_APPROVAL
+        }
+    }
+}
+
+data class B2bDukaanAccountRecord(
+    val accountId: String,
+    val shopName: String,
+    val ownerName: String,
+    val ownerPhone: String,
+    val gstin: String = "URD",
+    val pickupAddress: String,
+    val status: B2bDukaanStatus = B2bDukaanStatus.PENDING_ADMIN_APPROVAL,
+    val approvedCreditLimitInr: Int = 0,
+    val usedCreditInr: Double = 0.0,
+    val totalBilledOrders: Int = 0,
+    val gstInvoiceNumber: String = "INV-B2B-2026-1001",
+    val lastSettledLabel: String = "",
+    val updatedAtEpochMs: Long = System.currentTimeMillis()
+) {
+    val availableCreditInr: Double
+        get() = if (status == B2bDukaanStatus.APPROVED) {
+            (approvedCreditLimitInr.toDouble() - usedCreditInr).coerceAtLeast(0.0)
+        } else {
+            0.0
+        }
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("accountId", accountId)
+        put("shopName", shopName)
+        put("ownerName", ownerName)
+        put("ownerPhone", ownerPhone)
+        put("gstin", gstin)
+        put("pickupAddress", pickupAddress)
+        put("status", status.name)
+        put("approvedCreditLimitInr", approvedCreditLimitInr)
+        put("usedCreditInr", usedCreditInr)
+        put("totalBilledOrders", totalBilledOrders)
+        put("gstInvoiceNumber", gstInvoiceNumber)
+        put("lastSettledLabel", lastSettledLabel)
+        put("updatedAtEpochMs", updatedAtEpochMs)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): B2bDukaanAccountRecord? {
+            val id = obj.optString("accountId", "").trim()
+            val shop = obj.optString("shopName", "").trim()
+            if (id.isEmpty() || shop.isEmpty()) return null
+            return B2bDukaanAccountRecord(
+                accountId = id,
+                shopName = shop,
+                ownerName = obj.optString("ownerName", "Owner"),
+                ownerPhone = obj.optString("ownerPhone", ""),
+                gstin = obj.optString("gstin", "URD").ifBlank { "URD" },
+                pickupAddress = obj.optString("pickupAddress", ""),
+                status = B2bDukaanStatus.fromString(obj.optString("status")),
+                approvedCreditLimitInr = obj.optInt("approvedCreditLimitInr", 0).coerceAtLeast(0),
+                usedCreditInr = obj.optDouble("usedCreditInr", 0.0).coerceAtLeast(0.0),
+                totalBilledOrders = obj.optInt("totalBilledOrders", 0).coerceAtLeast(0),
+                gstInvoiceNumber = obj.optString("gstInvoiceNumber", "INV-B2B-2026-1001"),
+                lastSettledLabel = obj.optString("lastSettledLabel", ""),
+                updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
+            )
+        }
+    }
+}
+
 /**
  * Shared Production Operations Manager across Customer, Rider Partner, and Admin Console:
  * - Customer Saved Addresses (Home / Office / Shop)
@@ -383,6 +530,9 @@ object QuickDeliveryOperationsManager {
     private const val KEY_RIDER_DOC_EXPIRIES = "rider_doc_expiry_records_json"
     private const val KEY_RIDER_PAYOUT_MODE = "rider_payout_mode_pref"
     private const val KEY_CREDITED_DISPUTE_IDS = "credited_refund_dispute_ids"
+    private const val KEY_TIMELINE_EVENTS = "order_timeline_events_json"
+    private const val KEY_UNREACHABLE_RECORDS = "customer_unreachable_records_json"
+    private const val KEY_B2B_ACCOUNTS = "b2b_dukaan_accounts_json"
 
     private val lock = Any()
     private var loaded = false
@@ -427,11 +577,21 @@ object QuickDeliveryOperationsManager {
     private val _riderPayoutModePreference = MutableStateFlow("INSTANT_UPI")
     val riderPayoutModePreference: StateFlow<String> = _riderPayoutModePreference.asStateFlow()
 
+    private val _timelineEventsByOrder = MutableStateFlow<Map<String, List<OrderTimelineEvent>>>(emptyMap())
+    val timelineEventsByOrder: StateFlow<Map<String, List<OrderTimelineEvent>>> = _timelineEventsByOrder.asStateFlow()
+
+    private val _unreachableByOrder = MutableStateFlow<Map<String, CustomerUnreachableRecord>>(emptyMap())
+    val unreachableByOrder: StateFlow<Map<String, CustomerUnreachableRecord>> = _unreachableByOrder.asStateFlow()
+
+    private val _b2bAccounts = MutableStateFlow<List<B2bDukaanAccountRecord>>(emptyList())
+    val b2bAccounts: StateFlow<List<B2bDukaanAccountRecord>> = _b2bAccounts.asStateFlow()
+
     private val claimedReferralCodes = mutableSetOf<String>()
     private val creditedDisputeIds = mutableSetOf<String>()
 
     val ALLOWED_ADMIN_EMAILS = setOf(
         "ravindergupta141@gmail.com",
+        QuickDeliveryBrandLinks.ADMIN_BRAND_EMAIL,
         "admin@quickdelivery.in"
     )
 
@@ -469,7 +629,11 @@ object QuickDeliveryOperationsManager {
 
                 prefs.getString(KEY_REMOTE_FEATURE_FLAGS, null)?.let { raw ->
                     val obj = JSONObject(raw)
-                    _remoteFeatureFlags.value = AdminRemoteFeatureFlags.fromJson(obj)
+                    val loadedFlags = AdminRemoteFeatureFlags.fromJson(obj)
+                    _remoteFeatureFlags.value = loadedFlags
+                    if (obj.optInt("flagsSchemaVersion", 1) < AdminRemoteFeatureFlags.CURRENT_FLAGS_SCHEMA_VERSION) {
+                        prefs.edit().putString(KEY_REMOTE_FEATURE_FLAGS, loadedFlags.toJson().toString()).apply()
+                    }
                 }
 
                 _customerWalletBonusInr.value = prefs.getInt(KEY_CUSTOMER_WALLET_BONUS, 0).coerceAtLeast(0)
@@ -531,6 +695,34 @@ object QuickDeliveryOperationsManager {
                 prefs.getStringSet(KEY_CREDITED_DISPUTE_IDS, emptySet())?.let { ids ->
                     creditedDisputeIds.clear()
                     creditedDisputeIds.addAll(ids)
+                }
+
+                prefs.getString(KEY_TIMELINE_EVENTS, null)?.let { raw ->
+                    val arr = JSONArray(raw)
+                    val grouped = mutableMapOf<String, MutableList<OrderTimelineEvent>>()
+                    for (i in 0 until arr.length()) {
+                        arr.optJSONObject(i)?.let(OrderTimelineEvent::fromJson)?.let { evt ->
+                            grouped.getOrPut(evt.orderId) { mutableListOf() }.add(evt)
+                        }
+                    }
+                    _timelineEventsByOrder.value = grouped.mapValues { (_, list) -> list.sortedBy { it.createdAtEpochMs } }
+                }
+
+                prefs.getString(KEY_UNREACHABLE_RECORDS, null)?.let { raw ->
+                    val arr = JSONArray(raw)
+                    val map = mutableMapOf<String, CustomerUnreachableRecord>()
+                    for (i in 0 until arr.length()) {
+                        arr.optJSONObject(i)?.let(CustomerUnreachableRecord::fromJson)?.let { rec ->
+                            map[rec.orderId] = rec
+                        }
+                    }
+                    _unreachableByOrder.value = map
+                }
+
+                prefs.getString(KEY_B2B_ACCOUNTS, null)?.let { raw ->
+                    val arr = JSONArray(raw)
+                    _b2bAccounts.value = (0 until arr.length())
+                        .mapNotNull { arr.optJSONObject(it)?.let(B2bDukaanAccountRecord::fromJson) }
                 }
             }
         }
@@ -595,6 +787,24 @@ object QuickDeliveryOperationsManager {
                 .putString(KEY_RIDER_DOC_EXPIRIES, JSONArray().apply { _riderDocExpiries.value.values.forEach { put(it.toJson()) } }.toString())
                 .putString(KEY_RIDER_PAYOUT_MODE, _riderPayoutModePreference.value)
                 .putStringSet(KEY_CREDITED_DISPUTE_IDS, creditedDisputeIds.toSet())
+                .putString(
+                    KEY_TIMELINE_EVENTS,
+                    JSONArray().apply {
+                        _timelineEventsByOrder.value.values.flatten().takeLast(300).forEach { put(it.toJson()) }
+                    }.toString()
+                )
+                .putString(
+                    KEY_UNREACHABLE_RECORDS,
+                    JSONArray().apply {
+                        _unreachableByOrder.value.values.forEach { put(it.toJson()) }
+                    }.toString()
+                )
+                .putString(
+                    KEY_B2B_ACCOUNTS,
+                    JSONArray().apply {
+                        _b2bAccounts.value.forEach { put(it.toJson()) }
+                    }.toString()
+                )
                 .apply()
         }
     }
@@ -834,7 +1044,10 @@ object QuickDeliveryOperationsManager {
         repository: SharedOrderRepository? = null
     ): AdminRemoteFeatureFlags {
         ensureLoaded(context)
-        val stamped = updated.copy(updatedAtEpochMs = System.currentTimeMillis())
+        val stamped = updated.copy(
+            flagsSchemaVersion = AdminRemoteFeatureFlags.CURRENT_FLAGS_SCHEMA_VERSION,
+            updatedAtEpochMs = System.currentTimeMillis()
+        )
         synchronized(lock) {
             _remoteFeatureFlags.value = stamped
             persist(context)
@@ -1132,6 +1345,16 @@ object QuickDeliveryOperationsManager {
         return startedAt
     }
 
+    fun clearWaitTimerForOrder(context: Context, orderId: String) {
+        ensureLoaded(context)
+        synchronized(lock) {
+            if (_waitTimerStartByOrder.value.containsKey(orderId)) {
+                _waitTimerStartByOrder.value = _waitTimerStartByOrder.value - orderId
+                persist(context)
+            }
+        }
+    }
+
     fun computeWaitFeeInfo(
         orderId: String,
         flags: AdminRemoteFeatureFlags,
@@ -1221,6 +1444,15 @@ object QuickDeliveryOperationsManager {
                     put("lng", pair.second)
                 })
             }
+        })
+        put("orderTimelineEvents", JSONArray().apply {
+            _timelineEventsByOrder.value.values.flatten().takeLast(300).forEach { put(it.toJson()) }
+        })
+        put("unreachableByOrder", JSONArray().apply {
+            _unreachableByOrder.value.values.forEach { put(it.toJson()) }
+        })
+        put("b2bAccounts", JSONArray().apply {
+            _b2bAccounts.value.forEach { put(it.toJson()) }
         })
     }
 
@@ -1357,9 +1589,506 @@ object QuickDeliveryOperationsManager {
                 _riderLiveCoordsByOrder.value = merged
             }
 
+            root.optJSONArray("orderTimelineEvents")?.let { arr ->
+                val merged = _timelineEventsByOrder.value.mapValues { it.value.toMutableList() }.toMutableMap()
+                for (i in 0 until arr.length()) {
+                    val evt = arr.optJSONObject(i)?.let(OrderTimelineEvent::fromJson) ?: continue
+                    val list = merged.getOrPut(evt.orderId) { mutableListOf() }
+                    if (list.none { it.eventId == evt.eventId }) {
+                        list.add(evt)
+                        changed = true
+                    }
+                }
+                _timelineEventsByOrder.value = merged.mapValues { (_, list) -> list.sortedBy { it.createdAtEpochMs } }
+            }
+
+            root.optJSONArray("unreachableByOrder")?.let { arr ->
+                val merged = _unreachableByOrder.value.toMutableMap()
+                for (i in 0 until arr.length()) {
+                    val rec = arr.optJSONObject(i)?.let(CustomerUnreachableRecord::fromJson) ?: continue
+                    val prev = merged[rec.orderId]
+                    if (prev == null || rec.updatedAtEpochMs >= prev.updatedAtEpochMs) {
+                        merged[rec.orderId] = rec
+                        changed = true
+                    }
+                }
+                _unreachableByOrder.value = merged
+            }
+
+            root.optJSONArray("b2bAccounts")?.let { arr ->
+                val merged = _b2bAccounts.value.associateBy { it.accountId }.toMutableMap()
+                for (i in 0 until arr.length()) {
+                    val acc = arr.optJSONObject(i)?.let(B2bDukaanAccountRecord::fromJson) ?: continue
+                    val prev = merged[acc.accountId]
+                    if (prev == null || acc.updatedAtEpochMs >= prev.updatedAtEpochMs) {
+                        merged[acc.accountId] = acc
+                        changed = true
+                    }
+                }
+                _b2bAccounts.value = merged.values.sortedByDescending { it.updatedAtEpochMs }
+            }
+
             if (changed) persist(context)
         }
         flagsUpdated?.let { applyPricingOverridesFromFlags(it, SharedOrderRepository.getInstance(context)) }
+    }
+
+    // ---------------- B2B / DUKAAN MONTHLY POSTPAID ACCOUNTS & GST INVOICING ----------------
+    fun registerOrUpdateB2bDukaanRequest(
+        context: Context,
+        shopName: String,
+        ownerName: String,
+        ownerPhone: String,
+        gstin: String,
+        pickupAddress: String
+    ): B2bDukaanAccountRecord {
+        ensureLoaded(context)
+        val cleanPhone = com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(ownerPhone)
+            .ifBlank { "9876543210" }
+        val cleanShop = com.example.security.QuickDeliverySecurityGuard.sanitizeText(shopName, 100)
+            .ifBlank { "Local Dukaan Partner" }
+        val cleanOwner = com.example.security.QuickDeliverySecurityGuard.sanitizeText(ownerName, 80)
+            .ifBlank { "Store Owner" }
+        val cleanGstin = gstin.trim().uppercase().replace("[^A-Z0-9\\-]".toRegex(), "").ifBlank { "URD" }.take(20)
+        val cleanAddr = com.example.security.QuickDeliverySecurityGuard.sanitizeText(pickupAddress, 300)
+            .ifBlank { "Main Market Road" }
+        val now = System.currentTimeMillis()
+        val id = "B2B-${cleanPhone.takeLast(4)}-${(now % 10000).toString().padStart(4, '0')}"
+        val existing = _b2bAccounts.value.firstOrNull { it.ownerPhone == cleanPhone }
+        val record = if (existing != null) {
+            existing.copy(
+                shopName = cleanShop,
+                ownerName = cleanOwner,
+                gstin = cleanGstin,
+                pickupAddress = cleanAddr,
+                updatedAtEpochMs = now
+            )
+        } else {
+            B2bDukaanAccountRecord(
+                accountId = id,
+                shopName = cleanShop,
+                ownerName = cleanOwner,
+                ownerPhone = cleanPhone,
+                gstin = cleanGstin,
+                pickupAddress = cleanAddr,
+                status = B2bDukaanStatus.PENDING_ADMIN_APPROVAL,
+                approvedCreditLimitInr = 0,
+                usedCreditInr = 0.0,
+                totalBilledOrders = 0,
+                gstInvoiceNumber = "INV-B2B-${SimpleDateFormat("yyyyMM", Locale.US).format(Date(now))}-${cleanPhone.takeLast(4)}",
+                updatedAtEpochMs = now
+            )
+        }
+        synchronized(lock) {
+            val rest = _b2bAccounts.value.filterNot { it.accountId == record.accountId }
+            _b2bAccounts.value = listOf(record) + rest
+            persist(context)
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return record
+    }
+
+    fun approveOrManageB2bAccountByAdmin(
+        context: Context,
+        accountId: String,
+        newStatus: B2bDukaanStatus,
+        creditLimitInr: Int,
+        settleMonthlyBill: Boolean = false
+    ): B2bDukaanAccountRecord? {
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        val settledLabel = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date(now))
+        var updatedRec: B2bDukaanAccountRecord? = null
+        synchronized(lock) {
+            _b2bAccounts.value = _b2bAccounts.value.map { acc ->
+                if (acc.accountId == accountId) {
+                    val nextInv = if (settleMonthlyBill) {
+                        "INV-B2B-${SimpleDateFormat("yyyyMM", Locale.US).format(Date(now))}-${(now % 10000).toString().padStart(4, '0')}"
+                    } else acc.gstInvoiceNumber
+                    acc.copy(
+                        status = newStatus,
+                        approvedCreditLimitInr = creditLimitInr.coerceIn(0, 1000000),
+                        usedCreditInr = if (settleMonthlyBill) 0.0 else acc.usedCreditInr,
+                        lastSettledLabel = if (settleMonthlyBill) "Paid $settledLabel" else acc.lastSettledLabel,
+                        gstInvoiceNumber = nextInv,
+                        updatedAtEpochMs = now
+                    ).also { updatedRec = it }
+                } else acc
+            }
+            persist(context)
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return updatedRec
+    }
+
+    fun chargeOrderToB2bPostpaid(
+        context: Context,
+        accountId: String,
+        amountInr: Double
+    ): Result<B2bDukaanAccountRecord> {
+        ensureLoaded(context)
+        if (amountInr <= 0.0) return Result.failure(IllegalArgumentException("Amount must be positive"))
+        synchronized(lock) {
+            val acc = _b2bAccounts.value.firstOrNull { it.accountId == accountId }
+                ?: return Result.failure(IllegalStateException("B2B Dukaan account not found."))
+            if (acc.status != B2bDukaanStatus.APPROVED) {
+                return Result.failure(IllegalStateException("B2B account is awaiting Admin approval."))
+            }
+            if (acc.usedCreditInr + amountInr > acc.approvedCreditLimitInr.toDouble()) {
+                return Result.failure(IllegalStateException("Monthly credit limit ₹${acc.approvedCreditLimitInr} exceeded."))
+            }
+            val updated = acc.copy(
+                usedCreditInr = acc.usedCreditInr + amountInr,
+                totalBilledOrders = acc.totalBilledOrders + 1,
+                updatedAtEpochMs = System.currentTimeMillis()
+            )
+            _b2bAccounts.value = _b2bAccounts.value.map { if (it.accountId == accountId) updated else it }
+            persist(context)
+            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+            return Result.success(updated)
+        }
+    }
+
+    fun mergeB2bAccountsFromCloud(context: Context, cloudList: List<CloudB2bDukaanAccount>) {
+        if (cloudList.isEmpty()) return
+        ensureLoaded(context)
+        var changed = false
+        synchronized(lock) {
+            val merged = _b2bAccounts.value.associateBy { it.accountId }.toMutableMap()
+            cloudList.forEach { cloud ->
+                val mapped = B2bDukaanAccountRecord(
+                    accountId = cloud.accountId,
+                    shopName = cloud.shopName,
+                    ownerName = cloud.ownerName,
+                    ownerPhone = cloud.ownerPhone,
+                    gstin = cloud.gstin,
+                    pickupAddress = cloud.pickupAddress,
+                    status = B2bDukaanStatus.fromString(cloud.status),
+                    approvedCreditLimitInr = cloud.approvedCreditLimitInr,
+                    usedCreditInr = cloud.usedCreditPaise / 100.0,
+                    totalBilledOrders = cloud.totalBilledOrders,
+                    gstInvoiceNumber = cloud.gstInvoiceNumber,
+                    lastSettledLabel = cloud.lastSettledEpochMs?.let { ts ->
+                        "Paid ${SimpleDateFormat("dd MMM", Locale.US).format(Date(ts))}"
+                    } ?: "",
+                    updatedAtEpochMs = cloud.updatedAt?.toDate()?.time ?: System.currentTimeMillis()
+                )
+                val prev = merged[mapped.accountId]
+                if (prev == null || mapped.updatedAtEpochMs >= prev.updatedAtEpochMs) {
+                    merged[mapped.accountId] = mapped
+                    changed = true
+                }
+            }
+            if (changed) {
+                _b2bAccounts.value = merged.values.sortedByDescending { it.updatedAtEpochMs }
+                persist(context)
+            }
+        }
+    }
+
+    fun buildB2bConsolidatedGstInvoiceText(account: B2bDukaanAccountRecord): String {
+        val total = account.usedCreditInr.coerceAtLeast(0.0)
+        val taxableBase = total / 1.18
+        val cgst = (total - taxableBase) / 2.0
+        val sgst = (total - taxableBase) / 2.0
+        return buildString {
+            appendLine("=== QUICK DELIVERY LOGISTICS • CONSOLIDATED B2B TAX INVOICE ===")
+            appendLine("Invoice No: ${account.gstInvoiceNumber} | HSN/SAC: 996812 (Courier Services)")
+            appendLine("B2B Account: ${account.shopName} (${account.accountId})")
+            appendLine("GSTIN / URD: ${account.gstin} | Owner: ${account.ownerName} (${account.ownerPhone})")
+            appendLine("Pickup Hub: ${account.pickupAddress}")
+            appendLine("------------------------------------------------------------")
+            appendLine("Billed Orders This Cycle : ${account.totalBilledOrders}")
+            appendLine("Approved Credit Limit    : ₹${account.approvedCreditLimitInr}")
+            appendLine(String.format(Locale.US, "Taxable Value            : ₹%.2f", taxableBase))
+            appendLine(String.format(Locale.US, "CGST @ 9%%                : ₹%.2f", cgst))
+            appendLine(String.format(Locale.US, "SGST @ 9%%                : ₹%.2f", sgst))
+            appendLine(String.format(Locale.US, "TOTAL POSTPAID DUE       : ₹%.2f", total))
+            if (account.lastSettledLabel.isNotBlank()) {
+                appendLine("Last Settlement          : ${account.lastSettledLabel}")
+            }
+            appendLine("Billing & Support        : ${QuickDeliveryBrandLinks.PRIMARY_DOMAIN} | ${QuickDeliveryBrandLinks.SUPPORT_EMAIL}")
+            appendLine("============================================================")
+        }
+    }
+
+    // ---------------- ORDER TIMELINE, UNREACHABLE LOGGING & FORCE RELEASE ----------------
+    fun recordOrderTimelineEvent(
+        context: Context,
+        orderId: String,
+        title: String,
+        detail: String,
+        actorRole: String
+    ) {
+        if (orderId.isBlank() || title.isBlank()) return
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        val label = SimpleDateFormat("dd MMM, hh:mm:ss a", Locale.US).format(Date(now))
+        synchronized(lock) {
+            val currentList = _timelineEventsByOrder.value[orderId].orEmpty()
+            val recentDuplicate = currentList.any {
+                it.title == title && kotlin.math.abs(now - it.createdAtEpochMs) < 4000L
+            }
+            if (!recentDuplicate) {
+                val evt = OrderTimelineEvent(
+                    eventId = "EVT-${orderId}-${now % 1000000}-${currentList.size}",
+                    orderId = orderId,
+                    title = title,
+                    detail = detail.trim(),
+                    actorRole = actorRole,
+                    timestampLabel = label,
+                    createdAtEpochMs = now
+                )
+                _timelineEventsByOrder.value = _timelineEventsByOrder.value + (orderId to (currentList + evt).sortedBy { it.createdAtEpochMs })
+                persist(context)
+            }
+        }
+    }
+
+    fun buildCombinedTimelineForOrder(
+        order: CustomerOrder,
+        pickupProof: com.example.data.model.PickupProof? = null,
+        deliveryProof: com.example.data.model.DeliveryProof? = null
+    ): List<OrderTimelineEvent> {
+        val baseEvents = mutableListOf<OrderTimelineEvent>()
+        val createdBaseMs: Long = System.currentTimeMillis() - 600_000L
+        baseEvents.add(
+            OrderTimelineEvent(
+                eventId = "auto_booked_${order.orderId}",
+                orderId = order.orderId,
+                title = "Order Booked (${order.paymentMethod.shortBadge})",
+                detail = "${order.customerName} • ${order.vehicleType.title} • ${order.totalAmount}",
+                actorRole = "CUSTOMER",
+                timestampLabel = order.createdAt.ifBlank { SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(createdBaseMs)) },
+                createdAtEpochMs = createdBaseMs
+            )
+        )
+        if (order.rejectedByRiderIds.isNotEmpty()) {
+            baseEvents.add(
+                OrderTimelineEvent(
+                    eventId = "auto_declined_${order.orderId}_${order.rejectedByRiderIds.size}",
+                    orderId = order.orderId,
+                    title = "Declined by ${order.rejectedByRiderIds.size} Rider(s)",
+                    detail = order.latestRiderQuickNote ?: "Re-queued automatically to nearby online riders",
+                    actorRole = "RIDER",
+                    timestampLabel = "Re-dispatched",
+                    createdAtEpochMs = createdBaseMs + 20_000L
+                )
+            )
+        }
+        if (!order.assignedRiderName.isNullOrBlank()) {
+            baseEvents.add(
+                OrderTimelineEvent(
+                    eventId = "auto_assigned_${order.orderId}_${order.assignedRiderId}",
+                    orderId = order.orderId,
+                    title = "Rider Assigned: ${order.assignedRiderName}",
+                    detail = order.assignedRiderVehicle ?: "Verified Partner",
+                    actorRole = "RIDER",
+                    timestampLabel = "Assigned",
+                    createdAtEpochMs = createdBaseMs + 40_000L
+                )
+            )
+        }
+        _waitTimerStartByOrder.value[order.orderId]?.let { wtMs ->
+            baseEvents.add(
+                OrderTimelineEvent(
+                    eventId = "auto_wait_${order.orderId}",
+                    orderId = order.orderId,
+                    title = "Reached Pickup Gate & Wait Timer Started",
+                    detail = "Pickup gate check-in timer active",
+                    actorRole = "RIDER",
+                    timestampLabel = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(wtMs)),
+                    createdAtEpochMs = wtMs
+                )
+            )
+        }
+        _unreachableByOrder.value[order.orderId]?.let { unrec ->
+            baseEvents.add(
+                OrderTimelineEvent(
+                    eventId = "auto_unreach_${order.orderId}",
+                    orderId = order.orderId,
+                    title = "Customer Unreachable Logged",
+                    detail = "${unrec.riderName}: ${unrec.note}",
+                    actorRole = "RIDER",
+                    timestampLabel = unrec.reportedAtLabel,
+                    createdAtEpochMs = unrec.updatedAtEpochMs
+                )
+            )
+        }
+        if (pickupProof != null) {
+            baseEvents.add(
+                OrderTimelineEvent(
+                    eventId = "auto_pickup_${order.orderId}",
+                    orderId = order.orderId,
+                    title = "Parcel Picked Up (OTP + Photo Verified)",
+                    detail = pickupProof.packagePhotoSummary.ifBlank { "Verified by ${pickupProof.riderName}" },
+                    actorRole = "RIDER",
+                    timestampLabel = pickupProof.capturedAt,
+                    createdAtEpochMs = createdBaseMs + 120_000L
+                )
+            )
+        } else if (order.orderStatus == OrderStatus.PICKED_UP || order.orderStatus == OrderStatus.IN_TRANSIT) {
+            baseEvents.add(
+                OrderTimelineEvent(
+                    eventId = "auto_transit_${order.orderId}",
+                    orderId = order.orderId,
+                    title = "In Transit to Drop Location",
+                    detail = "Heading toward ${order.dropAddress.fullAddress}",
+                    actorRole = "RIDER",
+                    timestampLabel = "In Progress",
+                    createdAtEpochMs = createdBaseMs + 130_000L
+                )
+            )
+        }
+        if (deliveryProof != null || order.orderStatus == OrderStatus.DELIVERED) {
+            baseEvents.add(
+                OrderTimelineEvent(
+                    eventId = "auto_delivered_${order.orderId}",
+                    orderId = order.orderId,
+                    title = "Delivered & Drop OTP Verified",
+                    detail = deliveryProof?.deliveryPhotoSummary ?: "Signed by ${order.dropAddress.contactName.ifBlank { order.customerName }}",
+                    actorRole = "RIDER",
+                    timestampLabel = deliveryProof?.capturedAt ?: "Delivered",
+                    createdAtEpochMs = createdBaseMs + 240_000L
+                )
+            )
+        } else if (order.orderStatus == OrderStatus.CANCELLED) {
+            baseEvents.add(
+                OrderTimelineEvent(
+                    eventId = "auto_cancelled_${order.orderId}",
+                    orderId = order.orderId,
+                    title = "Order Cancelled",
+                    detail = order.latestRiderQuickNote ?: "Cancelled before delivery",
+                    actorRole = "SYSTEM",
+                    timestampLabel = "Cancelled",
+                    createdAtEpochMs = createdBaseMs + 250_000L
+                )
+            )
+        }
+
+        val explicit = _timelineEventsByOrder.value[order.orderId].orEmpty()
+        val combined = (baseEvents + explicit)
+            .distinctBy { "${it.title}_${it.timestampLabel}" }
+            .sortedBy { it.createdAtEpochMs }
+        return combined
+    }
+
+    fun reportCustomerUnreachable(
+        context: Context,
+        repository: SharedOrderRepository,
+        orderId: String,
+        riderId: String,
+        riderName: String
+    ): CustomerUnreachableRecord {
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        val label = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(now))
+        val rec = CustomerUnreachableRecord(
+            orderId = orderId,
+            riderId = riderId,
+            riderName = riderName.ifBlank { "Rider Partner" },
+            reportedAtLabel = label,
+            note = "Rider called & waited at gate — customer unreachable ($label)",
+            updatedAtEpochMs = now
+        )
+        synchronized(lock) {
+            _unreachableByOrder.value = _unreachableByOrder.value + (orderId to rec)
+            persist(context)
+        }
+        recordOrderTimelineEvent(
+            context = context,
+            orderId = orderId,
+            title = "Customer Unreachable Logged",
+            detail = "${rec.riderName} logged call & gate wait attempt at $label",
+            actorRole = "RIDER"
+        )
+        getMutableOrdersFlow(repository)?.let { flow ->
+            flow.value = flow.value.map { ord ->
+                if (ord.orderId == orderId) {
+                    ord.copy(latestRiderQuickNote = "📵 Customer Unreachable (${rec.riderName}) logged at $label")
+                } else ord
+            }
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return rec
+    }
+
+    fun markRiderReachedPickupGate(
+        context: Context,
+        repository: SharedOrderRepository,
+        orderId: String,
+        riderName: String
+    ): Boolean {
+        val flow = getMutableOrdersFlow(repository) ?: return false
+        var updated = false
+        flow.value = flow.value.map { ord ->
+            if (ord.orderId == orderId && ord.orderStatus == OrderStatus.RIDER_ASSIGNED) {
+                updated = true
+                ord.copy(
+                    orderStatus = OrderStatus.ARRIVED_AT_PICKUP,
+                    latestRiderQuickNote = "📍 $riderName arrived at Pickup Gate (Within 100m check-in)"
+                )
+            } else ord
+        }
+        if (updated) {
+            recordOrderTimelineEvent(
+                context = context,
+                orderId = orderId,
+                title = "Rider Reached Pickup Gate",
+                detail = "$riderName checked in at pickup location",
+                actorRole = "RIDER"
+            )
+            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        }
+        return updated
+    }
+
+    fun adminForceReleaseOrderToSearching(
+        context: Context,
+        repository: SharedOrderRepository,
+        orderId: String,
+        reason: String = "Emergency Manual Release by Admin"
+    ): Boolean {
+        val flow = getMutableOrdersFlow(repository) ?: return false
+        var released = false
+        var previousRiderId: String? = null
+        flow.value = flow.value.map { ord ->
+            if (ord.orderId == orderId &&
+                ord.orderStatus != OrderStatus.PICKED_UP &&
+                ord.orderStatus != OrderStatus.IN_TRANSIT &&
+                ord.orderStatus != OrderStatus.DELIVERED &&
+                ord.orderStatus != OrderStatus.CANCELLED
+            ) {
+                released = true
+                previousRiderId = ord.assignedRiderId
+                val updatedRejected = if (!ord.assignedRiderId.isNullOrBlank()) {
+                    (ord.rejectedByRiderIds + ord.assignedRiderId!!).distinct()
+                } else {
+                    ord.rejectedByRiderIds
+                }
+                ord.copy(
+                    orderStatus = OrderStatus.SEARCHING_RIDER,
+                    assignedRiderId = null,
+                    assignedRiderName = null,
+                    assignedRiderPhone = null,
+                    assignedRiderVehicle = null,
+                    rejectedByRiderIds = updatedRejected,
+                    latestRiderQuickNote = "Admin Force-Released ($reason) — Searching new rider..."
+                )
+            } else ord
+        }
+        if (released) {
+            clearWaitTimerForOrder(context, orderId)
+            recordOrderTimelineEvent(
+                context = context,
+                orderId = orderId,
+                title = "Admin Force-Released to Queue",
+                detail = "Released from ${previousRiderId ?: "queue"} ($reason) — Re-searching nearby riders",
+                actorRole = "ADMIN"
+            )
+            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        }
+        return released
     }
 
     // ---------------- ORDER MUTATIONS (CANCEL & REASSIGN) ----------------
@@ -1397,6 +2126,13 @@ object QuickDeliveryOperationsManager {
             }
         }
         if (found) {
+            recordOrderTimelineEvent(
+                context = context,
+                orderId = orderId,
+                title = "Cancelled by $cancelledByRole",
+                detail = cleanReason,
+                actorRole = cancelledByRole.uppercase()
+            )
             MultiPhoneLiveSyncManager.triggerImmediateSync(context)
         }
         return found
@@ -1434,6 +2170,13 @@ object QuickDeliveryOperationsManager {
             }
         }
         if (found) {
+            recordOrderTimelineEvent(
+                context = context,
+                orderId = orderId,
+                title = "Admin Reassigned Rider",
+                detail = "Assigned directly to ${targetRider.name} (${targetRider.riderId})",
+                actorRole = "ADMIN"
+            )
             MultiPhoneLiveSyncManager.triggerImmediateSync(context)
         }
         return found

@@ -534,4 +534,124 @@ test("11. User Profiles Security: Owner-only access, XSS rejection, and non-admi
   );
 });
 
+test("12. Remote Config Security: Only verified Admin can update feature flags (B2B/Split/AutoKYC), signed-in users can get global_flags", async () => {
+  const adminDb = testEnv
+    .authenticatedContext("admin_uid", {
+      email: "ravindergupta141@gmail.com",
+      email_verified: true,
+    })
+    .firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+
+  const validConfigPayload = {
+    flagsJson: '{"b2bPostpaidEnabled":false,"flagsSchemaVersion":3}',
+    b2bPostpaidEnabled: false,
+    razorpayRouteSplitEnabled: false,
+    autoKycApiEnabled: false,
+    updatedByEmail: "ravindergupta141@gmail.com",
+    updatedAt: new Date(),
+  };
+
+  // Non-admin Alice & unauthenticated cannot write remote_config
+  await assertFails(aliceDb.collection("remote_config").doc("global_flags").set(validConfigPayload));
+  await assertFails(unauthDb.collection("remote_config").doc("global_flags").get());
+
+  // Verified Admin can write remote_config
+  await assertSucceeds(adminDb.collection("remote_config").doc("global_flags").set(validConfigPayload));
+
+  // Signed-in Customer can read global_flags (get), cannot blanket list remote_config
+  await assertSucceeds(aliceDb.collection("remote_config").doc("global_flags").get());
+  await assertFails(aliceDb.collection("remote_config").get());
+});
+
+test("13. B2B Dukaan Postpaid Accounts: owner isolation, no self-approval/credit-tampering, Admin approval & settlement allowed", async () => {
+  const createdTs = new Date(Date.now() - 5000);
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const adminDb = testEnv
+    .authenticatedContext("admin_uid", {
+      email: "ravindergupta141@gmail.com",
+      email_verified: true,
+    })
+    .firestore();
+
+  const baseB2b = {
+    accountId: "B2B-1001",
+    ownerUid: ALICE_UID,
+    shopName: "Gupta Kirana Wholesale",
+    ownerName: "Ravinder Gupta",
+    ownerPhone: "9876543210",
+    gstin: "07AAACQ1234F1Z5",
+    pickupAddress: "Sadar Bazar, Delhi 110006",
+    status: "PENDING_ADMIN_APPROVAL",
+    approvedCreditLimitInr: 0,
+    usedCreditPaise: 0,
+    totalBilledOrders: 0,
+    gstInvoiceNumber: "INV-B2B-2026-1001",
+    createdAt: createdTs,
+    updatedAt: createdTs,
+  };
+
+  // Non-admin cannot self-create already APPROVED account with credit limit
+  await assertFails(
+    aliceDb.collection("b2b_accounts").doc("B2B-1001").set({
+      ...baseB2b,
+      status: "APPROVED",
+      approvedCreditLimitInr: 50000,
+    })
+  );
+
+  // Alice creates valid PENDING_ADMIN_APPROVAL B2B request
+  await assertSucceeds(aliceDb.collection("b2b_accounts").doc("B2B-1001").set(baseB2b));
+
+  // Bob cannot read Alice's B2B account or list all accounts
+  await assertFails(bobDb.collection("b2b_accounts").doc("B2B-1001").get());
+  await assertFails(bobDb.collection("b2b_accounts").get());
+
+  // Admin approves B2B account with ₹25,000 limit
+  await assertSucceeds(
+    adminDb.collection("b2b_accounts").doc("B2B-1001").update({
+      status: "APPROVED",
+      approvedCreditLimitInr: 25000,
+      updatedAt: new Date(),
+    })
+  );
+
+  // Alice can increment usedCreditPaise within credit limit (₹500 = 50000 paise <= ₹25000)
+  await assertSucceeds(
+    aliceDb.collection("b2b_accounts").doc("B2B-1001").update({
+      usedCreditPaise: 50000,
+      totalBilledOrders: 1,
+      updatedAt: new Date(),
+    })
+  );
+
+  // Alice CANNOT erase/reduce her own usedCreditPaise debt (must go through Admin settlement)
+  await assertFails(
+    aliceDb.collection("b2b_accounts").doc("B2B-1001").update({
+      usedCreditPaise: 0,
+      updatedAt: new Date(),
+    })
+  );
+
+  // Alice CANNOT exceed credit limit
+  await assertFails(
+    aliceDb.collection("b2b_accounts").doc("B2B-1001").update({
+      usedCreditPaise: 3000000,
+      updatedAt: new Date(),
+    })
+  );
+
+  // Admin can settle the monthly bill back to 0
+  await assertSucceeds(
+    adminDb.collection("b2b_accounts").doc("B2B-1001").update({
+      usedCreditPaise: 0,
+      lastSettledEpochMs: Date.now(),
+      updatedAt: new Date(),
+    })
+  );
+});
+
+
 

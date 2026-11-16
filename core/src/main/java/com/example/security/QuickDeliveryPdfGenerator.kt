@@ -248,7 +248,7 @@ object QuickDeliveryPdfGenerator {
         }
 
         canvas.drawLine(36f, 790f, 559f, 790f, linePaint)
-        canvas.drawText("Thank you for choosing Quick Delivery! Support: ravindergupta141@gmail.com", 36f, 810f, bodyPaint)
+        canvas.drawText("Thank you for choosing quickdelivery.co.in • Support: support@quickdelivery.co.in", 36f, 810f, bodyPaint)
 
         doc.finishPage(page)
         val cleanId = order.orderId.replace(Regex("[^A-Za-z0-9_-]"), "")

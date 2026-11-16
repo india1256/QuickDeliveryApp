@@ -115,6 +115,8 @@ fun CustomerBookingConfirmationScreen(
     extraAddonInr: Double = 0.0,
     extraAddonLabel: String = "",
     walletDiscountInr: Double = 0.0,
+    isB2bPostpaidSelected: Boolean = false,
+    b2bShopName: String = "",
     onBack: () -> Unit,
     onConfirmBooking: () -> Unit,
     modifier: Modifier = Modifier
@@ -184,7 +186,7 @@ fun CustomerBookingConfirmationScreen(
                     ) {
                         Column {
                             Text(
-                                text = "Final Payable Fare",
+                                text = if (isB2bPostpaidSelected) "B2B Monthly Bill (₹0 Pay Now)" else "Final Payable Fare",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = SlateMuted
                             )
@@ -202,13 +204,17 @@ fun CustomerBookingConfirmationScreen(
                             border = BorderStroke(1.dp, BrandOrange.copy(alpha = 0.3f))
                         ) {
                             Text(
-                                text = when (selectedPaymentMethod) {
-                                    CustomerPaymentMethod.CASH_ON_DELIVERY -> "Cash On Delivery"
-                                    CustomerPaymentMethod.GATEWAY_UPI -> "UPI: ${selectedUpiApp.displayName}"
-                                    CustomerPaymentMethod.GATEWAY_CREDIT_CARD -> "Credit Card"
-                                    CustomerPaymentMethod.GATEWAY_DEBIT_CARD -> "Debit Card"
-                                    CustomerPaymentMethod.GATEWAY_NET_BANKING -> "Net Banking"
-                                    else -> "Direct Rider UPI"
+                                text = if (isB2bPostpaidSelected) {
+                                    "B2B Postpaid (${b2bShopName.ifBlank { "Monthly Bill" }})"
+                                } else {
+                                    when (selectedPaymentMethod) {
+                                        CustomerPaymentMethod.CASH_ON_DELIVERY -> "Cash On Delivery"
+                                        CustomerPaymentMethod.GATEWAY_UPI -> "UPI: ${selectedUpiApp.displayName}"
+                                        CustomerPaymentMethod.GATEWAY_CREDIT_CARD -> "Credit Card"
+                                        CustomerPaymentMethod.GATEWAY_DEBIT_CARD -> "Debit Card"
+                                        CustomerPaymentMethod.GATEWAY_NET_BANKING -> "Net Banking"
+                                        else -> "Direct Rider UPI"
+                                    }
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,

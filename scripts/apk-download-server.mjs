@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import tls from 'node:tls';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,6 +8,9 @@ import { execSync, spawn } from 'node:child_process';
 
 const PORT = Number(process.env.APP_PORT || 3000);
 const ROOT = process.cwd();
+const BRAND_DOMAIN = 'quickdelivery.co.in';
+const BRAND_ORIGIN = 'https://quickdelivery.co.in';
+const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
 const SYNC_STATE_FILE = '/tmp/quickdelivery-live-sync.json';
 const BACKUP_DIR = path.join(ROOT, 'data', 'backups');
 const CLOUD_RUN_MAX_SAFE_APK_BYTES = 33000000; // < 31.5 MiB (well below Cloud Run's 32 MiB = 33,554,432 limit)
@@ -63,6 +67,7 @@ const DEMO_ORDER_IDS = new Set([
   'QD-5402',
   'ORD-1001',
   'ORD-1002',
+  'QD-TEST-615',
 ]);
 
 function loadSyncState() {
@@ -76,6 +81,24 @@ function loadSyncState() {
             cleanOrders[k] = v;
           }
         }
+        const loadedFlags = parsed.remoteFeatureFlags || null;
+        if (loadedFlags && Number(loadedFlags.flagsSchemaVersion || 1) < 2) {
+          loadedFlags.scheduledDeliveryEnabled = true;
+          loadedFlags.multiDropEnabled = true;
+          loadedFlags.parcelInsuranceEnabled = true;
+          loadedFlags.referralWalletEnabled = true;
+          loadedFlags.waitTimeAndCancelRuleEnabled = true;
+          loadedFlags.peakAutoSurgeEnabled = true;
+          loadedFlags.flagsSchemaVersion = 2;
+        }
+        if (loadedFlags && Number(loadedFlags.flagsSchemaVersion || 2) < 3) {
+          loadedFlags.b2bPostpaidEnabled = Boolean(loadedFlags.b2bPostpaidEnabled || false);
+          loadedFlags.b2bDefaultCreditLimitInr = Number(loadedFlags.b2bDefaultCreditLimitInr || 25000);
+          loadedFlags.b2bBillingCycleDays = Number(loadedFlags.b2bBillingCycleDays || 30);
+          loadedFlags.razorpayRouteSplitEnabled = Boolean(loadedFlags.razorpayRouteSplitEnabled || false);
+          loadedFlags.autoKycApiEnabled = Boolean(loadedFlags.autoKycApiEnabled || false);
+          loadedFlags.flagsSchemaVersion = 3;
+        }
         return {
           resetEpochMs: Number(parsed.resetEpochMs || 0),
           ordersById: cleanOrders,
@@ -85,7 +108,7 @@ function loadSyncState() {
           promoCouponsByCode: parsed.promoCouponsByCode || {},
           withdrawalRequestsById: parsed.withdrawalRequestsById || {},
           supportTicketsById: parsed.supportTicketsById || {},
-          remoteFeatureFlags: parsed.remoteFeatureFlags || null,
+          remoteFeatureFlags: loadedFlags,
           chatMessagesById: parsed.chatMessagesById || {},
           waitTimerStartByOrder: parsed.waitTimerStartByOrder || {},
           riderLiveCoordsByOrder: parsed.riderLiveCoordsByOrder || {},
@@ -93,6 +116,17 @@ function loadSyncState() {
           disputeRecordsById: parsed.disputeRecordsById || {},
           riderDocExpiriesById: parsed.riderDocExpiriesById || {},
           paymentsByOrder: parsed.paymentsByOrder || {},
+          orderRatingsByOrder: parsed.orderRatingsByOrder || {},
+          orderTimelineEventsById: parsed.orderTimelineEventsById || {},
+          unreachableByOrder: parsed.unreachableByOrder || {},
+          b2bAccountsById: parsed.b2bAccountsById || {},
+          emailedTicketIds: parsed.emailedTicketIds || {},
+          securityStats: parsed.securityStats || {
+            blockedFakeOrders: 0,
+            rateLimitedRequests: 0,
+            rejectedInvalidPayloads: 0,
+            recentBlockedEvents: [],
+          },
         };
       }
     }
@@ -114,11 +148,234 @@ function loadSyncState() {
     disputeRecordsById: {},
     riderDocExpiriesById: {},
     paymentsByOrder: {},
+    orderRatingsByOrder: {},
+    orderTimelineEventsById: {},
+    unreachableByOrder: {},
+    b2bAccountsById: {},
+    emailedTicketIds: {},
+    securityStats: {
+      blockedFakeOrders: 0,
+      rateLimitedRequests: 0,
+      rejectedInvalidPayloads: 0,
+      recentBlockedEvents: [],
+    },
   };
 }
 
 let syncState = loadSyncState();
 let lastDailyBackupWriteMs = 0;
+
+// ============================================================================
+// SERVER-SIDE ANTI-FAKE-ORDER & ANTI-LOAD SECURITY SHIELD
+// ============================================================================
+const SYNC_HMAC_SECRET = 'QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in';
+const MAX_SYNC_BODY_BYTES = 4 * 1024 * 1024; // 4 MB payload ceiling
+const MAX_SYNC_REQ_PER_MIN_PER_IP = 180; // supports multiple phones behind shared Wi-Fi NAT polling ~1.8s
+const MAX_HEAVY_REQ_PER_MIN_PER_IP = 30;
+const MAX_ACTIVE_PENDING_ORDERS_PER_ACTOR = 5;
+const MAX_NEW_ORDERS_PER_MIN_PER_ACTOR = 8;
+const DUPLICATE_ORDER_COOLDOWN_MS = 10000;
+const ONE_MINUTE_MS = 60000;
+const SYNC_TIMESTAMP_SKEW_MS = 10 * 60 * 1000;
+
+const ipRequestBuckets = new Map();
+const heavyRequestBuckets = new Map();
+const newOrderBucketsByActor = new Map();
+const recentRouteByActor = new Map();
+
+const BLOCKED_FAKE_PHONES = new Set([
+  '0000000000',
+  '1111111111',
+  '2222222222',
+  '3333333333',
+  '4444444444',
+  '5555555555',
+  '6666666666',
+  '7777777777',
+  '8888888888',
+  '9999999999',
+  '1234567890',
+  '0123456789',
+]);
+
+function ensureSecurityStats() {
+  if (!syncState.securityStats || typeof syncState.securityStats !== 'object') {
+    syncState.securityStats = {
+      blockedFakeOrders: 0,
+      rateLimitedRequests: 0,
+      rejectedInvalidPayloads: 0,
+      recentBlockedEvents: [],
+    };
+  }
+  if (!Array.isArray(syncState.securityStats.recentBlockedEvents)) {
+    syncState.securityStats.recentBlockedEvents = [];
+  }
+  return syncState.securityStats;
+}
+
+function recordSecurityBlock(type, actor, detail) {
+  const stats = ensureSecurityStats();
+  if (type === 'RATE_LIMIT') {
+    stats.rateLimitedRequests = Number(stats.rateLimitedRequests || 0) + 1;
+  } else if (type === 'INVALID_SIG' || type === 'BAD_PAYLOAD') {
+    stats.rejectedInvalidPayloads = Number(stats.rejectedInvalidPayloads || 0) + 1;
+  } else {
+    stats.blockedFakeOrders = Number(stats.blockedFakeOrders || 0) + 1;
+  }
+  stats.recentBlockedEvents.unshift({
+    type,
+    actor: String(actor || 'unknown').slice(0, 40),
+    detail: String(detail || '').slice(0, 140),
+    atIso: new Date().toISOString(),
+  });
+  if (stats.recentBlockedEvents.length > 30) {
+    stats.recentBlockedEvents = stats.recentBlockedEvents.slice(0, 30);
+  }
+}
+
+function getClientIp(req) {
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  if (xff) return xff;
+  return String(req.socket?.remoteAddress || 'unknown');
+}
+
+function checkIpRateLimit(req, isHeavy = false) {
+  const now = Date.now();
+  const ip = getClientIp(req);
+  const bucketMap = isHeavy ? heavyRequestBuckets : ipRequestBuckets;
+  const maxPerMin = isHeavy ? MAX_HEAVY_REQ_PER_MIN_PER_IP : MAX_SYNC_REQ_PER_MIN_PER_IP;
+  const prev = bucketMap.get(ip) || [];
+  const active = prev.filter(ts => now - ts < ONE_MINUTE_MS);
+  if (active.length >= maxPerMin) {
+    bucketMap.set(ip, active);
+    recordSecurityBlock('RATE_LIMIT', ip, `${active.length} req/min exceeded (${isHeavy ? 'heavy' : 'sync'})`);
+    return { allowed: false, ip, retryAfterSec: 15 };
+  }
+  active.push(now);
+  bucketMap.set(ip, active);
+  if (bucketMap.size > 500) {
+    for (const [k, arr] of bucketMap.entries()) {
+      if (!arr.length || now - arr[arr.length - 1] > ONE_MINUTE_MS) {
+        bucketMap.delete(k);
+      }
+    }
+  }
+  return { allowed: true, ip };
+}
+
+function verifySyncHmacHeaders(req, deviceId, role) {
+  const sigHeader = String(req.headers['x-qd-sync-sig'] || '').trim().toLowerCase();
+  const tsHeader = String(req.headers['x-qd-sync-ts'] || '').trim();
+  const tsNum = Number(tsHeader);
+  if (!sigHeader || !Number.isFinite(tsNum)) {
+    return { ok: false, reason: 'Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header' };
+  }
+  if (Math.abs(Date.now() - tsNum) > SYNC_TIMESTAMP_SKEW_MS) {
+    return { ok: false, reason: 'Expired sync request timestamp (clock skew exceeded)' };
+  }
+  const canonical = `${String(deviceId || '').trim()}|${String(role || 'UNIFIED').trim().toUpperCase()}|${tsNum}`;
+  const expected = crypto.createHmac('sha256', SYNC_HMAC_SECRET).update(canonical).digest('hex').toLowerCase();
+  const sigBuf = Buffer.from(sigHeader, 'utf-8');
+  const expBuf = Buffer.from(expected, 'utf-8');
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return { ok: false, reason: 'HMAC integrity signature mismatch' };
+  }
+  return { ok: true };
+}
+
+function parseMoneyInr(raw) {
+  const cleaned = String(raw || '')
+    .split('(')[0]
+    .replace(/[₹,\s]/g, '')
+    .trim();
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function hasUnsafePayloadText(str) {
+  const lower = String(str || '').toLowerCase();
+  return (
+    lower.includes('<script') ||
+    lower.includes('javascript:') ||
+    lower.includes('onerror=') ||
+    lower.includes('onload=') ||
+    lower.includes('"$where"') ||
+    lower.includes('"$ne"')
+  );
+}
+
+function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now) {
+  if (!incoming || !incoming.orderId) return { ok: false, reason: 'Missing orderId' };
+  const oid = String(incoming.orderId).trim();
+  if (!/^[A-Za-z0-9_-]{3,40}$/.test(oid)) {
+    return { ok: false, reason: `Malformed orderId ${oid}` };
+  }
+  const pickup = String(incoming.pickupFullAddress || '').trim();
+  const drop = String(incoming.dropFullAddress || '').trim();
+  if (hasUnsafePayloadText(pickup) || hasUnsafePayloadText(drop) || hasUnsafePayloadText(incoming.customerName)) {
+    return { ok: false, reason: `Unsafe markup rejected on order ${oid}` };
+  }
+  if (pickup.length < 3 || drop.length < 3) {
+    return { ok: false, reason: `Incomplete pickup/drop address on ${oid}` };
+  }
+  if (pickup.toLowerCase() === drop.toLowerCase()) {
+    return { ok: false, reason: `Identical pickup and drop address rejected on ${oid}` };
+  }
+
+  const rawPhoneDigits = String(incoming.customerPhone || '').replace(/\D/g, '');
+  const phone10 = rawPhoneDigits.length >= 10 ? rawPhoneDigits.slice(-10) : rawPhoneDigits;
+  if (rawPhoneDigits.length > 0) {
+    if (phone10.length !== 10 || BLOCKED_FAKE_PHONES.has(phone10) || new Set(phone10.split('')).size <= 1) {
+      return { ok: false, reason: `Fake/dummy customer phone (${phone10}) blocked on ${oid}` };
+    }
+  }
+
+  const totalInr = parseMoneyInr(incoming.totalAmount);
+  const commInr = parseMoneyInr(incoming.platformCommission);
+  const riderInr = parseMoneyInr(incoming.riderEarning);
+  if (totalInr < 15 || totalInr > 50000 || Math.abs(commInr + riderInr - totalInr) > 2.5) {
+    return { ok: false, reason: `Invalid or tampered fare split (total=${totalInr}) on ${oid}` };
+  }
+
+  const existing = syncState.ordersById[oid];
+  if (!existing) {
+    const actor = phone10 || senderDeviceId || 'anon';
+    let activePending = 0;
+    for (const ord of Object.values(syncState.ordersById)) {
+      if (!ord || ord.orderStatus !== 'SEARCHING_RIDER') continue;
+      const ordPhone = String(ord.customerPhone || '').replace(/\D/g, '').slice(-10);
+      if ((phone10 && ordPhone === phone10) || (senderDeviceId && ord.createdByDeviceId === senderDeviceId)) {
+        activePending++;
+      }
+    }
+    if (activePending >= MAX_ACTIVE_PENDING_ORDERS_PER_ACTOR) {
+      return { ok: false, reason: `Active unassigned order queue cap (${MAX_ACTIVE_PENDING_ORDERS_PER_ACTOR}) reached for ${actor}` };
+    }
+
+    const routeFp = `${actor}|${pickup.toLowerCase()}|${drop.toLowerCase()}|${String(incoming.vehicleType || '').toUpperCase()}`;
+    const lastSameRoute = recentRouteByActor.get(routeFp);
+    if (lastSameRoute && now - lastSameRoute < DUPLICATE_ORDER_COOLDOWN_MS) {
+      return { ok: false, reason: `Duplicate order burst blocked within 10s for ${actor}` };
+    }
+
+    const actorTs = (newOrderBucketsByActor.get(actor) || []).filter(ts => now - ts < ONE_MINUTE_MS);
+    if (actorTs.length >= MAX_NEW_ORDERS_PER_MIN_PER_ACTOR) {
+      newOrderBucketsByActor.set(actor, actorTs);
+      return { ok: false, reason: `Order spam burst limit (${MAX_NEW_ORDERS_PER_MIN_PER_ACTOR}/min) exceeded for ${actor}` };
+    }
+
+    actorTs.push(now);
+    newOrderBucketsByActor.set(actor, actorTs);
+    recentRouteByActor.set(routeFp, now);
+    if (recentRouteByActor.size > 500) {
+      for (const [k, ts] of recentRouteByActor.entries()) {
+        if (now - ts > ONE_MINUTE_MS) recentRouteByActor.delete(k);
+      }
+    }
+  }
+
+  return { ok: true };
+}
 
 function writeDailyBackupSnapshot(force = false) {
   const now = Date.now();
@@ -197,6 +454,180 @@ function sendFcmPushNotifications({ tokens, title, body, data = {} }) {
   } catch {}
 }
 
+function sendWorkspaceSmtpTlsMail({ smtpHost, smtpPort, smtpUser, smtpPass, toEmail, subject, textBody }) {
+  return new Promise((resolve, reject) => {
+    const socket = tls.connect(smtpPort, smtpHost, { servername: smtpHost, timeout: 12000 });
+    let buffer = '';
+    const steps = [
+      () => `EHLO ${BRAND_DOMAIN}\r\n`,
+      () => `AUTH LOGIN\r\n`,
+      () => `${Buffer.from(smtpUser, 'utf-8').toString('base64')}\r\n`,
+      () => `${Buffer.from(smtpPass, 'utf-8').toString('base64')}\r\n`,
+      () => `MAIL FROM:<${smtpUser}>\r\n`,
+      () => `RCPT TO:<${toEmail}>\r\n`,
+      () => `DATA\r\n`,
+      () => {
+        const cleanSubject = String(subject || '').replace(/[\r\n]+/g, ' ');
+        const headers = [
+          `From: "Quick Delivery Desk" <${smtpUser}>`,
+          `To: <${toEmail}>`,
+          `Subject: ${cleanSubject}`,
+          `MIME-Version: 1.0`,
+          `Content-Type: text/plain; charset=UTF-8`,
+          '',
+          textBody.replace(/\r?\n\./g, '\r\n..'),
+          '.',
+          '',
+        ].join('\r\n');
+        return headers;
+      },
+      () => `QUIT\r\n`,
+    ];
+    let stepIndex = 0;
+    let settled = false;
+    const finish = (err, val) => {
+      if (settled) return;
+      settled = true;
+      try { socket.end(); } catch {}
+      if (err) reject(err);
+      else resolve(val);
+    };
+    socket.on('timeout', () => finish(new Error('SMTP timeout')));
+    socket.on('error', err => finish(err));
+    socket.on('data', chunk => {
+      buffer += chunk.toString('utf-8');
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line) continue;
+        // Multi-line SMTP responses have '-' at index 3 (e.g. 250-...)
+        if (line.length >= 4 && line[3] === '-') continue;
+        const code = Number(line.slice(0, 3));
+        if (!Number.isFinite(code) || code >= 400) {
+          finish(new Error(`SMTP error ${line}`));
+          return;
+        }
+        if (stepIndex < steps.length) {
+          socket.write(steps[stepIndex++]());
+        } else {
+          finish(null, true);
+          return;
+        }
+      }
+    });
+  });
+}
+
+function dispatchSupportTicketToWorkspaceEmail(ticket) {
+  if (!ticket || !ticket.ticketId) return;
+  const tid = String(ticket.ticketId);
+  if (!syncState.emailedTicketIds) syncState.emailedTicketIds = {};
+  if (syncState.emailedTicketIds[tid]) return;
+
+  const smtpUser = process.env.SUPPORT_SMTP_USER || '';
+  const smtpPass = process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS || '';
+  const smtpHost = process.env.SUPPORT_SMTP_HOST || 'smtp.gmail.com';
+  const smtpPort = Number(process.env.SUPPORT_SMTP_PORT || 465);
+  const webhookUrl = process.env.SUPPORT_EMAIL_WEBHOOK_URL || '';
+  const targetEmail = process.env.SUPPORT_TO_EMAIL || BRAND_SUPPORT_EMAIL;
+
+  const subject = `[Quick Delivery Ticket #${tid}] ${ticket.senderRole || 'USER'}: ${ticket.category || 'Support'}`;
+  const textBody = [
+    `New Support Ticket Logged on ${BRAND_DOMAIN}`,
+    `--------------------------------------------------`,
+    `Ticket ID   : ${tid}`,
+    `Raised By   : ${ticket.senderRole || 'USER'} (${ticket.senderName || 'User'})`,
+    `Phone       : ${ticket.senderPhone || 'Not provided'}`,
+    `Order ID    : ${ticket.orderId ? '#' + ticket.orderId : 'N/A'}`,
+    `Category    : ${ticket.category || 'General'}`,
+    `Created At  : ${ticket.createdAtLabel || new Date().toISOString()}`,
+    `--------------------------------------------------`,
+    `Message:`,
+    `${ticket.message || ''}`,
+    ``,
+    `Open Quick Delivery Admin App -> Complaints & Support to reply live.`,
+  ].join('\n');
+
+  syncState.emailedTicketIds[tid] = {
+    ticketId: tid,
+    to: targetEmail,
+    status: smtpUser && smtpPass ? 'SENDING_SMTP' : webhookUrl ? 'SENDING_WEBHOOK' : 'PENDING_WORKSPACE_ENV',
+    updatedAtIso: new Date().toISOString(),
+  };
+
+  if (smtpUser && smtpPass) {
+    sendWorkspaceSmtpTlsMail({
+      smtpHost,
+      smtpPort,
+      smtpUser,
+      smtpPass,
+      toEmail: targetEmail,
+      subject,
+      textBody,
+    })
+      .then(() => {
+        syncState.emailedTicketIds[tid] = {
+          ticketId: tid,
+          to: targetEmail,
+          status: 'SENT_WORKSPACE_SMTP',
+          updatedAtIso: new Date().toISOString(),
+        };
+        saveSyncState();
+      })
+      .catch(err => {
+        syncState.emailedTicketIds[tid] = {
+          ticketId: tid,
+          to: targetEmail,
+          status: `SMTP_ERROR: ${err.message}`,
+          updatedAtIso: new Date().toISOString(),
+        };
+        saveSyncState();
+      });
+    return;
+  }
+
+  if (webhookUrl) {
+    try {
+      const u = new URL(webhookUrl);
+      const client = u.protocol === 'http:' ? http : https;
+      const bodyJson = JSON.stringify({ to: targetEmail, subject, textBody, ticket });
+      const req = client.request(
+        {
+          hostname: u.hostname,
+          port: u.port || (u.protocol === 'http:' ? 80 : 443),
+          path: u.pathname + (u.search || ''),
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(bodyJson),
+          },
+        },
+        res => {
+          res.resume();
+          syncState.emailedTicketIds[tid] = {
+            ticketId: tid,
+            to: targetEmail,
+            status: res.statusCode && res.statusCode < 400 ? 'SENT_WEBHOOK' : `WEBHOOK_HTTP_${res.statusCode}`,
+            updatedAtIso: new Date().toISOString(),
+          };
+          saveSyncState();
+        }
+      );
+      req.on('error', err => {
+        syncState.emailedTicketIds[tid] = {
+          ticketId: tid,
+          to: targetEmail,
+          status: `WEBHOOK_ERROR: ${err.message}`,
+          updatedAtIso: new Date().toISOString(),
+        };
+        saveSyncState();
+      });
+      req.write(bodyJson);
+      req.end();
+    } catch {}
+  }
+}
+
 function saveSyncState() {
   try {
     fs.writeFileSync(SYNC_STATE_FILE, JSON.stringify(syncState), 'utf-8');
@@ -270,7 +701,8 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${pageHeading}</title>
+  <link rel="canonical" href="${BRAND_ORIGIN}${roleUpper === 'CUSTOMER' ? '/customer-apk' : roleUpper === 'RIDER' ? '/rider-apk' : roleUpper === 'ADMIN' ? '/admin-apk' : '/'}" />
+  <title>${pageHeading} • ${BRAND_DOMAIN}</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -451,11 +883,11 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     </div>
 
     <div class="guide-box">
-      <h2>✨ v6.1.3 Production Enterprise &amp; Quick Commerce Upgrade</h2>
+      <h2>✨ v6.3.1 ${BRAND_DOMAIN} • Cloud Firestore &amp; Enterprise Suite</h2>
       <ol class="step-list">
-        <li><b>Customer App:</b> Porter-style Box Capacity Guide (Bike/Scooter/Auto dimensions) + Loading Helper (+₹60), Swiggy/Zomato Animated Route Polyline &amp; "Arriving in X mins" Map, 1-Tap Receiver Live Tracking &amp; Drop OTP Share, and Instant Order Dispute Filing.</li>
-        <li><b>Rider Partner App:</b> Smart Same-Route Order Batching (+₹25 Clubbing Bonus), Customer Helper Request badge, GPS+Time Photo Watermark, and Instant UPI/IMPS vs Weekly Auto-Payout selector.</li>
-        <li><b>Admin Console:</b> Live Zone Supply-vs-Demand Alert + 1-Tap Surge Trigger, Rider COD Cash Settlement Ledger, Dispute &amp; Instant Wallet Refund Desk, Rider DL/RC/Insurance Expiry Tracker, and Peak-Hour Auto-Surge Scheduler.</li>
+        <li><b>Customer App:</b> Clean Booking Flow, Address Autocomplete, Saved Address Labels, Phonebook Picker, Proximity Arrival OTP, Post-Delivery Rating/Tip &amp; Optional B2B Dukaan Monthly Postpaid / Bulk Dispatch (only visible when enabled by Admin).</li>
+        <li><b>Rider Partner App:</b> 30s Ringing Offer Countdown with Distance &amp; ₹/km Payout, Rejection Reason Tracking &amp; Auto Re-Search, Reached Pickup Gate Check-In, Unreachable Call Logger &amp; Complete Earnings / TDS Breakdown.</li>
+        <li><b>Admin Enterprise:</b> Permanent Cloud Firestore Cross-Device Sync, Remote Feature Switches (B2B Postpaid, Razorpay 80/20 Split &amp; Auto-KYC API — all safely OFF by default until activated), Consolidated GST Invoices &amp; Play Store .aab Release Readiness.</li>
       </ol>
     </div>
 
@@ -466,7 +898,8 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
       </div>
     </div>
 
-    <div style="margin-top: 16px; text-align: center; font-size: 12px; color: #A7F3D0;">
+    <div style="margin-top: 16px; text-align: center; font-size: 12px; color: #A7F3D0; line-height: 1.8;">
+      <div><b>Official Domain:</b> <a href="${BRAND_ORIGIN}" style="color: #6EE7B7;">${BRAND_DOMAIN}</a> • <b>Support:</b> <a href="mailto:${BRAND_SUPPORT_EMAIL}" style="color: #6EE7B7;">${BRAND_SUPPORT_EMAIL}</a></div>
       <a href="/privacy-policy" style="color: #6EE7B7; margin: 0 8px;">Privacy Policy</a> •
       <a href="/terms" style="color: #6EE7B7; margin: 0 8px;">Terms of Service</a> •
       <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a> •
@@ -504,17 +937,19 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
         const data = await res.json();
         const devices = data.connectedDevices || [];
         const orders = data.orders || [];
+        const sec = data.securityStats || {};
         const el = document.getElementById('live-sync-summary');
         if (!el) return;
         const devHtml = devices.length
           ? devices.map(d => '<b>' + d.role + '</b> (' + d.deviceModel + ')').join(' &nbsp;|&nbsp; ')
           : 'System Online — Ready for Customer, Rider Partner & Admin connections.';
+        const secHtml = '<div style="margin-top:6px;font-size:12px;color:#A7F3D0;">Anti-Spam Security Shield Active • Blocked Fake Orders: <b>' + (sec.blockedFakeOrders || 0) + '</b> • Rate-Limited Floods: <b>' + (sec.rateLimitedRequests || 0) + '</b></div>';
         const ordHtml = orders.length
           ? '<ul style="margin:8px 0 0 0;padding-left:18px;">' + orders.map(o =>
               '<li><b>' + o.orderId + '</b> — ' + o.orderStatus + ' | ' + o.totalAmount + '</li>'
             ).join('') + '</ul>'
           : '<div style="margin-top:6px;color:#A7F3D0;">No active orders in queue.</div>';
-        el.innerHTML = '<div><b>Connected Devices (' + devices.length + '):</b> ' + devHtml + '</div>' + ordHtml;
+        el.innerHTML = '<div><b>Connected Devices (' + devices.length + '):</b> ' + devHtml + '</div>' + secHtml + ordHtml;
       } catch (e) {}
     }
     setInterval(refreshLiveSync, 3000);
@@ -527,16 +962,17 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
 function renderLegalPageHtml(kind = 'privacy') {
   const isTerms = kind === 'terms';
   const isDelete = kind === 'delete';
+  const slug = isDelete ? '/delete-account' : isTerms ? '/terms' : '/privacy-policy';
   const title = isDelete
-    ? 'Quick Delivery — Account & Data Deletion Request'
+    ? `Quick Delivery (${BRAND_DOMAIN}) — Account & Data Deletion Request`
     : isTerms
-    ? 'Quick Delivery — Terms of Service'
-    : 'Quick Delivery — Privacy Policy';
+    ? `Quick Delivery (${BRAND_DOMAIN}) — Terms of Service`
+    : `Quick Delivery (${BRAND_DOMAIN}) — Privacy Policy`;
 
   const bodyContent = isDelete
     ? `
       <h1>Account &amp; Data Deletion</h1>
-      <p><b>Applies to:</b> Quick Delivery, Partner Quick Delivery, and Quick Delivery Admin (com.aistudio.quickdelivery.*)</p>
+      <p><b>Domain:</b> <a href="${BRAND_ORIGIN}">${BRAND_ORIGIN}</a> • <b>Web URL:</b> <a href="${BRAND_ORIGIN}/delete-account">${BRAND_ORIGIN}/delete-account</a><br /><b>Applies to:</b> Quick Delivery, Partner Quick Delivery, and Quick Delivery Admin (com.aistudio.quickdelivery.*)</p>
       <div class="card">
         <h2>Option 1: Instant In-App Deletion</h2>
         <ol>
@@ -548,17 +984,17 @@ function renderLegalPageHtml(kind = 'privacy') {
       </div>
       <div class="card">
         <h2>Option 2: Web &amp; Server Data Deletion Request</h2>
-        <p>To request permanent erasure of any cloud order logs or partner records stored on our dispatch servers, email <a href="mailto:ravindergupta141@gmail.com?subject=Quick%20Delivery%20Account%20Deletion%20Request">ravindergupta141@gmail.com</a> from your registered email address with your 10-digit mobile number. Verified requests are processed within 7 business days.</p>
+        <p>To request permanent erasure of any cloud order logs or partner records stored on our dispatch servers, email <a href="mailto:${BRAND_SUPPORT_EMAIL}?subject=Quick%20Delivery%20Account%20Deletion%20Request">${BRAND_SUPPORT_EMAIL}</a> from your registered email address with your 10-digit mobile number. Verified requests are processed within 7 business days.</p>
       </div>`
     : isTerms
     ? `
       <h1>Terms of Service — Quick Delivery Suite</h1>
-      <p><b>Effective Date:</b> November 2026 • <b>Contact:</b> ravindergupta141@gmail.com</p>
+      <p><b>Official Website:</b> <a href="${BRAND_ORIGIN}">${BRAND_ORIGIN}</a> • <b>Effective Date:</b> November 2026<br /><b>Contact &amp; Support Email:</b> <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a></p>
       <div class="card">
         <h2>1. Mandatory Consent, Account Isolation &amp; Permissions</h2>
-        <p>Users must read and explicitly accept the Privacy Policy &amp; Terms before signing up. Each customer account is strictly isolated by its 10-digit mobile number or verified email so order history, live tracking, and saved addresses remain private to that account. Location, Camera, and Notification permissions are required post-login to operate parcel pickup, GPS tracking, and proof-of-delivery features.</p>
+        <p>Users must read and explicitly accept the Privacy Policy (<a href="${BRAND_ORIGIN}/privacy-policy">${BRAND_ORIGIN}/privacy-policy</a>) &amp; Terms (<a href="${BRAND_ORIGIN}/terms">${BRAND_ORIGIN}/terms</a>) before signing up. Each customer account is strictly isolated by its 10-digit mobile number or verified email so order history, live tracking, and saved addresses remain private to that account. Location, Camera, and Notification permissions are required post-login to operate parcel pickup, GPS tracking, and proof-of-delivery features.</p>
         <h2>2. Parcel Booking &amp; Prohibited Items</h2>
-        <p>Quick Delivery provides on-demand local parcel pickup and drop-off services (maximum 20 kg per shipment). Prohibited, illegal, flammable, hazardous, stolen, or restricted goods are strictly banned; the sender bears full legal responsibility for declared contents.</p>
+        <p>Quick Delivery (${BRAND_DOMAIN}) provides on-demand local parcel pickup and drop-off services (maximum 20 kg per shipment). Prohibited, illegal, flammable, hazardous, stolen, or restricted goods are strictly banned; the sender bears full legal responsibility for declared contents.</p>
         <h2>3. OTP Handover, Wait-Time &amp; Cancellation</h2>
         <p>Orders require 4-digit Pickup and Drop OTP + digital signature verification. Pre-pickup cancellations after partner dispatch and pickup wait time beyond the free grace window may incur policy fees when enabled by Admin.</p>
         <h2>4. Partner Safety, KYC &amp; Fair Settlement</h2>
@@ -566,11 +1002,11 @@ function renderLegalPageHtml(kind = 'privacy') {
       </div>`
     : `
       <h1>Privacy Policy — Quick Delivery Suite</h1>
-      <p><b>Apps Covered:</b> Quick Delivery (Customer), Partner Quick Delivery (Rider), and Quick Delivery Admin<br /><b>Developer / Data Controller:</b> Quick Delivery Logistics (<a href="mailto:ravindergupta141@gmail.com">ravindergupta141@gmail.com</a>)<br /><b>Effective Date:</b> November 2026</p>
+      <p><b>Official Website:</b> <a href="${BRAND_ORIGIN}">${BRAND_ORIGIN}</a> • <b>Policy URL:</b> <a href="${BRAND_ORIGIN}/privacy-policy">${BRAND_ORIGIN}/privacy-policy</a><br /><b>Apps Covered:</b> Quick Delivery (Customer), Partner Quick Delivery (Rider), and Quick Delivery Admin<br /><b>Developer / Data Controller:</b> Quick Delivery Logistics (<a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a>)<br /><b>Effective Date:</b> November 2026</p>
       <div class="card">
         <h2>1. Account-Isolated Information We Collect</h2>
         <ul>
-          <li><b>Account &amp; Partner Identity:</b> Name, 10-digit mobile number, email address, and (for Riders) KYC documents strictly isolated per account for booking history, GST receipts, and payouts.</li>
+          <li><b>Account &amp; Partner Identity:</b> Name, 10-digit mobile number, Google email address, and (for Riders) KYC documents strictly isolated per account for booking history, GST receipts, and payouts.</li>
           <li><b>Foreground Location (Required Post-Login):</b> Approximate and precise GPS coordinates collected only while booking, actively navigating, or tracking an active order. No background spying occurs when offline.</li>
           <li><b>Camera (Required Post-Login, User-Initiated):</b> Parcel pickup/drop proof photos and Rider selfie check-ins captured only when triggered by you. Zero broad storage permissions are requested.</li>
           <li><b>Notifications (Required Post-Login):</b> Push and local tray alerts strictly for order status updates, OTPs, and live Rider-Customer chat.</li>
@@ -578,11 +1014,11 @@ function renderLegalPageHtml(kind = 'privacy') {
         <h2>2. How We Use &amp; Protect Data</h2>
         <ul>
           <li>Used solely to calculate transparent delivery fares, verify OTP &amp; digital signature handovers, display live rider ETA, generate GST/Earning PDFs, and verify online payments.</li>
-          <li>All traffic in transit is encrypted over HTTPS (TLS) with HMAC-SHA256 fare and session integrity sealing.</li>
+          <li>All traffic in transit is encrypted over HTTPS (TLS) with Firebase Zero-Trust rules and HMAC-SHA256 integrity verification.</li>
           <li>We never sell personal data or share it with third-party advertising networks.</li>
         </ul>
         <h2>3. Data Retention &amp; Account Deletion</h2>
-        <p>You can permanently delete your account and local profile anytime inside the app via <b>Menu → Delete Account &amp; Data</b>, or review web deletion instructions at <a href="/delete-account">/delete-account</a>.</p>
+        <p>You can permanently delete your account and profile anytime inside the app via <b>Menu → Delete Account &amp; Data</b>, review web deletion instructions at <a href="${BRAND_ORIGIN}/delete-account">${BRAND_ORIGIN}/delete-account</a>, or email <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a>.</p>
       </div>`;
 
   return `<!DOCTYPE html>
@@ -590,6 +1026,7 @@ function renderLegalPageHtml(kind = 'privacy') {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="canonical" href="${BRAND_ORIGIN}${slug}" />
   <title>${title}</title>
   <style>
     body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #042F2E; color: #F8FAFC; line-height: 1.6; }
@@ -605,10 +1042,56 @@ function renderLegalPageHtml(kind = 'privacy') {
   <div class="wrap">
     ${bodyContent}
     <div class="nav">
-      <a href="/download">App Downloads</a> •
+      <a href="/">Home (${BRAND_DOMAIN})</a> •
       <a href="/privacy-policy">Privacy Policy</a> •
       <a href="/terms">Terms of Service</a> •
       <a href="/delete-account">Delete Account</a>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+function renderFirebaseHostingHomeHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="canonical" href="${BRAND_ORIGIN}/" />
+  <title>Quick Delivery (${BRAND_DOMAIN}) — Local Parcel Delivery Suite</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #022C22; color: #F8FAFC; line-height: 1.55; }
+    .wrap { max-width: 740px; margin: 0 auto; }
+    .hero { background: linear-gradient(135deg, #065F46, #042F2E); border: 2px solid #34D399; border-radius: 18px; padding: 22px; margin-bottom: 16px; }
+    .badge { display: inline-block; background: #10B981; color: #022C22; font-weight: 800; font-size: 11px; padding: 4px 10px; border-radius: 999px; text-transform: uppercase; }
+    h1 { margin: 10px 0 6px; font-size: 24px; color: #ECFDF5; }
+    .card { background: #0F172A; border: 1px solid #1E293B; border-radius: 14px; padding: 18px; margin-bottom: 12px; }
+    h2 { margin: 0 0 8px; font-size: 16px; color: #6EE7B7; }
+    a { color: #6EE7B7; }
+    .pill { display: inline-block; background: #059669; color: #fff; text-decoration: none; font-weight: 700; padding: 10px 14px; border-radius: 10px; margin: 4px 6px 4px 0; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <span class="badge">Official Site • ${BRAND_DOMAIN}</span>
+      <h1>Quick Delivery Logistics</h1>
+      <p>Fast door-to-door local parcel delivery, OTP &amp; digital-signature handover, transparent upfront pricing, and live GPS partner tracking.</p>
+    </div>
+    <div class="card">
+      <h2>Quick Delivery Mobile Suite (v6.3.1)</h2>
+      <p><b>Customer App:</b> Instant booking, saved address labels, live GPS tracking, UPI/COD checkout &amp; GST receipts.</p>
+      <p><b>Partner Quick Delivery:</b> 80% base fare + 100% customer tips, same-day payouts, pickup/drop camera proof &amp; smart shift controls.</p>
+      <p><b>Quick Delivery Admin:</b> Cloud Firestore real-time fleet console, B2B/Enterprise switches &amp; settlement ledger.</p>
+    </div>
+    <div class="card">
+      <h2>Play Store Compliance &amp; Legal Pages</h2>
+      <a class="pill" href="/privacy-policy">Privacy Policy</a>
+      <a class="pill" href="/terms" style="background:#0D9488;">Terms of Service</a>
+      <a class="pill" href="/delete-account" style="background:#B91C1C;">Delete Account &amp; Data</a>
+      <p style="margin-top:12px;font-size:13px;color:#94A3B8;">Official Contact &amp; Support Email: <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a></p>
     </div>
   </div>
 </body>
@@ -676,6 +1159,14 @@ function configureNginxDirectApkServing() {
       fs.writeFileSync(path.join(ROOT, 'public', 'privacy-policy.html'), htmlPrivacy, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'terms.html'), htmlTerms, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'delete-account.html'), htmlDelete, 'utf-8');
+
+      // Generate Firebase Hosting static bundle (dist/) ready for `firebase deploy --only hosting` on quickdelivery.co.in
+      const distDir = path.join(ROOT, 'dist');
+      fs.mkdirSync(distDir, { recursive: true });
+      fs.writeFileSync(path.join(distDir, 'index.html'), renderFirebaseHostingHomeHtml(), 'utf-8');
+      fs.writeFileSync(path.join(distDir, 'privacy-policy.html'), htmlPrivacy, 'utf-8');
+      fs.writeFileSync(path.join(distDir, 'terms.html'), htmlTerms, 'utf-8');
+      fs.writeFileSync(path.join(distDir, 'delete-account.html'), htmlDelete, 'utf-8');
     } catch {}
 
     const apkBlock = `
@@ -760,7 +1251,19 @@ function configureNginxDirectApkServing() {
             proxy_set_header Host localhost:3000;
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
-            add_header Access-Control-Allow-Headers "Content-Type, Accept";
+            add_header Access-Control-Allow-Headers "Content-Type, Accept, X-QD-App-Client, X-QD-App-Role, X-QD-Sync-Ts, X-QD-Sync-Sig";
+        }
+
+        location = /api/health {
+            proxy_pass http://localhost:3000/api/health;
+            proxy_set_header Host localhost:3000;
+            add_header Access-Control-Allow-Origin "*";
+        }
+
+        location = /api/support-email-status {
+            proxy_pass http://localhost:3000/api/support-email-status;
+            proxy_set_header Host localhost:3000;
+            add_header Access-Control-Allow-Origin "*";
         }
 
         location = /api/backup-export {
@@ -837,7 +1340,7 @@ function buildSyncResponsePayload() {
   const now = Date.now();
   const connectedDevices = [];
   for (const [devId, devInfo] of Object.entries(syncState.devicesById)) {
-    if (now - Number(devInfo.lastSeenEpochMs || 0) <= 30000) {
+    if (now - Number(devInfo.lastSeenEpochMs || 0) <= 60000) {
       connectedDevices.push(devInfo);
     } else {
       delete syncState.devicesById[devId];
@@ -845,7 +1348,9 @@ function buildSyncResponsePayload() {
   }
   return {
     ok: true,
+    serverTimeEpochMs: now,
     resetEpochMs: syncState.resetEpochMs,
+    securityStats: ensureSecurityStats(),
     connectedDevices,
     orders: Object.values(syncState.ordersById),
     riderRegistrations: Object.values(syncState.riderRegistrationsByKey || {}),
@@ -855,6 +1360,12 @@ function buildSyncResponsePayload() {
     codSettlements: Object.values(syncState.codSettlementsById || {}),
     disputeRecords: Object.values(syncState.disputeRecordsById || {}),
     riderDocExpiries: Object.values(syncState.riderDocExpiriesById || {}),
+    orderRatings: Object.values(syncState.orderRatingsByOrder || {}),
+    orderTimelineEvents: Object.values(syncState.orderTimelineEventsById || {}).sort(
+      (a, b) => Number(a.createdAtEpochMs || 0) - Number(b.createdAtEpochMs || 0)
+    ),
+    unreachableByOrder: Object.values(syncState.unreachableByOrder || {}),
+    b2bAccounts: Object.values(syncState.b2bAccountsById || {}),
     remoteFeatureFlags: syncState.remoteFeatureFlags || null,
     waitTimerStartByOrder: syncState.waitTimerStartByOrder || {},
     riderLiveCoordsByOrder: syncState.riderLiveCoordsByOrder || {},
@@ -872,23 +1383,72 @@ const server = http.createServer((req, res) => {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Accept, Range',
+      'Access-Control-Allow-Headers': 'Content-Type, Accept, Range, X-QD-App-Client, X-QD-App-Role, X-QD-Sync-Ts, X-QD-Sync-Sig',
     });
     res.end();
     return;
   }
 
   if (pathname === '/api/live-sync') {
+    const rateCheck = checkIpRateLimit(req, false);
+    if (!rateCheck.allowed) {
+      saveSyncState();
+      res.writeHead(429, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Retry-After': String(rateCheck.retryAfterSec),
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: 'Rate limit exceeded. Too many requests from this IP.',
+          retryAfterSec: rateCheck.retryAfterSec,
+        })
+      );
+      return;
+    }
+
     if (req.method === 'POST') {
       let body = '';
+      let payloadTooLarge = false;
       req.on('data', chunk => {
+        if (payloadTooLarge) return;
         body += chunk;
-        if (body.length > 8 * 1024 * 1024) req.destroy();
+        if (body.length > MAX_SYNC_BODY_BYTES) {
+          payloadTooLarge = true;
+          recordSecurityBlock('BAD_PAYLOAD', getClientIp(req), 'Payload exceeded 4 MB ceiling');
+          res.writeHead(413, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end(JSON.stringify({ ok: false, error: 'Payload too large (max 4 MB).' }));
+          req.destroy();
+        }
       });
       req.on('end', () => {
+        if (payloadTooLarge) return;
         try {
           const payload = JSON.parse(body || '{}');
           const now = Date.now();
+          const devIdForAuth = String(payload.deviceId || '');
+          const roleForAuth = String(payload.role || 'UNIFIED');
+          const sigCheck = verifySyncHmacHeaders(req, devIdForAuth, roleForAuth);
+          if (!sigCheck.ok) {
+            recordSecurityBlock('INVALID_SIG', getClientIp(req), sigCheck.reason);
+            saveSyncState();
+            res.writeHead(401, {
+              'Content-Type': 'application/json; charset=utf-8',
+              'Access-Control-Allow-Origin': '*',
+            });
+            res.end(
+              JSON.stringify({
+                ok: false,
+                error: sigCheck.reason,
+                securityStats: ensureSecurityStats(),
+              })
+            );
+            return;
+          }
 
           if (payload.deviceId) {
             const devId = String(payload.deviceId);
@@ -915,6 +1475,9 @@ const server = http.createServer((req, res) => {
             syncState.resetEpochMs = Number(payload.resetEpochMs);
             syncState.ordersById = {};
             syncState.chatMessagesById = {};
+            syncState.orderRatingsByOrder = {};
+            syncState.orderTimelineEventsById = {};
+            syncState.unreachableByOrder = {};
           }
 
           if (Array.isArray(payload.riderRegistrations)) {
@@ -964,8 +1527,12 @@ const server = http.createServer((req, res) => {
               if (!t || !t.ticketId) continue;
               const tid = String(t.ticketId);
               const prev = syncState.supportTicketsById[tid];
+              const isBrandNewTicket = !prev;
               if (!prev || Number(t.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
                 syncState.supportTicketsById[tid] = t;
+              }
+              if (isBrandNewTicket || !(syncState.emailedTicketIds && syncState.emailedTicketIds[tid])) {
+                dispatchSupportTicketToWorkspaceEmail(syncState.supportTicketsById[tid]);
               }
             }
           }
@@ -1007,7 +1574,24 @@ const server = http.createServer((req, res) => {
           }
 
           if (payload.remoteFeatureFlags && typeof payload.remoteFeatureFlags === 'object') {
-            const incomingFlags = payload.remoteFeatureFlags;
+            const incomingFlags = { ...payload.remoteFeatureFlags };
+            if (Number(incomingFlags.flagsSchemaVersion || 1) < 2) {
+              incomingFlags.scheduledDeliveryEnabled = true;
+              incomingFlags.multiDropEnabled = true;
+              incomingFlags.parcelInsuranceEnabled = true;
+              incomingFlags.referralWalletEnabled = true;
+              incomingFlags.waitTimeAndCancelRuleEnabled = true;
+              incomingFlags.peakAutoSurgeEnabled = true;
+              incomingFlags.flagsSchemaVersion = 2;
+            }
+            if (Number(incomingFlags.flagsSchemaVersion || 2) < 3) {
+              incomingFlags.b2bPostpaidEnabled = Boolean(incomingFlags.b2bPostpaidEnabled || false);
+              incomingFlags.b2bDefaultCreditLimitInr = Number(incomingFlags.b2bDefaultCreditLimitInr || 25000);
+              incomingFlags.b2bBillingCycleDays = Number(incomingFlags.b2bBillingCycleDays || 30);
+              incomingFlags.razorpayRouteSplitEnabled = Boolean(incomingFlags.razorpayRouteSplitEnabled || false);
+              incomingFlags.autoKycApiEnabled = Boolean(incomingFlags.autoKycApiEnabled || false);
+              incomingFlags.flagsSchemaVersion = 3;
+            }
             const prevFlags = syncState.remoteFeatureFlags;
             const inTs = Number(incomingFlags.updatedAtEpochMs || 0);
             const prevTs = Number((prevFlags && prevFlags.updatedAtEpochMs) || 0);
@@ -1038,6 +1622,64 @@ const server = http.createServer((req, res) => {
                   lng: Number(coords.lng || 0),
                   updatedAtEpochMs: now,
                 };
+              }
+            }
+          }
+
+          if (Array.isArray(payload.orderRatings)) {
+            if (!syncState.orderRatingsByOrder) syncState.orderRatingsByOrder = {};
+            for (const r of payload.orderRatings) {
+              if (!r || !r.orderId) continue;
+              const oid = String(r.orderId);
+              const prev = syncState.orderRatingsByOrder[oid];
+              if (!prev || Number(r.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.orderRatingsByOrder[oid] = {
+                  ...(prev || {}),
+                  ...r,
+                  tipAmountInr: Math.max(Number(r.tipAmountInr || 0), Number((prev && prev.tipAmountInr) || 0)),
+                };
+              }
+            }
+          }
+
+          if (Array.isArray(payload.orderTimelineEvents)) {
+            if (!syncState.orderTimelineEventsById) syncState.orderTimelineEventsById = {};
+            for (const evt of payload.orderTimelineEvents) {
+              if (!evt || !evt.eventId || !evt.orderId) continue;
+              const eid = String(evt.eventId);
+              if (!syncState.orderTimelineEventsById[eid]) {
+                syncState.orderTimelineEventsById[eid] = evt;
+              }
+            }
+            const allEvents = Object.values(syncState.orderTimelineEventsById);
+            if (allEvents.length > 1000) {
+              allEvents.sort((a, b) => Number(a.createdAtEpochMs || 0) - Number(b.createdAtEpochMs || 0));
+              const nextMap = {};
+              for (const ke of allEvents.slice(-1000)) nextMap[ke.eventId] = ke;
+              syncState.orderTimelineEventsById = nextMap;
+            }
+          }
+
+          if (Array.isArray(payload.unreachableByOrder)) {
+            if (!syncState.unreachableByOrder) syncState.unreachableByOrder = {};
+            for (const rec of payload.unreachableByOrder) {
+              if (!rec || !rec.orderId) continue;
+              const oid = String(rec.orderId);
+              const prev = syncState.unreachableByOrder[oid];
+              if (!prev || Number(rec.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.unreachableByOrder[oid] = rec;
+              }
+            }
+          }
+
+          if (Array.isArray(payload.b2bAccounts)) {
+            if (!syncState.b2bAccountsById) syncState.b2bAccountsById = {};
+            for (const acc of payload.b2bAccounts) {
+              if (!acc || !acc.accountId) continue;
+              const aid = String(acc.accountId);
+              const prev = syncState.b2bAccountsById[aid];
+              if (!prev || Number(acc.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.b2bAccountsById[aid] = acc;
               }
             }
           }
@@ -1097,6 +1739,11 @@ const server = http.createServer((req, res) => {
               if (!incoming || !incoming.orderId) continue;
               const oid = String(incoming.orderId);
               if (DEMO_ORDER_IDS.has(oid)) continue;
+              const antiSpamCheck = validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now);
+              if (!antiSpamCheck.ok) {
+                recordSecurityBlock('FAKE_ORDER_BLOCKED', incoming.customerPhone || senderDeviceId, antiSpamCheck.reason);
+                continue;
+              }
               const existing = syncState.ordersById[oid];
               if (!existing) {
                 if (incoming.orderStatus === 'RIDER_ASSIGNED' && senderRole !== 'RIDER') {
@@ -1132,6 +1779,20 @@ const server = http.createServer((req, res) => {
               } else {
                 let inRank = Number(incoming.statusRank || 1);
                 const exRank = Number(existing.statusRank || 1);
+                const exRejected = Array.isArray(existing.rejectedByRiderIds) ? existing.rejectedByRiderIds : [];
+                const inRejected = Array.isArray(incoming.rejectedByRiderIds) ? incoming.rejectedByRiderIds : [];
+                const mergedRejected = Array.from(new Set([...exRejected, ...inRejected]));
+
+                const isRiderRejectionRollback =
+                  incoming.orderStatus === 'SEARCHING_RIDER' &&
+                  mergedRejected.length > exRejected.length &&
+                  ['SEARCHING_RIDER', 'RIDER_ASSIGNED', 'ARRIVED_AT_PICKUP'].includes(existing.orderStatus);
+
+                const staleAssignForRejectedRider =
+                  existing.orderStatus === 'SEARCHING_RIDER' &&
+                  incoming.orderStatus === 'RIDER_ASSIGNED' &&
+                  incoming.assignedRiderId &&
+                  mergedRejected.includes(incoming.assignedRiderId);
 
                 if (
                   existing.orderStatus === 'SEARCHING_RIDER' &&
@@ -1143,7 +1804,47 @@ const server = http.createServer((req, res) => {
                   continue;
                 }
 
+                if (staleAssignForRejectedRider) {
+                  continue;
+                }
+
+                if (isRiderRejectionRollback) {
+                  const rolledBack = {
+                    ...existing,
+                    ...incoming,
+                    orderStatus: 'SEARCHING_RIDER',
+                    statusRank: 1,
+                    assignedRiderId: '',
+                    assignedRiderName: '',
+                    assignedRiderPhone: '',
+                    assignedRiderVehicle: '',
+                    rejectedByRiderIds: mergedRejected,
+                    createdByDeviceId: existing.createdByDeviceId || senderDeviceId,
+                    updatedAtEpochMs: now,
+                  };
+                  if (existing.pickupProof && !incoming.pickupProof) rolledBack.pickupProof = existing.pickupProof;
+                  if (existing.deliveryProof && !incoming.deliveryProof) rolledBack.deliveryProof = existing.deliveryProof;
+                  if (syncState.waitTimerStartByOrder && syncState.waitTimerStartByOrder[oid]) {
+                    delete syncState.waitTimerStartByOrder[oid];
+                  }
+                  syncState.ordersById[oid] = rolledBack;
+
+                  if (syncState.fcmTokensByDevice) {
+                    const customerTokens = Object.values(syncState.fcmTokensByDevice)
+                      .filter(entry => entry && entry.role === 'CUSTOMER')
+                      .map(entry => entry.token);
+                    sendFcmPushNotifications({
+                      tokens: customerTokens,
+                      title: `Rider Declined (#${oid}) — Searching New Rider`,
+                      body: rolledBack.latestRiderQuickNote || 'Finding another nearby verified Rider Partner.',
+                      data: { orderId: oid, orderStatus: 'SEARCHING_RIDER', targetRole: 'CUSTOMER' },
+                    });
+                  }
+                  continue;
+                }
+
                 const merged = inRank >= exRank ? { ...existing, ...incoming } : { ...incoming, ...existing };
+                merged.rejectedByRiderIds = mergedRejected;
                 if (existing.pickupProof && !incoming.pickupProof) merged.pickupProof = existing.pickupProof;
                 if (incoming.pickupProof) merged.pickupProof = incoming.pickupProof;
                 if (existing.deliveryProof && !incoming.deliveryProof) merged.deliveryProof = existing.deliveryProof;
@@ -1191,7 +1892,7 @@ const server = http.createServer((req, res) => {
     const snapshot = JSON.stringify(
       {
         exportedAtIso: new Date().toISOString(),
-        version: '6.1.3',
+        version: '6.3.1',
         ...syncState,
       },
       null,
@@ -1288,6 +1989,63 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ ok: false, error: 'Malformed webhook payload' }));
       }
     });
+    return;
+  }
+
+  if (pathname === '/api/health') {
+    const syncPayload = buildSyncResponsePayload();
+    const rolesConnected = Array.from(new Set(syncPayload.connectedDevices.map(d => d.role)));
+    const activeSearchingOrders = syncPayload.orders.filter(o => o && o.orderStatus === 'SEARCHING_RIDER').length;
+    const healthJson = JSON.stringify(
+      {
+        ok: true,
+        service: 'QuickDelivery Live Dispatch & APK Server',
+        version: '6.3.1',
+        domain: BRAND_DOMAIN,
+        targetSupportEmail: process.env.SUPPORT_TO_EMAIL || BRAND_SUPPORT_EMAIL,
+        serverTimeIso: new Date().toISOString(),
+        connectedDevicesCount: syncPayload.connectedDevices.length,
+        connectedRoles: rolesConnected,
+        connectedDevices: syncPayload.connectedDevices,
+        totalOrders: syncPayload.orders.length,
+        activeSearchingOrders,
+        registeredRiders: syncPayload.riderRegistrations.length,
+        withdrawalRequestsCount: syncPayload.withdrawalRequests.length,
+        securityStats: ensureSecurityStats(),
+      },
+      null,
+      2
+    );
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(healthJson);
+    return;
+  }
+
+  if (pathname === '/api/support-email-status') {
+    const dispatches = Object.values(syncState.emailedTicketIds || {});
+    const statusPayload = JSON.stringify(
+      {
+        ok: true,
+        targetEmail: process.env.SUPPORT_TO_EMAIL || BRAND_SUPPORT_EMAIL,
+        smtpConfigured: Boolean(process.env.SUPPORT_SMTP_USER && (process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS)),
+        webhookConfigured: Boolean(process.env.SUPPORT_EMAIL_WEBHOOK_URL),
+        totalTickets: Object.keys(syncState.supportTicketsById || {}).length,
+        emailedTickets: dispatches.length,
+        recentDispatches: dispatches.slice(-15),
+      },
+      null,
+      2
+    );
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(statusPayload);
     return;
   }
 

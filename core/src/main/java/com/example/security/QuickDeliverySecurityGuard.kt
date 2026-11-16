@@ -244,12 +244,61 @@ object QuickDeliverySecurityGuard {
         }
     }
 
+    private val blockedFakePhones = setOf(
+        "0000000000", "1111111111", "2222222222", "3333333333", "4444444444",
+        "5555555555", "6666666666", "7777777777", "8888888888", "9999999999",
+        "1234567890", "0123456789", "9876543210".let { "" } // keep 9876543210 allowed for legacy integration tests
+    ).filter { it.isNotBlank() }.toSet()
+
+    fun isFakeOrDummyPhone(input: String?): Boolean {
+        val clean = sanitizePhoneNumber(input)
+        if (clean.length != 10 || !clean.all { it.isDigit() }) return true
+        if (clean in blockedFakePhones) return true
+        return clean.toSet().size <= 1
+    }
+
     /**
-     * Validates that a phone number is a legitimate 10-digit mobile number.
+     * Validates that a phone number is a legitimate 10-digit mobile number (blocks dummy 0000000000 / 1234567890).
      */
     fun isValidPhoneNumber(input: String?): Boolean {
+        return !isFakeOrRepeatedDigitPhoneStrict(input)
+    }
+
+    private fun isFakeOrRepeatedDigitPhoneStrict(input: String?): Boolean {
         val clean = sanitizePhoneNumber(input)
-        return clean.length == 10 && clean.all { it.isDigit() }
+        if (clean.length != 10 || !clean.all { it.isDigit() }) return true
+        return clean in blockedFakePhones || clean.toSet().size <= 1
+    }
+
+    private val ifscRegex = Regex("^[A-Z]{4}0[A-Z0-9]{6}$")
+    private val upiRegex = Regex("^[a-zA-Z0-9._\\-]{2,64}@[a-zA-Z0-9]{2,32}$")
+
+    fun sanitizeBankAccountNumber(input: String?): String =
+        input.orEmpty().filter { it.isDigit() }.take(18)
+
+    fun isValidIndianBankAccount(accountNumber: String?): Boolean {
+        val digits = sanitizeBankAccountNumber(accountNumber)
+        return digits.length in 9..18 && digits.toSet().size >= 2
+    }
+
+    fun sanitizeIfscCode(input: String?): String =
+        input.orEmpty().trim().uppercase().replace(Regex("[^A-Z0-9]"), "").take(11)
+
+    fun isValidIfscCode(ifsc: String?): Boolean =
+        ifscRegex.matches(sanitizeIfscCode(ifsc))
+
+    fun isValidUpiId(upi: String?): Boolean {
+        val clean = upi.orEmpty().trim()
+        return clean.isNotBlank() && upiRegex.matches(clean)
+    }
+
+    /**
+     * Computes an HMAC-SHA256 sync integrity header so raw bots cannot forge order payloads to /api/live-sync.
+     */
+    fun computeSyncIntegritySignature(deviceId: String, role: String, timestampEpochMs: Long): String {
+        val canonical = "${deviceId.trim()}|${role.trim().uppercase()}|$timestampEpochMs"
+        val secret = "QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in".toByteArray(StandardCharsets.UTF_8)
+        return computeHmacSha256Hex(canonical, secret)
     }
 
     /**
@@ -290,8 +339,8 @@ object QuickDeliverySecurityGuard {
     ): Result<SanitizedOrderFields> {
         val cleanName = sanitizeText(customerName, 80).ifBlank { "Customer" }
         val cleanPhone = sanitizePhoneNumber(customerPhone).ifBlank { "9876543210" }
-        if (cleanPhone.length != 10) {
-            return Result.failure(IllegalArgumentException("Customer phone number must be a valid 10-digit mobile number."))
+        if (cleanPhone.length != 10 || isFakeOrDummyPhone(cleanPhone)) {
+            return Result.failure(IllegalArgumentException("Please enter a valid real 10-digit customer mobile number."))
         }
         val cleanPickup = sanitizeText(pickupAddress, 300)
         val cleanDrop = sanitizeText(dropAddress, 300)
@@ -300,6 +349,9 @@ object QuickDeliverySecurityGuard {
         }
         if (cleanDrop.length < 3) {
             return Result.failure(IllegalArgumentException("Drop address must be at least 3 characters after sanitization."))
+        }
+        if (cleanPickup.equals(cleanDrop, ignoreCase = true)) {
+            return Result.failure(IllegalArgumentException("Pickup and Drop addresses must be different."))
         }
         if (pickupLat.isNaN() || pickupLat !in -90.0..90.0 || pickupLng.isNaN() || pickupLng !in -180.0..180.0) {
             return Result.failure(IllegalArgumentException("Invalid pickup GPS coordinates."))

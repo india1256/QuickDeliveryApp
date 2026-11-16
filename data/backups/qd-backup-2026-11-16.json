@@ -1,0 +1,181 @@
+{
+  "resetEpochMs": 1794840563212,
+  "ordersById": {},
+  "devicesById": {
+    "PH-FC10C95B": {
+      "deviceId": "PH-FC10C95B",
+      "role": "UNIFIED",
+      "deviceModel": "Google sdk_gphone64_arm64",
+      "lat": 0,
+      "lng": 0,
+      "lastSeenEpochMs": 1794846043067
+    }
+  },
+  "fcmTokensByDevice": {
+    "PH-FF38ABA6": {
+      "token": "fcm_qd_sdkgphone64arm64_live_98450",
+      "role": "UNIFIED",
+      "updatedAtEpochMs": 1794841313389
+    },
+    "PH-6BBEA3F2": {
+      "token": "fcm_qd_sdkgphone64arm64_live_98450",
+      "role": "UNIFIED",
+      "updatedAtEpochMs": 1794845540518
+    },
+    "PH-FC10C95B": {
+      "token": "fcm_qd_sdkgphone64arm64_live_98450",
+      "role": "UNIFIED",
+      "updatedAtEpochMs": 1794846043067
+    }
+  },
+  "riderRegistrationsByKey": {},
+  "promoCouponsByCode": {},
+  "withdrawalRequestsById": {},
+  "supportTicketsById": {},
+  "remoteFeatureFlags": {
+    "scheduledDeliveryEnabled": true,
+    "multiDropEnabled": true,
+    "surgePricingEnabled": true,
+    "surgeMultiplier": 1.35,
+    "parcelInsuranceEnabled": true,
+    "insuranceFeeInr": 15,
+    "referralWalletEnabled": true,
+    "referralBonusInr": 50,
+    "codEnabled": true,
+    "maxCodLimitInr": 2000,
+    "platformCommissionPercent": 20,
+    "maintenanceBannerEnabled": false,
+    "maintenanceMessage": "",
+    "serviceablePinCodesCsv": "",
+    "riderTargetMissionEnabled": false,
+    "riderMissionTargetOrders": 5,
+    "riderMissionBonusInr": 150,
+    "adminBroadcastMessage": "",
+    "adminBroadcastTarget": "ALL",
+    "adminBroadcastEpochMs": 0,
+    "adminSecurityPin": "",
+    "waitTimeAndCancelRuleEnabled": true,
+    "freeWaitMinutes": 5,
+    "waitFeePerMinuteInr": 5,
+    "cancellationPenaltyInr": 30,
+    "liveGatewayModeEnabled": false,
+    "gatewayProvider": "RAZORPAY",
+    "peakAutoSurgeEnabled": true,
+    "peakTimeSlotsCsv": "09-11,18-21",
+    "peakSurgeMultiplier": 1.35,
+    "helperAddonEnabled": true,
+    "helperFeeInr": 60,
+    "sameRouteBatchBonusInr": 25,
+    "activeSurgeZoneCsv": "ALL",
+    "b2bPostpaidEnabled": false,
+    "b2bDefaultCreditLimitInr": 25000,
+    "b2bBillingCycleDays": 30,
+    "razorpayRouteSplitEnabled": false,
+    "autoKycApiEnabled": false,
+    "flagsSchemaVersion": 3,
+    "updatedAtEpochMs": 1794844212875
+  },
+  "chatMessagesById": {},
+  "waitTimerStartByOrder": {},
+  "riderLiveCoordsByOrder": {},
+  "codSettlementsById": {},
+  "disputeRecordsById": {},
+  "riderDocExpiriesById": {},
+  "paymentsByOrder": {},
+  "orderRatingsByOrder": {},
+  "orderTimelineEventsById": {},
+  "unreachableByOrder": {},
+  "b2bAccountsById": {},
+  "emailedTicketIds": {},
+  "securityStats": {
+    "blockedFakeOrders": 0,
+    "rateLimitedRequests": 0,
+    "rejectedInvalidPayloads": 14,
+    "recentBlockedEvents": [
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:44.034Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:30.881Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:28.340Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:24.794Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:24.792Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:16.413Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:13.844Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:11.263Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:08.665Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:06.087Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:03.493Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:00.896Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:20:58.320Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:20:55.728Z"
+      }
+    ]
+  }
+}

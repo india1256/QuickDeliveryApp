@@ -166,8 +166,8 @@ class SecurityAndPricingIntegrationTest {
         assertEquals(15, criticalState.levelPercent)
         assertTrue("GPS must be throttled when battery is below 20%", criticalState.isGpsThrottled)
         assertEquals(15000L, criticalState.gpsUpdateIntervalMs)
-        assertEquals(20.0f, criticalState.gpsMinDistanceMeters, 0.01f)
-        assertTrue(criticalState.isBatterySaverGpsActive)
+        assertEquals(25.0f, criticalState.gpsMinDistanceMeters, 0.01f)
+        assertTrue(criticalState.isGpsThrottled)
 
         // Healthy battery (80%, charging): Standard 2s / 1m GPS update frequency
         val healthyState = RiderBatteryPowerMonitor.simulateBatteryState(
@@ -178,7 +178,7 @@ class SecurityAndPricingIntegrationTest {
         assertFalse(healthyState.isCriticalPower)
         assertFalse(healthyState.isGpsThrottled)
         assertEquals(2000L, healthyState.gpsUpdateIntervalMs)
-        assertEquals(1.0f, healthyState.gpsMinDistanceMeters, 0.01f)
+        assertEquals(3.0f, healthyState.gpsMinDistanceMeters, 0.01f)
 
         // Low battery but plugged into charger (15%, charging): GPS is NOT throttled
         val chargingLowState = RiderBatteryPowerMonitor.simulateBatteryState(
@@ -219,8 +219,11 @@ class SecurityAndPricingIntegrationTest {
         assertFalse(cleanInput.contains("\$where", ignoreCase = true))
         assertTrue(cleanInput.contains("Indiranagar"))
 
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
         // 2. Role-bound HMAC-SHA256 Session Token verification & tamper protection
         val customerToken = com.example.security.QuickDeliverySecurityGuard.issueRoleSessionToken(
+            context = context,
             role = "CUSTOMER",
             name = "Aarav Sharma",
             phone = "9876543210",
@@ -228,6 +231,7 @@ class SecurityAndPricingIntegrationTest {
         )
         assertTrue(
             com.example.security.QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                context = context,
                 token = customerToken,
                 expectedRole = "CUSTOMER",
                 expectedPhone = "9876543210",
@@ -237,6 +241,7 @@ class SecurityAndPricingIntegrationTest {
         // Must reject role privilege escalation (using a CUSTOMER token for ADMIN or RIDER)
         assertFalse(
             com.example.security.QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                context = context,
                 token = customerToken,
                 expectedRole = "ADMIN",
                 expectedPhone = "9876543210",
@@ -246,6 +251,7 @@ class SecurityAndPricingIntegrationTest {
         // Must reject tampered signature
         assertFalse(
             com.example.security.QuickDeliverySecurityGuard.verifyRoleSessionToken(
+                context = context,
                 token = customerToken + "tampered",
                 expectedRole = "CUSTOMER",
                 expectedPhone = "9876543210",
@@ -259,7 +265,7 @@ class SecurityAndPricingIntegrationTest {
             pickupAddress = "MG Road Metro",
             dropAddress = "Koramangala 4th Block",
             vehicleType = "BIKE",
-            currentActivePendingOrders = 0
+            activePendingOrdersCount = 0
         )
         assertTrue(firstOrder.isSuccess)
 
@@ -269,7 +275,7 @@ class SecurityAndPricingIntegrationTest {
             pickupAddress = "MG Road Metro",
             dropAddress = "Koramangala 4th Block",
             vehicleType = "BIKE",
-            currentActivePendingOrders = 1
+            activePendingOrdersCount = 1
         )
         assertTrue(duplicateBurst.isFailure)
 
@@ -280,7 +286,7 @@ class SecurityAndPricingIntegrationTest {
                 pickupAddress = "Pickup Point $i",
                 dropAddress = "Drop Point $i",
                 vehicleType = "BIKE",
-                currentActivePendingOrders = 0
+                activePendingOrdersCount = 0
             )
             assertTrue(allowed.isSuccess)
         }
@@ -289,7 +295,7 @@ class SecurityAndPricingIntegrationTest {
             pickupAddress = "Pickup Point 6",
             dropAddress = "Drop Point 6",
             vehicleType = "BIKE",
-            currentActivePendingOrders = 0
+            activePendingOrdersCount = 0
         )
         assertTrue(sixthRapidOrder.isFailure)
 

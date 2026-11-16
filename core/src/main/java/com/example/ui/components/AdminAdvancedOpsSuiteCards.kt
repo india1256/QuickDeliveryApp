@@ -98,7 +98,7 @@ fun AdminPeakHourAutoSurgeCard(
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.5.dp, if (isCurrentlyPeakActive) OpsOrange else OpsTeal),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("admin_peak_hour_auto_surge_card")
@@ -113,14 +113,14 @@ fun AdminPeakHourAutoSurgeCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Schedule, contentDescription = null, tint = OpsOrange)
-                    Spacer(modifier = Modifier.width(8.dp))
+                    AdminIconBadge(icon = Icons.Default.Schedule, tint = OpsOrange, sizeDp = 34)
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "Peak-Hour Auto-Surge & Add-On Control",
+                            text = "Peak-Hour Auto-Surge & Add-Ons",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = OpsTeal
+                            color = OpsNavy
                         )
                         Text(
                             text = if (isCurrentlyPeakActive) {
@@ -275,9 +275,12 @@ fun AdminCodSettlementLedgerCard(
             val settledInr = codSettlements.filter { it.riderId == rid }.sumOf { it.amountInr }
             val pendingInr = (collectedInr - settledInr).coerceAtLeast(0.0)
             if (collectedInr <= 0.0 && settledInr <= 0.0 && rider == null) null
-            else Triple(
-                rider ?: RiderProfile(riderId = rid, name = riderOrders.firstOrNull()?.assignedRiderName ?: "Rider Partner"),
+            else listOf(
+                rid,
+                rider?.name ?: riderOrders.firstOrNull()?.assignedRiderName ?: "Rider Partner",
+                rider?.mobile.orEmpty(),
                 collectedInr,
+                settledInr,
                 pendingInr
             )
         }
@@ -285,8 +288,8 @@ fun AdminCodSettlementLedgerCard(
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.5.dp, OpsOrange),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("admin_cod_settlement_ledger_card")
@@ -296,11 +299,11 @@ fun AdminCodSettlementLedgerCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = OpsOrange)
-                Spacer(modifier = Modifier.width(8.dp))
+                AdminIconBadge(icon = Icons.Default.AccountBalanceWallet, tint = OpsOrange, sizeDp = 34)
+                Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "💵 Rider COD Cash Settlement Ledger",
+                        text = "Rider COD Cash Settlement Ledger",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = OpsNavy
@@ -340,7 +343,13 @@ fun AdminCodSettlementLedgerCard(
                 }
             }
 
-            riderCodTotals.forEach { (rider, collectedInr, pendingInr) ->
+            riderCodTotals.forEach { row ->
+                val riderId = row[0] as String
+                val riderName = row[1] as String
+                val riderPhone = row[2] as String
+                val collectedInr = row[3] as Double
+                val settledInr = row[4] as Double
+                val pendingInr = row[5] as Double
                 Surface(
                     color = Color(0xFFF8FAFC),
                     shape = RoundedCornerShape(10.dp),
@@ -356,7 +365,7 @@ fun AdminCodSettlementLedgerCard(
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text(
-                                text = "${rider.name} (${rider.riderId})",
+                                text = "$riderName ($riderId)",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = OpsNavy
@@ -366,7 +375,7 @@ fun AdminCodSettlementLedgerCard(
                                     Locale.US,
                                     "Collected: ₹%.0f • Settled: ₹%.0f • Pending: ₹%.0f",
                                     collectedInr,
-                                    (collectedInr - pendingInr).coerceAtLeast(0.0),
+                                    settledInr,
                                     pendingInr
                                 ),
                                 style = MaterialTheme.typography.labelSmall,
@@ -379,15 +388,15 @@ fun AdminCodSettlementLedgerCard(
                                 val settleAmt = if (pendingInr > 0.0) pendingInr else 100.0
                                 val rec = QuickDeliveryOperationsManager.markCodSettledByAdmin(
                                     context = context,
-                                    riderId = rider.riderId,
-                                    riderName = rider.name,
-                                    riderPhone = rider.mobile,
+                                    riderId = riderId,
+                                    riderName = riderName,
+                                    riderPhone = riderPhone,
                                     amountInr = settleAmt,
                                     referenceUtr = utrReferenceDraft
                                 )
                                 if (rec != null) {
                                     utrReferenceDraft = ""
-                                    settlementFeedback = "✅ COD Settled: ₹${settleAmt.toInt()} for ${rider.name} (Ref: ${rec.referenceUtr})"
+                                    settlementFeedback = "✅ COD Settled: ₹${settleAmt.toInt()} for $riderName (Ref: ${rec.referenceUtr})"
                                 }
                             },
                             enabled = pendingInr > 0.0,
@@ -395,7 +404,7 @@ fun AdminCodSettlementLedgerCard(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier
                                 .height(48.dp)
-                                .testTag("admin_mark_cod_settled_${rider.riderId}")
+                                .testTag("admin_mark_cod_settled_$riderId")
                         ) {
                             Text(
                                 text = if (pendingInr > 0.0) "Mark Settled" else "All Clear ✓",
@@ -443,7 +452,7 @@ fun AdminDisputeRefundDeskCard(
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.5.dp, OpsCrimson),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("admin_dispute_refund_desk_card")
@@ -458,11 +467,11 @@ fun AdminDisputeRefundDeskCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Gavel, contentDescription = null, tint = OpsCrimson)
-                    Spacer(modifier = Modifier.width(8.dp))
+                    AdminIconBadge(icon = Icons.Default.Gavel, tint = OpsCrimson, sizeDp = 34)
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "⚖️ Dispute & Instant Wallet Refund Desk",
+                            text = "Dispute & Instant Wallet Refund Desk",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = OpsNavy
@@ -657,7 +666,7 @@ fun AdminRiderDocExpiryCard(
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.5.dp, OpsTeal),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("admin_rider_doc_expiry_card")
@@ -667,11 +676,11 @@ fun AdminRiderDocExpiryCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.EventBusy, contentDescription = null, tint = OpsTeal)
-                Spacer(modifier = Modifier.width(8.dp))
+                AdminIconBadge(icon = Icons.Default.EventBusy, tint = OpsTeal, sizeDp = 34)
+                Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "📅 Rider Document Expiry & KYC Tracker",
+                        text = "Rider Document Expiry & KYC Tracker",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = OpsNavy

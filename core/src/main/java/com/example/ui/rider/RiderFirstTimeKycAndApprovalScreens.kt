@@ -31,8 +31,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -80,6 +83,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -1448,3 +1454,418 @@ private fun AdminKycPhotoZoomPreviewDialog(
         }
     }
 }
+
+/**
+ * Mandatory Post-Approval / Post-Login Rider Bank Account & UPI Payout Setup Screen.
+ * Shown right after Admin verifies KYC and Rider signs in again, and also editable anytime via Dialog.
+ */
+@Composable
+fun RiderBankAccountFormScreen(
+    riderName: String,
+    riderPhone: String,
+    riderEmail: String,
+    riderId: String = "",
+    existingRecord: RiderRegistrationRecord? = null,
+    isOnboardingStep: Boolean = true,
+    onBankDetailsSaved: (RiderRegistrationRecord) -> Unit,
+    onSkipOrClose: (() -> Unit)? = null,
+    onSignOut: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var holderNameInput by remember(existingRecord?.riderKey) {
+        mutableStateOf(
+            existingRecord?.bankAccountHolderName?.ifBlank { riderName } ?: riderName
+        )
+    }
+    var bankNameInput by remember(existingRecord?.riderKey) {
+        mutableStateOf(existingRecord?.bankName.orEmpty())
+    }
+    var accountNumberInput by remember(existingRecord?.riderKey) {
+        mutableStateOf(existingRecord?.bankAccountNumber.orEmpty())
+    }
+    var confirmAccountInput by remember(existingRecord?.riderKey) {
+        mutableStateOf(existingRecord?.bankAccountNumber.orEmpty())
+    }
+    var ifscInput by remember(existingRecord?.riderKey) {
+        mutableStateOf(existingRecord?.bankIfscCode.orEmpty())
+    }
+    var upiIdInput by remember(existingRecord?.riderKey) {
+        mutableStateOf(existingRecord?.bankUpiId.orEmpty())
+    }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    val popularBanks = listOf(
+        "State Bank of India (SBI)",
+        "HDFC Bank",
+        "ICICI Bank",
+        "Axis Bank",
+        "Kotak Mahindra Bank",
+        "Bank of Baroda",
+        "Punjab National Bank"
+    )
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFFF0F4F8))
+            .testTag("rider_bank_account_form_screen"),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F1E36)),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = Color(0xFF10B981).copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = if (isOnboardingStep) "STEP 3 OF 3 • PAYOUT BANK SETUP" else "PAYOUT BANK ACCOUNT",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF6EE7B7),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                        if (onSignOut != null) {
+                            TextButton(onClick = onSignOut) {
+                                Text("Sign Out", color = Color(0xFFFCA5A5), style = MaterialTheme.typography.labelSmall)
+                            }
+                        } else if (onSkipOrClose != null) {
+                            IconButton(onClick = onSkipOrClose) {
+                                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                            }
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            color = Color(0xFF10B981),
+                            shape = CircleShape,
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.AccountBalance,
+                                    contentDescription = "Bank Account Setup",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Add Your Bank Account for Earnings Transfer",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Admin aapki delivery kamai (80% trip payout + 100% tips) isi verified bank account / UPI par transfer karenge.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFCBD5E1)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Quick Select Popular Bank",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F1E36)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        popularBanks.forEach { bName ->
+                            val shortLabel = bName.substringBefore(" Bank").substringBefore(" (")
+                            FilterChip(
+                                selected = bankNameInput.equals(bName, ignoreCase = true),
+                                onClick = {
+                                    bankNameInput = bName
+                                    errorMsg = null
+                                },
+                                label = {
+                                    Text(
+                                        text = shortLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF0D9488).copy(alpha = 0.14f),
+                                    selectedLabelColor = Color(0xFF0F766E)
+                                )
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = holderNameInput,
+                        onValueChange = {
+                            holderNameInput = it
+                            errorMsg = null
+                        },
+                        label = { Text("Account Holder Name (As in Passbook) *") },
+                        placeholder = { Text("e.g., Rahul Sharma") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rider_bank_holder_input")
+                    )
+
+                    OutlinedTextField(
+                        value = bankNameInput,
+                        onValueChange = {
+                            bankNameInput = it
+                            errorMsg = null
+                        },
+                        label = { Text("Bank Name *") },
+                        placeholder = { Text("e.g., State Bank of India") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rider_bank_name_input")
+                    )
+
+                    OutlinedTextField(
+                        value = accountNumberInput,
+                        onValueChange = { raw ->
+                            accountNumberInput = raw.filter(Char::isDigit).take(18)
+                            errorMsg = null
+                        },
+                        label = { Text("Bank Account Number (9–18 Digits) *") },
+                        placeholder = { Text("Enter account number") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rider_bank_account_input")
+                    )
+
+                    OutlinedTextField(
+                        value = confirmAccountInput,
+                        onValueChange = { raw ->
+                            confirmAccountInput = raw.filter(Char::isDigit).take(18)
+                            errorMsg = null
+                        },
+                        label = { Text("Re-enter Bank Account Number *") },
+                        placeholder = { Text("Confirm account number") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = confirmAccountInput.isNotBlank() && confirmAccountInput != accountNumberInput,
+                        supportingText = {
+                            if (confirmAccountInput.isNotBlank() && confirmAccountInput != accountNumberInput) {
+                                Text("Account numbers do not match", color = Color(0xFFDC2626))
+                            } else if (confirmAccountInput.length >= 9 && confirmAccountInput == accountNumberInput) {
+                                Text("✓ Account numbers matched", color = Color(0xFF059669))
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rider_bank_confirm_account_input")
+                    )
+
+                    OutlinedTextField(
+                        value = ifscInput,
+                        onValueChange = { raw ->
+                            ifscInput = raw.uppercase().replace(Regex("[^A-Z0-9]"), "").take(11)
+                            errorMsg = null
+                        },
+                        label = { Text("IFSC Code (11 Characters) *") },
+                        placeholder = { Text("e.g., SBIN0001234") },
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                        isError = ifscInput.length == 11 && !com.example.security.QuickDeliverySecurityGuard.isValidIfscCode(ifscInput),
+                        supportingText = {
+                            Text(
+                                text = if (com.example.security.QuickDeliverySecurityGuard.isValidIfscCode(ifscInput)) {
+                                    "✓ Valid IFSC format"
+                                } else {
+                                    "Format: 4 bank letters + 0 + 6 branch characters (e.g., HDFC0001024)"
+                                },
+                                color = if (com.example.security.QuickDeliverySecurityGuard.isValidIfscCode(ifscInput)) {
+                                    Color(0xFF059669)
+                                } else {
+                                    Color(0xFF64748B)
+                                }
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rider_bank_ifsc_input")
+                    )
+
+                    OutlinedTextField(
+                        value = upiIdInput,
+                        onValueChange = {
+                            upiIdInput = it.trim()
+                            errorMsg = null
+                        },
+                        label = { Text("UPI ID (Optional • Fast IMPS/UPI Payout)") },
+                        placeholder = { Text("e.g., 9876543210@ybl or name@okicici") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("rider_bank_upi_input")
+                    )
+
+                    Surface(
+                        color = Color(0xFFF0FDF4),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Color(0xFFA7F3D0)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "🔒 Encrypted & synced directly to Admin Settlement Desk. Only verified payouts are transferred via IMPS / NEFT / UPI.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF065F46),
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+
+                    if (errorMsg != null) {
+                        Surface(
+                            color = Color(0xFFFEE2E2),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "⚠️ ${errorMsg.orEmpty()}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF991B1B),
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val result = RiderRegistrationApprovalManager.saveRiderBankAccountDetails(
+                                context = context,
+                                phone = riderPhone,
+                                email = riderEmail,
+                                riderName = riderName,
+                                riderId = riderId,
+                                accountHolderName = holderNameInput,
+                                bankName = bankNameInput,
+                                accountNumber = accountNumberInput,
+                                confirmAccountNumber = confirmAccountInput,
+                                ifscCode = ifscInput,
+                                upiId = upiIdInput
+                            )
+                            result.onSuccess { saved ->
+                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                onBankDetailsSaved(saved)
+                            }.onFailure { err ->
+                                errorMsg = err.message ?: "Please check your bank account details."
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("rider_save_bank_details_btn")
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isOnboardingStep) "Save Bank Account & Enter App →" else "Save Payout Bank Account",
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                    }
+
+                    if (onSkipOrClose != null) {
+                        TextButton(
+                            onClick = onSkipOrClose,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rider_bank_skip_or_close_btn")
+                        ) {
+                            Text(
+                                text = if (isOnboardingStep) "Fill Later (Required Before Cashout)" else "Cancel",
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RiderBankAccountFormDialog(
+    riderName: String,
+    riderPhone: String,
+    riderEmail: String,
+    riderId: String = "",
+    existingRecord: RiderRegistrationRecord? = null,
+    onBankDetailsSaved: (RiderRegistrationRecord) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            color = Color(0xFFF0F4F8),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxSize(0.9f)
+                .testTag("rider_bank_account_dialog")
+        ) {
+            RiderBankAccountFormScreen(
+                riderName = riderName,
+                riderPhone = riderPhone,
+                riderEmail = riderEmail,
+                riderId = riderId,
+                existingRecord = existingRecord,
+                isOnboardingStep = false,
+                onBankDetailsSaved = onBankDetailsSaved,
+                onSkipOrClose = onDismiss
+            )
+        }
+    }
+}
+

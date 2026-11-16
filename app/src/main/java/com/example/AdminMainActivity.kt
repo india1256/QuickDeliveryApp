@@ -127,13 +127,26 @@ class AdminMainActivity : ComponentActivity() {
                             }
                         }
                         val orders by repository.orders.collectAsState()
+                        val hasAdminPerms = remember(this@AdminMainActivity) {
+                            val fine = androidx.core.content.ContextCompat.checkSelfPermission(
+                                this@AdminMainActivity,
+                                android.Manifest.permission.ACCESS_FINE_LOCATION
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            val cam = androidx.core.content.ContextCompat.checkSelfPermission(
+                                this@AdminMainActivity,
+                                android.Manifest.permission.CAMERA
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            fine && cam
+                        }
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .windowInsetsPadding(WindowInsets.statusBars)
                                 .windowInsetsPadding(WindowInsets.navigationBars)
                         ) {
-                            AdminLivePermissionsAndTrackingBar()
+                            if (!hasAdminPerms) {
+                                AdminLivePermissionsAndTrackingBar()
+                            }
                             Box(modifier = Modifier.weight(1f)) {
                                 AdminEnterpriseControlCenter(
                                     repository = repository,
@@ -253,7 +266,7 @@ private fun AdminAllowlistSecurityGateScreen(
                         authError = null
                     },
                     label = { Text("Authorized Admin Email *") },
-                    placeholder = { Text("admin@quickdelivery.in") },
+                    placeholder = { Text("admin@quickdelivery.co.in") },
                     leadingIcon = {
                         Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF0F766E))
                     },

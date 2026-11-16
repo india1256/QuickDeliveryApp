@@ -17,13 +17,13 @@ import org.json.JSONObject
  * Future-rollout features default to OFF so Admin can activate them anytime with 1 tap.
  */
 data class AdminRemoteFeatureFlags(
-    val scheduledDeliveryEnabled: Boolean = false,
-    val multiDropEnabled: Boolean = false,
+    val scheduledDeliveryEnabled: Boolean = true,
+    val multiDropEnabled: Boolean = true,
     val surgePricingEnabled: Boolean = false,
     val surgeMultiplier: Double = 1.25,
-    val parcelInsuranceEnabled: Boolean = false,
+    val parcelInsuranceEnabled: Boolean = true,
     val insuranceFeeInr: Int = 15,
-    val referralWalletEnabled: Boolean = false,
+    val referralWalletEnabled: Boolean = true,
     val referralBonusInr: Int = 50,
     val codEnabled: Boolean = true,
     val maxCodLimitInr: Int = 2000,
@@ -38,19 +38,25 @@ data class AdminRemoteFeatureFlags(
     val adminBroadcastTarget: String = "ALL", // ALL, CUSTOMER, RIDER
     val adminBroadcastEpochMs: Long = 0L,
     val adminSecurityPin: String = "",
-    val waitTimeAndCancelRuleEnabled: Boolean = false,
+    val waitTimeAndCancelRuleEnabled: Boolean = true,
     val freeWaitMinutes: Int = 5,
     val waitFeePerMinuteInr: Int = 5,
     val cancellationPenaltyInr: Int = 30,
     val liveGatewayModeEnabled: Boolean = false,
     val gatewayProvider: String = "RAZORPAY",
-    val peakAutoSurgeEnabled: Boolean = false,
+    val peakAutoSurgeEnabled: Boolean = true,
     val peakTimeSlotsCsv: String = "09-11,18-21",
     val peakSurgeMultiplier: Double = 1.35,
     val helperAddonEnabled: Boolean = true,
     val helperFeeInr: Int = 60,
     val sameRouteBatchBonusInr: Int = 25,
     val activeSurgeZoneCsv: String = "",
+    val b2bPostpaidEnabled: Boolean = false,
+    val b2bDefaultCreditLimitInr: Int = 25000,
+    val b2bBillingCycleDays: Int = 30,
+    val razorpayRouteSplitEnabled: Boolean = false,
+    val autoKycApiEnabled: Boolean = false,
+    val flagsSchemaVersion: Int = 3,
     val updatedAtEpochMs: Long = 0L
 ) {
     val riderSharePercent: Int
@@ -122,47 +128,66 @@ data class AdminRemoteFeatureFlags(
         put("helperFeeInr", helperFeeInr)
         put("sameRouteBatchBonusInr", sameRouteBatchBonusInr)
         put("activeSurgeZoneCsv", activeSurgeZoneCsv)
+        put("b2bPostpaidEnabled", b2bPostpaidEnabled)
+        put("b2bDefaultCreditLimitInr", b2bDefaultCreditLimitInr)
+        put("b2bBillingCycleDays", b2bBillingCycleDays)
+        put("razorpayRouteSplitEnabled", razorpayRouteSplitEnabled)
+        put("autoKycApiEnabled", autoKycApiEnabled)
+        put("flagsSchemaVersion", flagsSchemaVersion)
         put("updatedAtEpochMs", updatedAtEpochMs)
     }
 
     companion object {
-        fun fromJson(obj: JSONObject): AdminRemoteFeatureFlags = AdminRemoteFeatureFlags(
-            scheduledDeliveryEnabled = obj.optBoolean("scheduledDeliveryEnabled", false),
-            multiDropEnabled = obj.optBoolean("multiDropEnabled", false),
-            surgePricingEnabled = obj.optBoolean("surgePricingEnabled", false),
-            surgeMultiplier = obj.optDouble("surgeMultiplier", 1.25).coerceIn(1.0, 3.0),
-            parcelInsuranceEnabled = obj.optBoolean("parcelInsuranceEnabled", false),
-            insuranceFeeInr = obj.optInt("insuranceFeeInr", 15).coerceIn(5, 200),
-            referralWalletEnabled = obj.optBoolean("referralWalletEnabled", false),
-            referralBonusInr = obj.optInt("referralBonusInr", 50).coerceIn(10, 500),
-            codEnabled = obj.optBoolean("codEnabled", true),
-            maxCodLimitInr = obj.optInt("maxCodLimitInr", 2000).coerceIn(100, 50000),
-            platformCommissionPercent = obj.optInt("platformCommissionPercent", 20).coerceIn(0, 40),
-            maintenanceBannerEnabled = obj.optBoolean("maintenanceBannerEnabled", false),
-            maintenanceMessage = obj.optString("maintenanceMessage", ""),
-            serviceablePinCodesCsv = obj.optString("serviceablePinCodesCsv", ""),
-            riderTargetMissionEnabled = obj.optBoolean("riderTargetMissionEnabled", false),
-            riderMissionTargetOrders = obj.optInt("riderMissionTargetOrders", 5).coerceIn(1, 50),
-            riderMissionBonusInr = obj.optInt("riderMissionBonusInr", 150).coerceIn(20, 2000),
-            adminBroadcastMessage = obj.optString("adminBroadcastMessage", ""),
-            adminBroadcastTarget = obj.optString("adminBroadcastTarget", "ALL").uppercase().ifBlank { "ALL" },
-            adminBroadcastEpochMs = obj.optLong("adminBroadcastEpochMs", 0L),
-            adminSecurityPin = obj.optString("adminSecurityPin", "").filter(Char::isDigit).take(4),
-            waitTimeAndCancelRuleEnabled = obj.optBoolean("waitTimeAndCancelRuleEnabled", false),
-            freeWaitMinutes = obj.optInt("freeWaitMinutes", 5).coerceIn(1, 20),
-            waitFeePerMinuteInr = obj.optInt("waitFeePerMinuteInr", 5).coerceIn(1, 50),
-            cancellationPenaltyInr = obj.optInt("cancellationPenaltyInr", 30).coerceIn(0, 200),
-            liveGatewayModeEnabled = obj.optBoolean("liveGatewayModeEnabled", false),
-            gatewayProvider = obj.optString("gatewayProvider", "RAZORPAY").uppercase().ifBlank { "RAZORPAY" },
-            peakAutoSurgeEnabled = obj.optBoolean("peakAutoSurgeEnabled", false),
-            peakTimeSlotsCsv = obj.optString("peakTimeSlotsCsv", "09-11,18-21"),
-            peakSurgeMultiplier = obj.optDouble("peakSurgeMultiplier", 1.35).coerceIn(1.0, 3.0),
-            helperAddonEnabled = obj.optBoolean("helperAddonEnabled", true),
-            helperFeeInr = obj.optInt("helperFeeInr", 60).coerceIn(20, 300),
-            sameRouteBatchBonusInr = obj.optInt("sameRouteBatchBonusInr", 25).coerceIn(10, 200),
-            activeSurgeZoneCsv = obj.optString("activeSurgeZoneCsv", ""),
-            updatedAtEpochMs = obj.optLong("updatedAtEpochMs", 0L)
-        )
+        const val CURRENT_FLAGS_SCHEMA_VERSION = 3
+
+        fun fromJson(obj: JSONObject): AdminRemoteFeatureFlags {
+            val schemaVer = obj.optInt("flagsSchemaVersion", 1)
+            val isLegacyV1Schema = schemaVer < 2
+            val isLegacyV2Schema = schemaVer < 3
+            return AdminRemoteFeatureFlags(
+                scheduledDeliveryEnabled = if (isLegacyV1Schema) true else obj.optBoolean("scheduledDeliveryEnabled", true),
+                multiDropEnabled = if (isLegacyV1Schema) true else obj.optBoolean("multiDropEnabled", true),
+                surgePricingEnabled = obj.optBoolean("surgePricingEnabled", false),
+                surgeMultiplier = obj.optDouble("surgeMultiplier", 1.25).coerceIn(1.0, 3.0),
+                parcelInsuranceEnabled = if (isLegacyV1Schema) true else obj.optBoolean("parcelInsuranceEnabled", true),
+                insuranceFeeInr = obj.optInt("insuranceFeeInr", 15).coerceIn(5, 200),
+                referralWalletEnabled = if (isLegacyV1Schema) true else obj.optBoolean("referralWalletEnabled", true),
+                referralBonusInr = obj.optInt("referralBonusInr", 50).coerceIn(10, 500),
+                codEnabled = obj.optBoolean("codEnabled", true),
+                maxCodLimitInr = obj.optInt("maxCodLimitInr", 2000).coerceIn(100, 50000),
+                platformCommissionPercent = obj.optInt("platformCommissionPercent", 20).coerceIn(0, 40),
+                maintenanceBannerEnabled = obj.optBoolean("maintenanceBannerEnabled", false),
+                maintenanceMessage = obj.optString("maintenanceMessage", ""),
+                serviceablePinCodesCsv = obj.optString("serviceablePinCodesCsv", ""),
+                riderTargetMissionEnabled = obj.optBoolean("riderTargetMissionEnabled", false),
+                riderMissionTargetOrders = obj.optInt("riderMissionTargetOrders", 5).coerceIn(1, 50),
+                riderMissionBonusInr = obj.optInt("riderMissionBonusInr", 150).coerceIn(20, 2000),
+                adminBroadcastMessage = obj.optString("adminBroadcastMessage", ""),
+                adminBroadcastTarget = obj.optString("adminBroadcastTarget", "ALL").uppercase().ifBlank { "ALL" },
+                adminBroadcastEpochMs = obj.optLong("adminBroadcastEpochMs", 0L),
+                adminSecurityPin = obj.optString("adminSecurityPin", "").filter(Char::isDigit).take(4),
+                waitTimeAndCancelRuleEnabled = if (isLegacyV1Schema) true else obj.optBoolean("waitTimeAndCancelRuleEnabled", true),
+                freeWaitMinutes = obj.optInt("freeWaitMinutes", 5).coerceIn(1, 20),
+                waitFeePerMinuteInr = obj.optInt("waitFeePerMinuteInr", 5).coerceIn(1, 50),
+                cancellationPenaltyInr = obj.optInt("cancellationPenaltyInr", 30).coerceIn(0, 200),
+                liveGatewayModeEnabled = obj.optBoolean("liveGatewayModeEnabled", false),
+                gatewayProvider = obj.optString("gatewayProvider", "RAZORPAY").uppercase().ifBlank { "RAZORPAY" },
+                peakAutoSurgeEnabled = if (isLegacyV1Schema) true else obj.optBoolean("peakAutoSurgeEnabled", true),
+                peakTimeSlotsCsv = obj.optString("peakTimeSlotsCsv", "09-11,18-21"),
+                peakSurgeMultiplier = obj.optDouble("peakSurgeMultiplier", 1.35).coerceIn(1.0, 3.0),
+                helperAddonEnabled = obj.optBoolean("helperAddonEnabled", true),
+                helperFeeInr = obj.optInt("helperFeeInr", 60).coerceIn(20, 300),
+                sameRouteBatchBonusInr = obj.optInt("sameRouteBatchBonusInr", 25).coerceIn(10, 200),
+                activeSurgeZoneCsv = obj.optString("activeSurgeZoneCsv", ""),
+                b2bPostpaidEnabled = if (isLegacyV2Schema) false else obj.optBoolean("b2bPostpaidEnabled", false),
+                b2bDefaultCreditLimitInr = obj.optInt("b2bDefaultCreditLimitInr", 25000).coerceIn(5000, 500000),
+                b2bBillingCycleDays = obj.optInt("b2bBillingCycleDays", 30).coerceIn(7, 45),
+                razorpayRouteSplitEnabled = if (isLegacyV2Schema) false else obj.optBoolean("razorpayRouteSplitEnabled", false),
+                autoKycApiEnabled = if (isLegacyV2Schema) false else obj.optBoolean("autoKycApiEnabled", false),
+                flagsSchemaVersion = CURRENT_FLAGS_SCHEMA_VERSION,
+                updatedAtEpochMs = obj.optLong("updatedAtEpochMs", 0L)
+            )
+        }
     }
 }
 

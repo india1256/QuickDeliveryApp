@@ -424,6 +424,80 @@ fun QuickDeliveryCloudSyncBar(
             deliveryStateManager.syncFromCloudOrder(cloudOrder, setAsActive = index == 0)
         }
     }
+
+    // Permanent Cloud Firestore sync for Admin remote_config/global_flags, b2b_accounts, and user_profiles
+    val remoteFlagsState by com.example.data.cloud.QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+    var lastPublishedRemoteFlagsTs by remember { mutableStateOf(0L) }
+
+    LaunchedEffect(currentUser?.uid) {
+        val uid = currentUser?.uid ?: return@LaunchedEffect
+        val email = currentUser?.email.orEmpty()
+        val displayName = currentUser?.displayName.orEmpty()
+        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val role = when {
+            com.example.data.cloud.QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(email) -> "ADMIN"
+            com.example.ui.components.MotivationAndPromoManager.cachedRiderName.isNotBlank() -> "RIDER"
+            else -> "CUSTOMER"
+        }
+        val nameToUse = displayName.ifBlank {
+            com.example.ui.components.MotivationAndPromoManager.cachedCustomerName.ifBlank { "Quick Delivery User" }
+        }
+        val phoneToUse = com.example.ui.components.MotivationAndPromoManager.cachedCustomerPhone
+            .ifBlank { com.example.ui.components.MotivationAndPromoManager.cachedRiderPhone }
+            .ifBlank { "9876543210" }
+        runCatching {
+            cloudRepo.upsertUserProfile(
+                name = nameToUse,
+                phone = phoneToUse,
+                email = email,
+                role = role
+            )
+        }
+    }
+
+    LaunchedEffect(currentUser?.uid) {
+        currentUser?.uid ?: return@LaunchedEffect
+        val cloudRepo = QuickDeliveryCloudRepository(context)
+        cloudRepo.observeRemoteConfigFlags()
+            .catch { }
+            .collect { cloudFlags ->
+                if (cloudFlags != null &&
+                    cloudFlags.updatedAtEpochMs > com.example.data.cloud.QuickDeliveryOperationsManager.remoteFeatureFlags.value.updatedAtEpochMs
+                ) {
+                    val wrapper = org.json.JSONObject().apply {
+                        put("remoteFeatureFlags", cloudFlags.toJson())
+                    }
+                    com.example.data.cloud.QuickDeliveryOperationsManager.mergeFromServerPayload(context, wrapper)
+                }
+            }
+    }
+
+    LaunchedEffect(currentUser?.uid, remoteFlagsState.updatedAtEpochMs) {
+        val email = currentUser?.email ?: return@LaunchedEffect
+        if (!com.example.data.cloud.QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(email)) return@LaunchedEffect
+        if (remoteFlagsState.updatedAtEpochMs > lastPublishedRemoteFlagsTs && remoteFlagsState.updatedAtEpochMs > 0L) {
+            val cloudRepo = QuickDeliveryCloudRepository(context)
+            val res = cloudRepo.publishRemoteConfigFlags(remoteFlagsState, email)
+            if (res.isSuccess) {
+                lastPublishedRemoteFlagsTs = remoteFlagsState.updatedAtEpochMs
+            }
+        }
+    }
+
+    LaunchedEffect(currentUser?.uid) {
+        val uid = currentUser?.uid ?: return@LaunchedEffect
+        val email = currentUser?.email.orEmpty()
+        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val flow = if (com.example.data.cloud.QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(email)) {
+            cloudRepo.observeAllB2bAccountsForAdmin()
+        } else {
+            cloudRepo.observeMyB2bAccounts(uid)
+        }
+        flow.catch { }
+            .collect { b2bList ->
+                com.example.data.cloud.QuickDeliveryOperationsManager.mergeB2bAccountsFromCloud(context, b2bList)
+            }
+    }
 }
 
 /**

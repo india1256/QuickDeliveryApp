@@ -63,10 +63,28 @@ data class RiderRegistrationRecord(
     val submittedAtLabel: String = "",
     val approvedAtEpochMs: Long = 0L,
     val reLoggedInAfterApproval: Boolean = false,
+    val bankAccountHolderName: String = "",
+    val bankName: String = "",
+    val bankAccountNumber: String = "",
+    val bankIfscCode: String = "",
+    val bankUpiId: String = "",
+    val bankDetailsUpdatedAtEpochMs: Long = 0L,
     val updatedAtEpochMs: Long = System.currentTimeMillis()
 ) {
     val requiresReLoginAfterApproval: Boolean
         get() = approvalStatus == RiderApprovalWorkflowStatus.APPROVED && !reLoggedInAfterApproval
+
+    val hasBankAccountDetails: Boolean
+        get() = bankAccountHolderName.trim().length >= 2 &&
+            bankName.trim().length >= 2 &&
+            bankAccountNumber.filter(Char::isDigit).length in 9..18 &&
+            bankIfscCode.trim().uppercase().matches(Regex("^[A-Z]{4}0[A-Z0-9]{6}$"))
+
+    val maskedBankAccountNumber: String
+        get() {
+            val digits = bankAccountNumber.filter(Char::isDigit)
+            return if (digits.length >= 4) "•••• ${digits.takeLast(4)}" else ""
+        }
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("riderKey", riderKey)
@@ -94,6 +112,12 @@ data class RiderRegistrationRecord(
         put("submittedAtLabel", submittedAtLabel)
         put("approvedAtEpochMs", approvedAtEpochMs)
         put("reLoggedInAfterApproval", reLoggedInAfterApproval)
+        put("bankAccountHolderName", bankAccountHolderName)
+        put("bankName", bankName)
+        put("bankAccountNumber", bankAccountNumber)
+        put("bankIfscCode", bankIfscCode)
+        put("bankUpiId", bankUpiId)
+        put("bankDetailsUpdatedAtEpochMs", bankDetailsUpdatedAtEpochMs)
         put("updatedAtEpochMs", updatedAtEpochMs)
     }
 
@@ -136,6 +160,12 @@ data class RiderRegistrationRecord(
                 submittedAtLabel = obj.optString("submittedAtLabel", ""),
                 approvedAtEpochMs = obj.optLong("approvedAtEpochMs", 0L),
                 reLoggedInAfterApproval = obj.optBoolean("reLoggedInAfterApproval", false),
+                bankAccountHolderName = obj.optString("bankAccountHolderName", ""),
+                bankName = obj.optString("bankName", ""),
+                bankAccountNumber = obj.optString("bankAccountNumber", ""),
+                bankIfscCode = obj.optString("bankIfscCode", ""),
+                bankUpiId = obj.optString("bankUpiId", ""),
+                bankDetailsUpdatedAtEpochMs = obj.optLong("bankDetailsUpdatedAtEpochMs", 0L),
                 updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
             )
         }
@@ -260,6 +290,12 @@ object RiderRegistrationApprovalManager {
                 email = email.trim().lowercase(),
                 approvalStatus = RiderApprovalWorkflowStatus.NEEDS_KYC,
                 reLoggedInAfterApproval = false,
+                bankAccountHolderName = existing?.bankAccountHolderName.orEmpty(),
+                bankName = existing?.bankName.orEmpty(),
+                bankAccountNumber = existing?.bankAccountNumber.orEmpty(),
+                bankIfscCode = existing?.bankIfscCode.orEmpty(),
+                bankUpiId = existing?.bankUpiId.orEmpty(),
+                bankDetailsUpdatedAtEpochMs = existing?.bankDetailsUpdatedAtEpochMs ?: 0L,
                 updatedAtEpochMs = now
             )
             _registrationsByKey.value = _registrationsByKey.value + (key to record)
@@ -324,6 +360,12 @@ object RiderRegistrationApprovalManager {
                 submittedAtLabel = label,
                 approvedAtEpochMs = 0L,
                 reLoggedInAfterApproval = false,
+                bankAccountHolderName = existing?.bankAccountHolderName.orEmpty(),
+                bankName = existing?.bankName.orEmpty(),
+                bankAccountNumber = existing?.bankAccountNumber.orEmpty(),
+                bankIfscCode = existing?.bankIfscCode.orEmpty(),
+                bankUpiId = existing?.bankUpiId.orEmpty(),
+                bankDetailsUpdatedAtEpochMs = existing?.bankDetailsUpdatedAtEpochMs ?: 0L,
                 updatedAtEpochMs = now
             )
             _registrationsByKey.value = _registrationsByKey.value + (key to updated)
@@ -418,6 +460,7 @@ object RiderRegistrationApprovalManager {
             panNumber = rec.panNumber,
             vehicleType = vehicleType,
             vehicleNumber = rec.vehicleNumber,
+            verifiedUpiId = rec.bankUpiId.ifBlank { if (existingIdx >= 0) currentList[existingIdx].verifiedUpiId else "" },
             verificationStatus = if (rec.approvalStatus == RiderApprovalWorkflowStatus.APPROVED) {
                 RiderVerificationStatus.VERIFIED
             } else {
@@ -445,6 +488,91 @@ object RiderRegistrationApprovalManager {
         }
         AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, nextFleet)
         AutomatedFairRiderAssignmentEngine.selectActiveRiderForPartnerApp(profile.riderId)
+    }
+
+    /**
+     * Saves & validates Rider's Bank Account & UPI payout details after login / approval,
+     * syncing immediately to Admin Console for payouts & settlements.
+     */
+    fun saveRiderBankAccountDetails(
+        context: Context,
+        phone: String?,
+        email: String?,
+        riderName: String = "",
+        riderId: String = "",
+        accountHolderName: String,
+        bankName: String,
+        accountNumber: String,
+        confirmAccountNumber: String,
+        ifscCode: String,
+        upiId: String
+    ): Result<RiderRegistrationRecord> {
+        ensureLoaded(context)
+        val cleanHolder = com.example.security.QuickDeliverySecurityGuard.sanitizeText(accountHolderName, 80)
+        val cleanBank = com.example.security.QuickDeliverySecurityGuard.sanitizeText(bankName, 80)
+        val cleanAcc = com.example.security.QuickDeliverySecurityGuard.sanitizeBankAccountNumber(accountNumber)
+        val cleanConfirm = com.example.security.QuickDeliverySecurityGuard.sanitizeBankAccountNumber(confirmAccountNumber)
+        val cleanIfsc = com.example.security.QuickDeliverySecurityGuard.sanitizeIfscCode(ifscCode)
+        val cleanUpi = upiId.trim()
+
+        if (cleanHolder.length < 2) {
+            return Result.failure(IllegalArgumentException("Please enter the Bank Account Holder Name."))
+        }
+        if (cleanBank.length < 2) {
+            return Result.failure(IllegalArgumentException("Please enter your Bank Name (e.g., SBI, HDFC, ICICI)."))
+        }
+        if (!com.example.security.QuickDeliverySecurityGuard.isValidIndianBankAccount(cleanAcc)) {
+            return Result.failure(IllegalArgumentException("Bank Account Number must be 9–18 valid digits."))
+        }
+        if (cleanAcc != cleanConfirm) {
+            return Result.failure(IllegalArgumentException("Account Number and Confirm Account Number do not match."))
+        }
+        if (!com.example.security.QuickDeliverySecurityGuard.isValidIfscCode(cleanIfsc)) {
+            return Result.failure(IllegalArgumentException("Enter a valid 11-character IFSC Code (e.g., SBIN0001234)."))
+        }
+        if (cleanUpi.isNotBlank() && !com.example.security.QuickDeliverySecurityGuard.isValidUpiId(cleanUpi)) {
+            return Result.failure(IllegalArgumentException("Enter a valid UPI ID (e.g., name@okaxis) or leave blank."))
+        }
+
+        val now = System.currentTimeMillis()
+        val key = buildRiderKey(phone, email).ifBlank {
+            riderId.trim().takeIf { it.isNotBlank() }?.let { "id_${it.lowercase()}" } ?: "phone_$now"
+        }
+        val updatedRecord = synchronized(lock) {
+            val existing = getRecordForIdentity(context, phone, email) ?: _registrationsByKey.value[key]
+            val targetKey = existing?.riderKey ?: key
+            val next = (existing ?: RiderRegistrationRecord(
+                riderKey = targetKey,
+                riderId = riderId.ifBlank { "RIDER-KYC-${targetKey.takeLast(4)}" },
+                name = riderName.ifBlank { cleanHolder },
+                phone = phone.orEmpty().filter(Char::isDigit).takeLast(10),
+                email = email.orEmpty().trim().lowercase(),
+                approvalStatus = RiderApprovalWorkflowStatus.APPROVED,
+                reLoggedInAfterApproval = true
+            )).copy(
+                bankAccountHolderName = cleanHolder,
+                bankName = cleanBank,
+                bankAccountNumber = cleanAcc,
+                bankIfscCode = cleanIfsc,
+                bankUpiId = cleanUpi,
+                bankDetailsUpdatedAtEpochMs = now,
+                updatedAtEpochMs = now
+            )
+            _registrationsByKey.value = _registrationsByKey.value + (targetKey to next)
+            persist(context)
+            next
+        }
+        ensureRiderProfileInRepository(SharedOrderRepository.getInstance(context), updatedRecord)
+        return Result.success(updatedRecord)
+    }
+
+    fun getRecordForRiderProfile(riderId: String, phone: String?): RiderRegistrationRecord? {
+        val map = _registrationsByKey.value
+        val cleanPhone = phone.orEmpty().filter(Char::isDigit).takeLast(10)
+        return map.values.firstOrNull { rec ->
+            (riderId.isNotBlank() && rec.riderId.equals(riderId, ignoreCase = true)) ||
+                (cleanPhone.length == 10 && rec.phone.filter(Char::isDigit).takeLast(10) == cleanPhone)
+        }
     }
 
     fun exportAllToJsonArray(): JSONArray {
@@ -476,13 +604,31 @@ object RiderRegistrationApprovalManager {
                         (remote.approvalStatus == RiderApprovalWorkflowStatus.APPROVED &&
                             local.approvalStatus != RiderApprovalWorkflowStatus.APPROVED) ||
                         (remote.approvalStatus == RiderApprovalWorkflowStatus.REJECTED &&
-                            local.approvalStatus == RiderApprovalWorkflowStatus.PENDING_APPROVAL)
+                            local.approvalStatus == RiderApprovalWorkflowStatus.PENDING_APPROVAL) ||
+                        (remote.bankDetailsUpdatedAtEpochMs > local.bankDetailsUpdatedAtEpochMs)
                     if (useRemote) {
                         val preserveRelogin = local.reLoggedInAfterApproval &&
                             local.approvalStatus == RiderApprovalWorkflowStatus.APPROVED &&
                             remote.approvalStatus == RiderApprovalWorkflowStatus.APPROVED
+                        val keepLocalBank = local.bankDetailsUpdatedAtEpochMs > remote.bankDetailsUpdatedAtEpochMs
                         currentMap[remote.riderKey] = remote.copy(
-                            reLoggedInAfterApproval = preserveRelogin
+                            reLoggedInAfterApproval = preserveRelogin,
+                            bankAccountHolderName = if (keepLocalBank) local.bankAccountHolderName else remote.bankAccountHolderName.ifBlank { local.bankAccountHolderName },
+                            bankName = if (keepLocalBank) local.bankName else remote.bankName.ifBlank { local.bankName },
+                            bankAccountNumber = if (keepLocalBank) local.bankAccountNumber else remote.bankAccountNumber.ifBlank { local.bankAccountNumber },
+                            bankIfscCode = if (keepLocalBank) local.bankIfscCode else remote.bankIfscCode.ifBlank { local.bankIfscCode },
+                            bankUpiId = if (keepLocalBank) local.bankUpiId else remote.bankUpiId.ifBlank { local.bankUpiId },
+                            bankDetailsUpdatedAtEpochMs = maxOf(local.bankDetailsUpdatedAtEpochMs, remote.bankDetailsUpdatedAtEpochMs)
+                        )
+                        changed = true
+                    } else if (remote.hasBankAccountDetails && !local.hasBankAccountDetails) {
+                        currentMap[remote.riderKey] = local.copy(
+                            bankAccountHolderName = remote.bankAccountHolderName,
+                            bankName = remote.bankName,
+                            bankAccountNumber = remote.bankAccountNumber,
+                            bankIfscCode = remote.bankIfscCode,
+                            bankUpiId = remote.bankUpiId,
+                            bankDetailsUpdatedAtEpochMs = remote.bankDetailsUpdatedAtEpochMs
                         )
                         changed = true
                     }

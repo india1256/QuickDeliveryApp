@@ -27,14 +27,14 @@ class QuickDeliveryCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
                     orderCode = uniqueCode,
                     customerName = "Aarav Sharma",
                     customerPhone = "9876543210",
-                    pickupAddress = "Indiranagar 100ft Road, Bengaluru",
-                    dropAddress = "Koramangala 4th Block, Bengaluru",
+                    pickupAddress = "Jayanagar 4th Block, Bengaluru",
+                    dropAddress = "Whitefield ITPL Main Gate, Bengaluru",
                     paymentMethod = "GATEWAY_UPI",
                     paymentStatus = "PENDING_GATEWAY_VERIFICATION"
                 )
             )
         }
-        assertTrue(createRes.isSuccess)
+        assertTrue("createRes failed: ${createRes.exceptionOrNull()}", createRes.isSuccess)
         val orderId = createRes.getOrThrow()
 
         // Verify client cannot mark order VERIFIED_PAID_TO_COMPANY without server verification
@@ -166,7 +166,7 @@ class QuickDeliveryCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
                 )
             )
         }
-        assertTrue(walletRes.isSuccess)
+        assertTrue("walletRes failed: ${walletRes.exceptionOrNull()}", walletRes.isSuccess)
 
         // Adding ₹20 (2000 paise) exceeds ₹150 (15000 paise) -> must block atomically
         val overLimitRes = withTimeout(DEFAULT_TIMEOUT_MS) {
@@ -178,7 +178,7 @@ class QuickDeliveryCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
         val withinLimitRes = withTimeout(DEFAULT_TIMEOUT_MS) {
             repository.recordCommissionDebtOrBlockIfOverLimit(500L)
         }
-        assertTrue(withinLimitRes.isSuccess)
+        assertTrue("withinLimitRes failed: ${withinLimitRes.exceptionOrNull()}", withinLimitRes.isSuccess)
         assertEquals(14500L, withinLimitRes.getOrThrow().commissionDebtPaise)
 
         // Append-only Company Ledger creation (pending/receivable status allowed for client)
@@ -194,7 +194,7 @@ class QuickDeliveryCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
                 )
             )
         }
-        assertTrue(ledgerRes.isSuccess)
+        assertTrue("ledgerRes failed: ${ledgerRes.exceptionOrNull()}", ledgerRes.isSuccess)
     }
 
     @Test
@@ -301,6 +301,64 @@ class QuickDeliveryCloudRepositoryRuleTest : FirestoreEmulatorTestBase() {
             assertNotNull("Expected FirebaseFirestoreException, got $e", fsEx)
             assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, fsEx?.code)
         }
+    }
+
+    @Test
+    fun b2bDukaanAccount_unauthenticatedOrUnauthorizedWrite_rejectedByRules() = runBlocking {
+        signInTestUser(ALICE_EMAIL)
+        val aliceRepo = QuickDeliveryCloudRepository(firestore)
+        val b2bId = "B2B-TEST-${UUID.randomUUID().toString().take(6)}"
+
+        val createRes = withTimeout(DEFAULT_TIMEOUT_MS) {
+            aliceRepo.createB2bAccountRequest(
+                CloudB2bDukaanAccount(
+                    accountId = b2bId,
+                    shopName = "Sharma Sweets & Courier",
+                    ownerName = "Aarav Sharma",
+                    ownerPhone = "9876543210",
+                    gstin = "07AAACQ1234F1Z5",
+                    pickupAddress = "Connaught Place, New Delhi"
+                )
+            )
+        }
+        assertTrue("Alice should create PENDING_ADMIN_APPROVAL B2B request: ${createRes.exceptionOrNull()}", createRes.isSuccess)
+
+        // Alice cannot self-approve or charge before Admin approval
+        val selfChargeRes = withTimeout(DEFAULT_TIMEOUT_MS) {
+            aliceRepo.chargeB2bPostpaidOrder(b2bId, 5000L)
+        }
+        assertTrue("Pending B2B account must not be chargeable before Admin approval", selfChargeRes.isFailure)
+
+        // Non-admin Alice cannot approve her own B2B account in Firestore rules
+        val selfApproveRes = withTimeout(DEFAULT_TIMEOUT_MS) {
+            aliceRepo.approveOrUpdateB2bAccountByAdmin(b2bId, "APPROVED", 50000)
+        }
+        assertTrue("Non-admin must receive PERMISSION_DENIED when trying to approve B2B account", selfApproveRes.isFailure)
+        val fsEx = selfApproveRes.exceptionOrNull()?.unwrapFirestoreException()
+        assertNotNull(fsEx)
+        assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, fsEx?.code)
+
+        // Unrelated Bob cannot observe or modify Alice's B2B account
+        signInTestUser(BOB_EMAIL)
+        val bobRepo = QuickDeliveryCloudRepository(firestore)
+        val bobApproveRes = withTimeout(DEFAULT_TIMEOUT_MS) {
+            bobRepo.approveOrUpdateB2bAccountByAdmin(b2bId, "SUSPENDED", 0)
+        }
+        assertTrue(bobApproveRes.isFailure)
+        val bobEx = bobApproveRes.exceptionOrNull()?.unwrapFirestoreException()
+        assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, bobEx?.code)
+
+        // Alice can upsert her own CUSTOMER user_profile safely
+        signInTestUser(ALICE_EMAIL)
+        val profileRes = withTimeout(DEFAULT_TIMEOUT_MS) {
+            aliceRepo.upsertUserProfile(
+                name = "Aarav Sharma",
+                phone = "9876543210",
+                email = ALICE_EMAIL,
+                role = "CUSTOMER"
+            )
+        }
+        assertTrue("Customer profile upsert should succeed: ${profileRes.exceptionOrNull()}", profileRes.isSuccess)
     }
 
     private companion object {
