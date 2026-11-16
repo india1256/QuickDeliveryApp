@@ -39,52 +39,57 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 2. Set up Node.js 20 LTS
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 3. Set up JDK 17 (Eclipse Temurin)
+      - name: 2. Set up JDK 17 (Eclipse Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 4. Set up Android SDK
+      - name: 3. Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 5. Accept Android SDK Licenses & Install Web/Capacitor Dependencies
+      - name: 4. Install Android 36 SDK & Build Tools 36.0.0
         run: |
-          yes | sdkmanager --licenses || true
-          rm -f capacitor.config.ts
-          npm install --legacy-peer-deps --no-audit --no-fund
-          mkdir -p dist-apks
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager "platforms;android-36.1" || true
 
-      - name: 6. Build Customer App APK (QuickDelivery-Customer.apk)
-        if: ${{ github.event.inputs.build_target == '' || github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'customer' }}
+      - name: 5. Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: 6. Prepare Signing Keystore & Build Environment
         run: |
-          node scripts/build-capacitor-apk.mjs customer --apk
-          ls -lh dist-apks/QuickDelivery-Customer.apk
+          if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          if [ ! -f .env ] && [ -f .env.example ]; then
+            cp .env.example .env
+          fi
+          mkdir -p dist-apks public/apks
 
-      - name: 7. Build Rider Partner APK (QuickDelivery-Rider-Partner.apk)
-        if: ${{ github.event.inputs.build_target == '' || github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'rider' }}
+      - name: 7. Compile Native Android App & Build Base APK
         run: |
-          node scripts/build-capacitor-apk.mjs rider --apk
-          ls -lh dist-apks/QuickDelivery-Rider-Partner.apk
+          gradle :app:assembleDebug --no-daemon --console=plain
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
 
-      - name: 8. Build Admin Enterprise APK (QuickDelivery-Admin-Enterprise.apk)
-        if: ${{ github.event.inputs.build_target == '' || github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'admin' }}
+      - name: 8. Package & Sign Standalone Customer, Rider & Admin APKs
         run: |
-          node scripts/build-capacitor-apk.mjs admin --apk
-          ls -lh dist-apks/QuickDelivery-Admin-Enterprise.apk
+          python3 scripts/build-standalone-role-apks.py
+          TARGET="${{ github.event.inputs.build_target || 'all' }}"
+          if [ "$TARGET" = "customer" ] || [ "$TARGET" = "all" ]; then
+            cp public/apks/QuickDelivery-Customer.apk dist-apks/
+          fi
+          if [ "$TARGET" = "rider" ] || [ "$TARGET" = "all" ]; then
+            cp public/apks/QuickDelivery-Rider-Partner.apk dist-apks/
+          fi
+          if [ "$TARGET" = "admin" ] || [ "$TARGET" = "all" ]; then
+            cp public/apks/QuickDelivery-Admin-Enterprise.apk dist-apks/
+          fi
+          ls -lh dist-apks/*.apk
 
-      - name: 9. Build All-in-One Unified Hub APK (QuickDelivery-AllInOne-Hub.apk)
-        if: ${{ github.event.inputs.build_target == '' || github.event.inputs.build_target == 'all' }}
-        run: |
-          node scripts/build-capacitor-apk.mjs hub --apk
-          ls -lh dist-apks/QuickDelivery-AllInOne-Hub.apk
-
-      - name: 10. Upload Customer APK Artifact
+      - name: 9. Upload Customer APK Artifact
         if: ${{ always() && hashFiles('dist-apks/QuickDelivery-Customer.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
@@ -93,7 +98,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: 11. Upload Rider Partner APK Artifact
+      - name: 10. Upload Rider Partner APK Artifact
         if: ${{ always() && hashFiles('dist-apks/QuickDelivery-Rider-Partner.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
@@ -102,7 +107,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: 12. Upload Admin Enterprise APK Artifact
+      - name: 11. Upload Admin Enterprise APK Artifact
         if: ${{ always() && hashFiles('dist-apks/QuickDelivery-Admin-Enterprise.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
@@ -111,7 +116,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: 13. Upload All-APKs Combined Bundle
+      - name: 12. Upload All-APKs Combined Bundle
         if: ${{ always() && hashFiles('dist-apks/*.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
@@ -120,37 +125,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: 14. Prepare Release Tags for Built APKs
+      - name: 13. Prepare Release Tags for Built APKs
         if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && hashFiles('dist-apks/*.apk') != '' }}
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ls -lh dist-apks/*.apk
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -fa "v5.3.${GITHUB_RUN_NUMBER}" -m "Quick Delivery APKs Build #${GITHUB_RUN_NUMBER}"
+          git tag -fa "v6.3.${GITHUB_RUN_NUMBER}" -m "Quick Delivery APKs Build #${GITHUB_RUN_NUMBER}"
           git tag -fa "latest-apks" -m "Latest Quick Delivery APKs (Build #${GITHUB_RUN_NUMBER})"
-          git push origin "refs/tags/v5.3.${GITHUB_RUN_NUMBER}" --force
+          git push origin "refs/tags/v6.3.${GITHUB_RUN_NUMBER}" --force
           git push origin "refs/tags/latest-apks" --force
 
-      - name: 15. Create Automatic Versioned GitHub Release with Built APKs (dist-apks/*.apk)
+      - name: 14. Create Versioned GitHub Release with Built APKs
         if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && hashFiles('dist-apks/*.apk') != '' }}
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.3.${{ github.run_number }}
+          tag_name: v6.3.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: "📲 Quick Delivery v5.3.${{ github.run_number }} — Customer, Rider & Admin APKs"
+          name: "Quick Delivery v6.3.${{ github.run_number }} — Customer, Rider & Admin APKs"
           body: |
-            ## 📲 Direct 1-Tap Mobile APK Downloads (Build #${{ github.run_number }})
+            ## Direct 1-Tap Mobile APK Downloads (Build #${{ github.run_number }})
 
-            Click any `.apk` file below under **Assets** on your Android phone to download and install directly (no `.zip` extraction required):
-
-            1. 🛍️ **`QuickDelivery-Customer.apk`** — Customer Ordering & Live Tracking App (`com.quickdelivery.customer`)
-            2. 🛵 **`QuickDelivery-Rider-Partner.apk`** — Rider Partner Delivery & Earnings App (`com.quickdelivery.rider`)
-            3. 🛡️ **`QuickDelivery-Admin-Enterprise.apk`** — Admin Control Center & Order Management App (`com.quickdelivery.admin`)
-            4. 🌐 **`QuickDelivery-AllInOne-Hub.apk`** — Unified 3-in-1 Switcher App (`com.quickdelivery.hub`)
-
-            > **Note:** Each APK has a unique Android Package ID so all apps can be installed side-by-side on the same phone and sync live via Firebase Firestore.
+            1. **QuickDelivery-Customer.apk** — Customer Ordering & Live Tracking (`com.aistudio.quickdelivery.cust01`)
+            2. **QuickDelivery-Rider-Partner.apk** — Rider Partner Delivery, KYC & Bank Payouts (`com.aistudio.quickdelivery.ride02`)
+            3. **QuickDelivery-Admin-Enterprise.apk** — Admin Control Center (`com.aistudio.quickdelivery.admn03`)
           files: dist-apks/*.apk
           draft: false
           prerelease: false
@@ -158,22 +160,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 16. Update Rolling 'latest-apks' GitHub Release with Built APKs (dist-apks/*.apk)
+      - name: 15. Update Rolling 'latest-apks' GitHub Release
         if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && hashFiles('dist-apks/*.apk') != '' }}
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest-apks
           target_commitish: ${{ github.sha }}
-          name: "📲 Quick Delivery (Latest) — Direct Mobile APK Downloads (Customer, Rider & Admin)"
+          name: "Quick Delivery (Latest) — Customer, Rider & Admin APKs"
           body: |
-            ## 📲 Direct 1-Tap Mobile APK Downloads (Always Latest Build)
+            ## Direct 1-Tap Mobile APK Downloads (Latest Build)
 
-            Click any `.apk` file below under **Assets** on your Android phone to download and install directly:
-
-            1. 🛍️ **`QuickDelivery-Customer.apk`** — Customer Ordering & Live Tracking App (`com.quickdelivery.customer`)
-            2. 🛵 **`QuickDelivery-Rider-Partner.apk`** — Rider Partner Delivery & Earnings App (`com.quickdelivery.rider`)
-            3. 🛡️ **`QuickDelivery-Admin-Enterprise.apk`** — Admin Control Center & Order Management App (`com.quickdelivery.admin`)
-            4. 🌐 **`QuickDelivery-AllInOne-Hub.apk`** — Unified 3-in-1 Switcher App (`com.quickdelivery.hub`)
+            1. **QuickDelivery-Customer.apk** (`com.aistudio.quickdelivery.cust01`)
+            2. **QuickDelivery-Rider-Partner.apk** (`com.aistudio.quickdelivery.ride02`)
+            3. **QuickDelivery-Admin-Enterprise.apk** (`com.aistudio.quickdelivery.admn03`)
           files: dist-apks/*.apk
           draft: false
           prerelease: false

@@ -331,17 +331,45 @@ def resign_apk_v2(apk_bytes: bytes, key_path: str) -> bytes:
     return sec1 + final_sig_block + bytes(cd_bytes) + bytes(eocd_bytes)
 
 
-BUILD_TOOLS_DIR = "/opt/android/sdk/build-tools/36.0.0"
+def resolve_build_tools_dir() -> str:
+    sdk_candidates = [
+        os.environ.get("ANDROID_HOME", ""),
+        os.environ.get("ANDROID_SDK_ROOT", ""),
+        "/opt/android/sdk",
+        "/usr/local/lib/android/sdk",
+        os.path.expanduser("~/Android/Sdk"),
+    ]
+    for sdk_root in sdk_candidates:
+        if not sdk_root:
+            continue
+        bt_root = os.path.join(sdk_root, "build-tools")
+        if os.path.isdir(bt_root):
+            versions = sorted(os.listdir(bt_root), reverse=True)
+            for ver in versions:
+                cand = os.path.join(bt_root, ver)
+                if os.path.isfile(os.path.join(cand, "zipalign")) and os.path.isfile(
+                    os.path.join(cand, "apksigner")
+                ):
+                    return cand
+    return "/opt/android/sdk/build-tools/36.0.0"
+
+
+BUILD_TOOLS_DIR = resolve_build_tools_dir()
 ZIPALIGN_BIN = os.path.join(BUILD_TOOLS_DIR, "zipalign")
 APKSIGNER_BIN = os.path.join(BUILD_TOOLS_DIR, "apksigner")
 
 
 def main():
     os.makedirs("public/apks", exist_ok=True)
-    os.makedirs("/var/www/assets/apks", exist_ok=True)
+    www_apks_writable = False
+    try:
+        os.makedirs("/var/www/assets/apks", exist_ok=True)
+        www_apks_writable = os.access("/var/www/assets/apks", os.W_OK)
+    except OSError:
+        www_apks_writable = False
 
     base_apk_path = resolve_base_apk()
-    print(f"Using freshly compiled base APK: {base_apk_path}")
+    print(f"Using freshly compiled base APK: {base_apk_path} (build-tools={BUILD_TOOLS_DIR})")
     raw_base_apk = open(base_apk_path, "rb").read()
 
     with zipfile.ZipFile(base_apk_path, "r") as z:
@@ -418,11 +446,15 @@ def main():
 
         signed_apk = open(signed_tmp, "rb").read()
         out_pub = os.path.join("public/apks", filename)
-        out_www = os.path.join("/var/www/assets/apks", filename)
         with open(out_pub, "wb") as f:
             f.write(signed_apk)
-        with open(out_www, "wb") as f:
-            f.write(signed_apk)
+        if www_apks_writable:
+            try:
+                out_www = os.path.join("/var/www/assets/apks", filename)
+                with open(out_www, "wb") as f:
+                    f.write(signed_apk)
+            except OSError:
+                pass
         print(f"Built, zipaligned & v1/v2/v3-signed {filename} ({len(signed_apk)} bytes) for role={role}")
 
 

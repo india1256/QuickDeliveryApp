@@ -2,13 +2,13 @@
   "resetEpochMs": 1794840563212,
   "ordersById": {},
   "devicesById": {
-    "PH-FC10C95B": {
-      "deviceId": "PH-FC10C95B",
+    "PH-17984939": {
+      "deviceId": "PH-17984939",
       "role": "UNIFIED",
       "deviceModel": "Google sdk_gphone64_arm64",
       "lat": 0,
       "lng": 0,
-      "lastSeenEpochMs": 1794846043067
+      "lastSeenEpochMs": 1794848692673
     }
   },
   "fcmTokensByDevice": {
@@ -25,7 +25,12 @@
     "PH-FC10C95B": {
       "token": "fcm_qd_sdkgphone64arm64_live_98450",
       "role": "UNIFIED",
-      "updatedAtEpochMs": 1794846043067
+      "updatedAtEpochMs": 1794847244372
+    },
+    "PH-17984939": {
+      "token": "fcm_qd_sdkgphone64arm64_live_98450",
+      "role": "UNIFIED",
+      "updatedAtEpochMs": 1794848692673
     }
   },
   "riderRegistrationsByKey": {},
@@ -90,8 +95,86 @@
   "securityStats": {
     "blockedFakeOrders": 0,
     "rateLimitedRequests": 0,
-    "rejectedInvalidPayloads": 14,
+    "rejectedInvalidPayloads": 27,
     "recentBlockedEvents": [
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:22:20.124Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:22:16.256Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:22:13.126Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:22:09.661Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:22:07.134Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:22:04.493Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:22:01.934Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:59.386Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:56.832Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:54.287Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:51.732Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:49.194Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "108.177.6.31",
+        "detail": "Missing X-QD-Sync-Sig or X-QD-Sync-Ts authentication header",
+        "atIso": "2026-11-16T16:21:46.652Z"
+      },
       {
         "type": "INVALID_SIG",
         "actor": "108.177.6.31",

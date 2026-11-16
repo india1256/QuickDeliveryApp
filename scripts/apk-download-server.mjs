@@ -1332,7 +1332,7 @@ function ensureStandaloneRoleApksBuilt() {
 configureNginxDirectApkServing();
 ensureStandaloneRoleApksBuilt();
 
-if (process.argv.includes('--configure-nginx')) {
+if (process.argv.includes('--configure-nginx') || (process.env.GITHUB_ACTIONS === 'true' && !process.argv.includes('--serve'))) {
   process.exit(0);
 }
 
