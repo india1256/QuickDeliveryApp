@@ -8,14 +8,14 @@
       "deviceModel": "Google sdk_gphone64_arm64",
       "lat": 0,
       "lng": 0,
-      "lastSeenEpochMs": 1794882092982
+      "lastSeenEpochMs": 1794884277966
     }
   },
   "fcmTokensByDevice": {
     "PH-D50028F0": {
       "token": "fcm_qd_sdkgphone64arm64_live_98450",
       "role": "UNIFIED",
-      "updatedAtEpochMs": 1794882092982
+      "updatedAtEpochMs": 1794884277966
     }
   },
   "riderRegistrationsByKey": {},
