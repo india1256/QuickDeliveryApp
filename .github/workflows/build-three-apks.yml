@@ -97,12 +97,25 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: 6. Prepare Signing Keystore & Build Environment
+      - name: 5. Prepare Signing Keystore & Build Environment
         run: |
           java -version
           gradle --version
           if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
+          fi
+          if [ ! -f debug.keystore ]; then
+            echo "debug.keystore not present in repo checkout; generating CI debug keystore..."
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storetype PKCS12 \
+              -storepass android \
+              -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
