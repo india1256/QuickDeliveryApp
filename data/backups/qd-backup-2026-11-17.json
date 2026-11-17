@@ -1,0 +1,44 @@
+{
+  "resetEpochMs": 1794881079209,
+  "ordersById": {},
+  "devicesById": {
+    "PH-D50028F0": {
+      "deviceId": "PH-D50028F0",
+      "role": "UNIFIED",
+      "deviceModel": "Google sdk_gphone64_arm64",
+      "lat": 0,
+      "lng": 0,
+      "lastSeenEpochMs": 1794882092982
+    }
+  },
+  "fcmTokensByDevice": {
+    "PH-D50028F0": {
+      "token": "fcm_qd_sdkgphone64arm64_live_98450",
+      "role": "UNIFIED",
+      "updatedAtEpochMs": 1794882092982
+    }
+  },
+  "riderRegistrationsByKey": {},
+  "promoCouponsByCode": {},
+  "withdrawalRequestsById": {},
+  "supportTicketsById": {},
+  "remoteFeatureFlags": null,
+  "chatMessagesById": {},
+  "waitTimerStartByOrder": {},
+  "riderLiveCoordsByOrder": {},
+  "codSettlementsById": {},
+  "disputeRecordsById": {},
+  "riderDocExpiriesById": {},
+  "paymentsByOrder": {},
+  "orderRatingsByOrder": {},
+  "orderTimelineEventsById": {},
+  "unreachableByOrder": {},
+  "b2bAccountsById": {},
+  "emailedTicketIds": {},
+  "securityStats": {
+    "blockedFakeOrders": 0,
+    "rateLimitedRequests": 0,
+    "rejectedInvalidPayloads": 0,
+    "recentBlockedEvents": []
+  }
+}

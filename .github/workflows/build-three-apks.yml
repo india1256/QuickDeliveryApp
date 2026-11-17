@@ -39,20 +39,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 2. Set up JDK 17 (Eclipse Temurin)
+      - name: 2. Set up JDK 21 (Eclipse Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: 3. Set up Android SDK
         uses: android-actions/setup-android@v3
 
       - name: 4. Install Android 36 SDK & Build Tools 36.0.0
         run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e" > "$ANDROID_HOME/licenses/android-sdk-license"
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
-          sdkmanager "platforms;android-36.1" || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager "platforms;android-36.1" || sdkmanager --channel=1 "platforms;android-36.1" || true
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
       - name: 5. Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
@@ -61,6 +64,8 @@ jobs:
 
       - name: 6. Prepare Signing Keystore & Build Environment
         run: |
+          java -version
+          gradle --version
           if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
           fi
@@ -77,7 +82,7 @@ jobs:
       - name: 8. Package & Sign Standalone Customer, Rider & Admin APKs
         run: |
           python3 scripts/build-standalone-role-apks.py
-          TARGET="${{ github.event.inputs.build_target || 'all' }}"
+          TARGET="${{ inputs.build_target || 'all' }}"
           if [ "$TARGET" = "customer" ] || [ "$TARGET" = "all" ]; then
             cp public/apks/QuickDelivery-Customer.apk dist-apks/
           fi

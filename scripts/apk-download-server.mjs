@@ -6,12 +6,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync, spawn } from 'node:child_process';
 
-const PORT = Number(process.env.APP_PORT || 3000);
+const IS_AISTUDIO_CONTAINER = fs.existsSync('/etc/nginx/user_auth_verification.lua') || Number(process.env.NGINX_PORT || -1) === Number(process.env.PORT || -2);
+const PORT = Number(process.env.APP_PORT || (IS_AISTUDIO_CONTAINER ? (process.env.DEFAULT_APP_PORT || 3000) : (process.env.PORT || 3000)));
 const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
-const SYNC_STATE_FILE = '/tmp/quickdelivery-live-sync.json';
+const SYNC_STATE_FILE = process.env.SYNC_STATE_FILE || '/tmp/quickdelivery-live-sync.json';
 const BACKUP_DIR = path.join(ROOT, 'data', 'backups');
 const CLOUD_RUN_MAX_SAFE_APK_BYTES = 33000000; // < 31.5 MiB (well below Cloud Run's 32 MiB = 33,554,432 limit)
 
@@ -1320,13 +1321,16 @@ function ensureStandaloneRoleApksBuilt() {
     configureNginxDirectApkServing();
     return;
   }
-  const child = spawn('python3', ['scripts/build-standalone-role-apks.py'], {
-    cwd: ROOT,
-    stdio: 'ignore',
-  });
-  child.on('exit', () => {
-    configureNginxDirectApkServing();
-  });
+  try {
+    const child = spawn('python3', ['scripts/build-standalone-role-apks.py'], {
+      cwd: ROOT,
+      stdio: 'ignore',
+    });
+    child.on('error', () => {});
+    child.on('exit', () => {
+      configureNginxDirectApkServing();
+    });
+  } catch {}
 }
 
 configureNginxDirectApkServing();
