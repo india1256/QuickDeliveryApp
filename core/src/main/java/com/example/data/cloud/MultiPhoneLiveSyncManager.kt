@@ -32,6 +32,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -73,8 +75,15 @@ object MultiPhoneLiveSyncManager {
     private var lastWorkingEndpoint: String? = null
 
     private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val syncMutex = Mutex()
     private val alertedOrderIds = ConcurrentHashMap.newKeySet<String>()
     private var isLoopStarted = false
+
+    @Volatile
+    private var pendingImmediateSync = false
+
+    @Volatile
+    private var pendingForceResetServer = false
 
     @Volatile
     private var localResetEpochMs: Long = 0L
@@ -154,9 +163,16 @@ object MultiPhoneLiveSyncManager {
         syncScope.launch {
             while (true) {
                 runCatching {
-                    performSingleSyncCycle(appContext, forceResetServer = false)
+                    val useReset = pendingForceResetServer
+                    pendingForceResetServer = false
+                    pendingImmediateSync = false
+                    performSingleSyncCycle(appContext, forceResetServer = useReset)
                 }
-                delay(1800L)
+                if (pendingImmediateSync) {
+                    delay(200L)
+                } else {
+                    delay(1800L)
+                }
             }
         }
     }
@@ -164,9 +180,18 @@ object MultiPhoneLiveSyncManager {
     fun triggerImmediateSync(context: Context, forceResetServer: Boolean = false) {
         if (isRobolectricUnitTest) return
         val appContext = context.applicationContext
+        pendingImmediateSync = true
+        if (forceResetServer) {
+            pendingForceResetServer = true
+        }
         syncScope.launch {
-            runCatching {
-                performSingleSyncCycle(appContext, forceResetServer = forceResetServer)
+            while (pendingImmediateSync) {
+                val forceNow = pendingForceResetServer
+                pendingImmediateSync = false
+                pendingForceResetServer = false
+                runCatching {
+                    performSingleSyncCycle(appContext, forceResetServer = forceNow)
+                }
             }
         }
     }
@@ -235,6 +260,7 @@ object MultiPhoneLiveSyncManager {
     }
 
     private suspend fun performSingleSyncCycle(context: Context, forceResetServer: Boolean) = withContext(Dispatchers.IO) {
+        syncMutex.withLock {
         val repo = SharedOrderRepository.getInstance(context)
         AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
         RiderRegistrationApprovalManager.ensureLoaded(context)
@@ -335,14 +361,28 @@ object MultiPhoneLiveSyncManager {
         var winningHost = ""
         var winningLatencyMs = 0L
         var lastErrMsg = ""
+        val isCurrentlyDisconnected = !_syncStatus.value.isConnected
         for (endpoint in orderedEndpoints) {
             val startMs = System.currentTimeMillis()
+            val isPrimaryProductionEndpoint = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
+                endpoint.contains("onrender.com", ignoreCase = true)
+            // Render Free Tier cold-starts can take 15-35s after idle; give primary endpoints generous timeout so orders never silently fail to sync!
+            val epConnectTimeout = when {
+                isPrimaryProductionEndpoint && isCurrentlyDisconnected -> 15_000
+                isPrimaryProductionEndpoint -> 10_000
+                else -> 2_500
+            }
+            val epReadTimeout = when {
+                isPrimaryProductionEndpoint && isCurrentlyDisconnected -> 28_000
+                isPrimaryProductionEndpoint -> 15_000
+                else -> 3_000
+            }
             val attempt = runCatching {
                 val url = URL(endpoint)
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 2500
-                    readTimeout = 3000
+                    connectTimeout = epConnectTimeout
+                    readTimeout = epReadTimeout
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
@@ -383,7 +423,7 @@ object MultiPhoneLiveSyncManager {
                 isConnected = false,
                 lastSyncError = lastErrMsg.ifBlank { "Server unreachable — check internet" }
             )
-            return@withContext
+            return@withLock
         }
         val serverResetEpochMs = root.optLong("resetEpochMs", 0L)
         val mutableOrdersFlow = getMutableOrdersFlow(repo)
@@ -527,7 +567,21 @@ object MultiPhoneLiveSyncManager {
             }
 
             if (listChanged) {
-                mutableOrdersFlow.value = currentById.values.toList()
+                val remoteIndexById = buildMap {
+                    for (idx in 0 until remoteOrdersArr.length()) {
+                        val oid = remoteOrdersArr.optJSONObject(idx)?.optString("orderId", "")?.trim().orEmpty()
+                        if (oid.isNotEmpty()) put(oid, idx)
+                    }
+                }
+                mutableOrdersFlow.value = currentById.values.sortedBy { ord ->
+                    remoteIndexById[ord.orderId] ?: Int.MAX_VALUE
+                }
+                runCatching {
+                    com.example.ui.components.FcmOrderNotificationManager.observeOrdersAndDispatchFcmNotifications(
+                        context = context,
+                        orders = mutableOrdersFlow.value
+                    )
+                }
             }
         }
 
@@ -560,6 +614,7 @@ object MultiPhoneLiveSyncManager {
             rateLimitedRequestsCount = rateLimitedCount,
             lastSyncError = ""
         )
+        }
     }
 
     private fun serializeOrderToJson(
@@ -747,4 +802,106 @@ object MultiPhoneLiveSyncManager {
             capturedAt = obj.optString("capturedAt", "")
         )
     }.getOrNull()
+
+    suspend fun sendSignUpEmailOtp(
+        context: Context,
+        email: String,
+        role: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        postSignedAuthJson(
+            context = context,
+            apiPath = "/api/auth/send-email-otp",
+            role = role,
+            bodyJson = JSONObject().apply {
+                put("email", email.trim().lowercase())
+                put("role", role.trim().uppercase())
+                put("deviceId", getOrInitDeviceId(context))
+            }
+        )
+    }
+
+    suspend fun verifySignUpEmailOtp(
+        context: Context,
+        email: String,
+        otp: String,
+        role: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        postSignedAuthJson(
+            context = context,
+            apiPath = "/api/auth/verify-email-otp",
+            role = role,
+            bodyJson = JSONObject().apply {
+                put("email", email.trim().lowercase())
+                put("otp", otp.filter(Char::isDigit).trim())
+                put("role", role.trim().uppercase())
+                put("deviceId", getOrInitDeviceId(context))
+            }
+        )
+    }
+
+    private fun postSignedAuthJson(
+        context: Context,
+        apiPath: String,
+        role: String,
+        bodyJson: JSONObject
+    ): Result<String> {
+        val deviceId = getOrInitDeviceId(context)
+        val cleanRole = role.trim().uppercase().ifBlank { "CUSTOMER" }
+        val syncTs = System.currentTimeMillis()
+        val syncSig = com.example.security.QuickDeliverySecurityGuard.computeSyncIntegritySignature(
+            deviceId = deviceId,
+            role = cleanRole,
+            timestampEpochMs = syncTs
+        )
+        val orderedEndpoints = buildList {
+            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", apiPath)) }
+            LIVE_SYNC_ENDPOINTS.forEach { ep ->
+                val target = ep.replace("/api/live-sync", apiPath)
+                if (target !in this) add(target)
+            }
+        }
+        var lastErrorMsg = "Could not connect to Quick Delivery verification server."
+        for (endpoint in orderedEndpoints) {
+            val isPrimary = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
+                endpoint.contains("onrender.com", ignoreCase = true)
+            val attempt = runCatching {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = if (isPrimary) 12_000 else 3_000
+                    readTimeout = if (isPrimary) 20_000 else 4_000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android")
+                    setRequestProperty("X-QD-App-Role", cleanRole)
+                    setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
+                    setRequestProperty("X-QD-Sync-Sig", syncSig)
+                }
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write(bodyJson.toString())
+                    writer.flush()
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+                val rawResp = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+                conn.disconnect()
+                val json = runCatching { JSONObject(rawResp) }.getOrNull()
+                if (code in 200..299 && json?.optBoolean("ok", false) == true) {
+                    lastWorkingEndpoint = endpoint.replace(apiPath, "/api/live-sync")
+                    return Result.success(json.optString("message", "Success"))
+                } else {
+                    val serverErr = json?.optString("error")?.takeIf { it.isNotBlank() }
+                        ?: "Server returned HTTP $code"
+                    // If server responded cleanly with a 4xx/503/502 business/SMTP error, surface it immediately!
+                    if (code in 400..599 && json != null) {
+                        return Result.failure(IllegalStateException(serverErr))
+                    }
+                    lastErrorMsg = serverErr
+                }
+            }.onFailure { err ->
+                lastErrorMsg = err.message ?: lastErrorMsg
+            }
+        }
+        return Result.failure(IllegalStateException(lastErrorMsg))
+    }
 }

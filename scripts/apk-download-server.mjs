@@ -12,6 +12,7 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
+const OTP_FROM_EMAIL = (process.env.OTP_FROM_EMAIL || process.env.SUPPORT_FROM_EMAIL || BRAND_SUPPORT_EMAIL).trim();
 const SYNC_STATE_FILE = process.env.SYNC_STATE_FILE || '/tmp/quickdelivery-live-sync.json';
 const BACKUP_DIR = path.join(ROOT, 'data', 'backups');
 const CLOUD_RUN_MAX_SAFE_APK_BYTES = 33000000; // < 31.5 MiB (well below Cloud Run's 32 MiB = 33,554,432 limit)
@@ -122,6 +123,8 @@ function loadSyncState() {
           unreachableByOrder: parsed.unreachableByOrder || {},
           b2bAccountsById: parsed.b2bAccountsById || {},
           emailedTicketIds: parsed.emailedTicketIds || {},
+          emailOtpsByEmail: parsed.emailOtpsByEmail || {},
+          verifiedEmails: parsed.verifiedEmails || {},
           securityStats: parsed.securityStats || {
             blockedFakeOrders: 0,
             rateLimitedRequests: 0,
@@ -154,6 +157,8 @@ function loadSyncState() {
     unreachableByOrder: {},
     b2bAccountsById: {},
     emailedTicketIds: {},
+    emailOtpsByEmail: {},
+    verifiedEmails: {},
     securityStats: {
       blockedFakeOrders: 0,
       rateLimitedRequests: 0,
@@ -173,7 +178,7 @@ const SYNC_HMAC_SECRET = 'QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in';
 const MAX_SYNC_BODY_BYTES = 4 * 1024 * 1024; // 4 MB payload ceiling
 const MAX_SYNC_REQ_PER_MIN_PER_IP = 180; // supports multiple phones behind shared Wi-Fi NAT polling ~1.8s
 const MAX_HEAVY_REQ_PER_MIN_PER_IP = 30;
-const MAX_ACTIVE_PENDING_ORDERS_PER_ACTOR = 5;
+const MAX_ACTIVE_PENDING_ORDERS_PER_ACTOR = 25;
 const MAX_NEW_ORDERS_PER_MIN_PER_ACTOR = 8;
 const DUPLICATE_ORDER_COOLDOWN_MS = 10000;
 const ONE_MINUTE_MS = 60000;
@@ -323,9 +328,10 @@ function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now) {
     return { ok: false, reason: `Identical pickup and drop address rejected on ${oid}` };
   }
 
-  const rawPhoneDigits = String(incoming.customerPhone || '').replace(/\D/g, '');
+  const rawPhoneStr = String(incoming.customerPhone || '').trim();
+  const rawPhoneDigits = rawPhoneStr.replace(/\D/g, '');
   const phone10 = rawPhoneDigits.length >= 10 ? rawPhoneDigits.slice(-10) : rawPhoneDigits;
-  if (rawPhoneDigits.length > 0) {
+  if (rawPhoneDigits.length > 0 && !rawPhoneStr.includes('@')) {
     if (phone10.length !== 10 || BLOCKED_FAKE_PHONES.has(phone10) || new Set(phone10.split('')).size <= 1) {
       return { ok: false, reason: `Fake/dummy customer phone (${phone10}) blocked on ${oid}` };
     }
@@ -334,7 +340,7 @@ function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now) {
   const totalInr = parseMoneyInr(incoming.totalAmount);
   const commInr = parseMoneyInr(incoming.platformCommission);
   const riderInr = parseMoneyInr(incoming.riderEarning);
-  if (totalInr < 15 || totalInr > 50000 || Math.abs(commInr + riderInr - totalInr) > 2.5) {
+  if (totalInr < 15 || totalInr > 50000 || Math.abs(commInr + riderInr - totalInr) > 5.0) {
     return { ok: false, reason: `Invalid or tampered fare split (total=${totalInr}) on ${oid}` };
   }
 
@@ -455,12 +461,18 @@ function sendFcmPushNotifications({ tokens, title, body, data = {} }) {
   } catch {}
 }
 
-function sendWorkspaceSmtpTlsMail({ smtpHost, smtpPort, smtpUser, smtpPass, toEmail, subject, textBody }) {
+function sendWorkspaceSmtpTlsMail({ smtpHost, smtpPort, smtpUser, smtpPass, fromEmail, toEmail, subject, textBody, htmlBody }) {
   return new Promise((resolve, reject) => {
     const socket = tls.connect(smtpPort, smtpHost, { servername: smtpHost, timeout: 12000 });
+    const resolvedFrom = (fromEmail && fromEmail.includes('@') && smtpUser.includes('@') && fromEmail.split('@')[1] === smtpUser.split('@')[1])
+      ? fromEmail
+      : smtpUser;
+    const replyToEmail = (fromEmail && fromEmail.includes('@')) ? fromEmail : resolvedFrom;
+    const messageIdDomain = (resolvedFrom.split('@')[1] || BRAND_DOMAIN).trim();
+    const boundary = `qd_${crypto.randomBytes(8).toString('hex')}`;
     let buffer = '';
     const steps = [
-      () => `EHLO ${BRAND_DOMAIN}\r\n`,
+      () => `EHLO ${messageIdDomain}\r\n`,
       () => `AUTH LOGIN\r\n`,
       () => `${Buffer.from(smtpUser, 'utf-8').toString('base64')}\r\n`,
       () => `${Buffer.from(smtpPass, 'utf-8').toString('base64')}\r\n`,
@@ -469,18 +481,46 @@ function sendWorkspaceSmtpTlsMail({ smtpHost, smtpPort, smtpUser, smtpPass, toEm
       () => `DATA\r\n`,
       () => {
         const cleanSubject = String(subject || '').replace(/[\r\n]+/g, ' ');
-        const headers = [
-          `From: "Quick Delivery Desk" <${smtpUser}>`,
+        const msgId = `<${crypto.randomUUID()}@${messageIdDomain}>`;
+        const safeText = String(textBody || '').replace(/\r?\n\./g, '\r\n..');
+        const safeHtml = htmlBody ? String(htmlBody).replace(/\r?\n\./g, '\r\n..') : '';
+        const commonHeaders = [
+          `From: "Quick Delivery" <${resolvedFrom}>`,
+          `Reply-To: <${replyToEmail}>`,
           `To: <${toEmail}>`,
           `Subject: ${cleanSubject}`,
+          `Date: ${new Date().toUTCString()}`,
+          `Message-ID: ${msgId}`,
           `MIME-Version: 1.0`,
+        ];
+        if (!safeHtml) {
+          return [
+            ...commonHeaders,
+            `Content-Type: text/plain; charset=UTF-8`,
+            '',
+            safeText,
+            '.',
+            '',
+          ].join('\r\n');
+        }
+        return [
+          ...commonHeaders,
+          `Content-Type: multipart/alternative; boundary="${boundary}"`,
+          '',
+          `--${boundary}`,
           `Content-Type: text/plain; charset=UTF-8`,
           '',
-          textBody.replace(/\r?\n\./g, '\r\n..'),
+          safeText,
+          '',
+          `--${boundary}`,
+          `Content-Type: text/html; charset=UTF-8`,
+          '',
+          safeHtml,
+          '',
+          `--${boundary}--`,
           '.',
           '',
         ].join('\r\n');
-        return headers;
       },
       () => `QUIT\r\n`,
     ];
@@ -1281,6 +1321,14 @@ function configureNginxDirectApkServing() {
             add_header Access-Control-Allow-Headers "Content-Type, Accept, x-razorpay-signature";
         }
 
+        location /api/auth/ {
+            proxy_pass http://localhost:3000/api/auth/;
+            proxy_set_header Host localhost:3000;
+            add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Accept, X-QD-App-Client, X-QD-App-Role, X-QD-Sync-Ts, X-QD-Sync-Sig";
+        }
+
         location = /download {
             alias /var/www/assets/warmup.html;
             default_type text/html;
@@ -1363,7 +1411,9 @@ function buildSyncResponsePayload() {
     resetEpochMs: syncState.resetEpochMs,
     securityStats: ensureSecurityStats(),
     connectedDevices,
-    orders: Object.values(syncState.ordersById),
+    orders: Object.values(syncState.ordersById).sort(
+      (a, b) => Number(b.updatedAtEpochMs || 0) - Number(a.updatedAtEpochMs || 0)
+    ),
     riderRegistrations: Object.values(syncState.riderRegistrationsByKey || {}),
     promoCoupons: Object.values(syncState.promoCouponsByCode || {}),
     withdrawalRequests: Object.values(syncState.withdrawalRequestsById || {}),
@@ -1752,6 +1802,7 @@ const server = http.createServer((req, res) => {
               if (DEMO_ORDER_IDS.has(oid)) continue;
               const antiSpamCheck = validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now);
               if (!antiSpamCheck.ok) {
+                console.warn('[LIVE-SYNC BLOCKED]', oid, antiSpamCheck.reason);
                 recordSecurityBlock('FAKE_ORDER_BLOCKED', incoming.customerPhone || senderDeviceId, antiSpamCheck.reason);
                 continue;
               }
@@ -1922,6 +1973,237 @@ const server = http.createServer((req, res) => {
       return;
     }
     res.end(buf);
+    return;
+  }
+
+  if (pathname === '/api/auth/send-email-otp' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many OTP requests. Please wait 15 seconds and retry.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 64 * 1024) req.destroy();
+    });
+    req.on('end', async () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const rawEmail = String(parsed.email || '').trim().toLowerCase();
+        const role = String(parsed.role || 'CUSTOMER').trim().toUpperCase();
+        const deviceId = String(parsed.deviceId || '');
+        const sigCheck = verifySyncHmacHeaders(req, deviceId, role);
+        if (!sigCheck.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
+          return;
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Please enter a valid Email Address.' }));
+          return;
+        }
+        if (!syncState.emailOtpsByEmail) syncState.emailOtpsByEmail = {};
+        const now = Date.now();
+        const existingOtp = syncState.emailOtpsByEmail[rawEmail];
+        if (existingOtp && now - Number(existingOtp.createdAtEpochMs || 0) < 25000) {
+          const waitSec = Math.ceil((25000 - (now - Number(existingOtp.createdAtEpochMs || 0))) / 1000);
+          res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: `Please wait ${waitSec}s before requesting another Email OTP.` }));
+          return;
+        }
+
+        const otpCode = String(crypto.randomInt(100000, 1000000));
+        const otpHash = crypto.createHmac('sha256', SYNC_HMAC_SECRET).update(`${rawEmail}|${otpCode}`).digest('hex');
+        const expiresInSec = 600;
+        syncState.emailOtpsByEmail[rawEmail] = {
+          otpHash,
+          role,
+          attemptsLeft: 5,
+          createdAtEpochMs: now,
+          expiresAtEpochMs: now + expiresInSec * 1000,
+        };
+        saveSyncState();
+
+        const smtpUser = process.env.SUPPORT_SMTP_USER || '';
+        const smtpPass = process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS || '';
+        const smtpHost = process.env.SUPPORT_SMTP_HOST || 'smtp.gmail.com';
+        const smtpPort = Number(process.env.SUPPORT_SMTP_PORT || 465);
+        const webhookUrl = process.env.SUPPORT_EMAIL_WEBHOOK_URL || '';
+        const roleLabel = role === 'RIDER' ? 'Rider Partner' : 'Customer';
+        const subject = `${otpCode} is your Quick Delivery ${roleLabel} verification code`;
+        const textBody = [
+          `Hello,`,
+          ``,
+          `Your Quick Delivery (${roleLabel}) Email Verification OTP is: ${otpCode}`,
+          ``,
+          `This code is valid for 10 minutes. Do not share this code with anyone.`,
+          ``,
+          `Regards,`,
+          `Quick Delivery Team`,
+          `${OTP_FROM_EMAIL} | https://${BRAND_DOMAIN}`,
+        ].join('\n');
+        const htmlBody = `
+          <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;border:1px solid #e2e8f0;border-radius:12px;color:#0f172a;">
+            <h2 style="margin:0 0 8px 0;color:#00796B;">Quick Delivery Verification</h2>
+            <p style="margin:0 0 16px 0;font-size:14px;color:#475569;">Use the verification code below to complete your ${roleLabel} account verification:</p>
+            <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;padding:16px;text-align:center;margin-bottom:16px;">
+              <span style="font-size:30px;font-weight:bold;letter-spacing:6px;color:#0f172a;">${otpCode}</span>
+            </div>
+            <p style="margin:0 0 8px 0;font-size:12px;color:#64748b;">Valid for 10 minutes. If you did not request this code, you can safely ignore this email.</p>
+            <hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;" />
+            <p style="margin:0;font-size:11px;color:#94a3b8;">Sent by Quick Delivery (${OTP_FROM_EMAIL}) • ${BRAND_DOMAIN}</p>
+          </div>
+        `.trim();
+
+        if (smtpUser && smtpPass) {
+          try {
+            await sendWorkspaceSmtpTlsMail({
+              smtpHost,
+              smtpPort,
+              smtpUser,
+              smtpPass,
+              fromEmail: OTP_FROM_EMAIL,
+              toEmail: rawEmail,
+              subject,
+              textBody,
+              htmlBody,
+            });
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({
+              ok: true,
+              deliveryChannel: 'SMTP',
+              fromEmail: smtpUser.includes('@') ? smtpUser : OTP_FROM_EMAIL,
+              expiresInSec,
+              message: `OTP sent to ${rawEmail} from ${OTP_FROM_EMAIL}. Check Inbox or Spam.`,
+            }));
+            return;
+          } catch (smtpErr) {
+            res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ ok: false, error: `Email SMTP send failed: ${smtpErr.message}` }));
+            return;
+          }
+        }
+
+        if (webhookUrl) {
+          try {
+            const u = new URL(webhookUrl);
+            const client = u.protocol === 'http:' ? http : https;
+            const bodyJson = JSON.stringify({ from: OTP_FROM_EMAIL, to: rawEmail, subject, textBody, htmlBody, type: 'EMAIL_OTP' });
+            await new Promise((resolve, reject) => {
+              const wReq = client.request({
+                hostname: u.hostname,
+                port: u.port || (u.protocol === 'http:' ? 80 : 443),
+                path: u.pathname + (u.search || ''),
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyJson) },
+              }, wRes => {
+                wRes.resume();
+                if (wRes.statusCode && wRes.statusCode < 400) resolve(true);
+                else reject(new Error(`Webhook HTTP ${wRes.statusCode}`));
+              });
+              wReq.on('error', reject);
+              wReq.write(bodyJson);
+              wReq.end();
+            });
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({
+              ok: true,
+              deliveryChannel: 'WEBHOOK',
+              fromEmail: OTP_FROM_EMAIL,
+              expiresInSec,
+              message: `OTP sent to ${rawEmail} via Email Webhook.`,
+            }));
+            return;
+          } catch (whErr) {
+            res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ ok: false, error: `Email webhook send failed: ${whErr.message}` }));
+            return;
+          }
+        }
+
+        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({
+          ok: false,
+          smtpConfigured: false,
+          error: `Email server SMTP is not configured on backend yet. Set SUPPORT_SMTP_USER (${OTP_FROM_EMAIL}) & SUPPORT_SMTP_APP_PASSWORD in Render Environment Variables.`,
+        }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid OTP request payload.' }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/auth/verify-email-otp' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Rate limit exceeded. Try again shortly.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 64 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const rawEmail = String(parsed.email || '').trim().toLowerCase();
+        const enteredOtp = String(parsed.otp || '').replace(/\D/g, '').trim();
+        const role = String(parsed.role || 'CUSTOMER').trim().toUpperCase();
+        const deviceId = String(parsed.deviceId || '');
+        const sigCheck = verifySyncHmacHeaders(req, deviceId, role);
+        if (!sigCheck.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
+          return;
+        }
+        if (!syncState.emailOtpsByEmail) syncState.emailOtpsByEmail = {};
+        const rec = syncState.emailOtpsByEmail[rawEmail];
+        const now = Date.now();
+        if (!rec) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'No active OTP found for this email. Please tap Send Email OTP.' }));
+          return;
+        }
+        if (now > Number(rec.expiresAtEpochMs || 0)) {
+          delete syncState.emailOtpsByEmail[rawEmail];
+          saveSyncState();
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'OTP expired (10 min limit). Please request a new Email OTP.' }));
+          return;
+        }
+        if (Number(rec.attemptsLeft || 0) <= 0) {
+          delete syncState.emailOtpsByEmail[rawEmail];
+          saveSyncState();
+          res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Maximum wrong attempts reached. Request a fresh OTP.' }));
+          return;
+        }
+        const expectedHash = crypto.createHmac('sha256', SYNC_HMAC_SECRET).update(`${rawEmail}|${enteredOtp}`).digest('hex');
+        if (enteredOtp.length !== 6 || expectedHash !== rec.otpHash) {
+          rec.attemptsLeft = Math.max(0, Number(rec.attemptsLeft || 1) - 1);
+          saveSyncState();
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: `Invalid OTP. ${rec.attemptsLeft} attempts left.` }));
+          return;
+        }
+        delete syncState.emailOtpsByEmail[rawEmail];
+        if (!syncState.verifiedEmails) syncState.verifiedEmails = {};
+        syncState.verifiedEmails[rawEmail] = { verifiedAtEpochMs: now, role };
+        saveSyncState();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: true, verified: true, email: rawEmail, message: 'Email verified successfully.' }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid OTP verification payload.' }));
+      }
+    });
     return;
   }
 

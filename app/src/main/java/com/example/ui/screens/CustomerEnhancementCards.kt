@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.content.Intent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -68,7 +69,8 @@ private val EnhGreen = Color(0xFF059669)
 @Composable
 fun CustomerRemoteAlertsBanner(
     flags: AdminRemoteFeatureFlags,
-    activePinCode: String = ""
+    activePinCode: String = "",
+    onClick: (() -> Unit)? = null
 ) {
     var dismissedEpochMs by remember { mutableLongStateOf(0L) }
     val targetMatches = flags.adminBroadcastTarget == "ALL" ||
@@ -89,6 +91,7 @@ fun CustomerRemoteAlertsBanner(
                 border = BorderStroke(1.2.dp, Color(0xFFD97706)),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
                     .testTag("customer_maintenance_banner")
             ) {
                 Row(
@@ -123,6 +126,7 @@ fun CustomerRemoteAlertsBanner(
                 border = BorderStroke(1.2.dp, Color(0xFF2563EB)),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
                     .testTag("customer_admin_broadcast_banner")
             ) {
                 Row(

@@ -80,6 +80,7 @@ import com.example.ui.components.AdminMutualRatingsAndSuggestionsPanel
 import com.example.ui.components.AdminProfessionalLiveMirrorScreen
 import com.example.ui.components.AdminSosSupportLiveBanner
 import com.example.ui.components.AdminWebExecutiveLiveRibbon
+import com.example.ui.components.FcmOrderNotificationManager
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 
@@ -96,6 +97,7 @@ class MainActivity : ComponentActivity() {
         AppPermissionManager.inspectPermissions(this)
         com.example.data.cloud.MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, BuildConfig.APP_ROLE)
         com.example.data.cloud.MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(this, BuildConfig.APP_ROLE)
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
         enableEdgeToEdge()
 
         setContent {
@@ -160,6 +162,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
+        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(this)
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
     }
 }
 
@@ -411,6 +426,20 @@ fun QuickDeliveryUnifiedHub() {
         if (targetTab != selectedAppTab) {
             tabHistoryStack.add(selectedAppTab)
             selectedAppTab = targetTab
+        }
+    }
+
+    val pendingNotifTap by FcmOrderNotificationManager.pendingNotificationTap.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(pendingNotifTap?.eventSeq) {
+        val tap = pendingNotifTap ?: return@LaunchedEffect
+        val targetTab = when (tap.targetRole.uppercase()) {
+            "RIDER" -> 1
+            "ADMIN" -> 2
+            "CUSTOMER" -> 0
+            else -> selectedAppTab
+        }
+        if (targetTab != selectedAppTab) {
+            navigateToTab(targetTab)
         }
     }
 

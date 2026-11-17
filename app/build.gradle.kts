@@ -82,6 +82,9 @@ android {
     jniLibs {
       useLegacyPackaging = true
     }
+    resources {
+      pickFirsts.add("META-INF/core.kotlin_module")
+    }
   }
   testOptions {
     unitTests {

@@ -69,6 +69,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -89,6 +90,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -128,6 +130,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -662,6 +665,7 @@ fun DualDeliveryCelebrationMotivationBanner(
     message: String?,
     accentColor: Color,
     onDismiss: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -677,6 +681,7 @@ fun DualDeliveryCelebrationMotivationBanner(
             elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
                 .testTag("${roleLabel.lowercase(Locale.US)}_post_delivery_motivation_banner")
         ) {
             Row(
@@ -1158,6 +1163,15 @@ fun QuickDeliveryUserAuthScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
 
+    val authScope = rememberCoroutineScope()
+    var emailOtpInput by remember { mutableStateOf("") }
+    var emailOtpSending by remember { mutableStateOf(false) }
+    var emailOtpVerifying by remember { mutableStateOf(false) }
+    var emailOtpSentTo by remember { mutableStateOf<String?>(null) }
+    var verifiedOtpEmail by remember { mutableStateOf<String?>(null) }
+    var emailOtpStatus by remember { mutableStateOf<String?>(null) }
+    var emailOtpIsError by remember { mutableStateOf(false) }
+
     if (showPrivacyPolicyDialog) {
         QuickDeliveryPrivacyPolicyDialog(
             context = context,
@@ -1334,6 +1348,9 @@ fun QuickDeliveryUserAuthScreen(
                         value = emailId,
                         onValueChange = {
                             emailId = it
+                            if (!it.trim().equals(verifiedOtpEmail, ignoreCase = true)) {
+                                verifiedOtpEmail = null
+                            }
                             if (errorMessage != null) errorMessage = null
                         },
                         label = { Text(uiStrings.emailAddressLabel) },
@@ -1351,6 +1368,9 @@ fun QuickDeliveryUserAuthScreen(
                         value = existingMobileOrEmail,
                         onValueChange = {
                             existingMobileOrEmail = it
+                            if (!it.trim().equals(verifiedOtpEmail, ignoreCase = true)) {
+                                verifiedOtpEmail = null
+                            }
                             if (errorMessage != null) errorMessage = null
                         },
                         label = { Text(uiStrings.mobileOrEmailLabel) },
@@ -1361,6 +1381,172 @@ fun QuickDeliveryUserAuthScreen(
                             .fillMaxWidth()
                             .testTag("${prefsKeyPrefix}_signin_identifier_input")
                     )
+                }
+
+                val targetOtpEmail = if (isNewUserSignUp) {
+                    QuickDeliverySecurityGuard.sanitizeEmail(emailId)
+                } else {
+                    val cleanIdent = existingMobileOrEmail.trim()
+                    if (cleanIdent.contains("@") && cleanIdent.contains(".")) {
+                        QuickDeliverySecurityGuard.sanitizeEmail(cleanIdent)
+                    } else ""
+                }
+                val isEmailVerifiedForTarget = targetOtpEmail.isNotBlank() &&
+                    verifiedOtpEmail.equals(targetOtpEmail, ignoreCase = true)
+
+                if (isNewUserSignUp || targetOtpEmail.isNotBlank()) {
+                    Surface(
+                        color = if (isEmailVerifiedForTarget) Color(0xFFECFDF5) else Color(0xFFF8FAFC),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isEmailVerifiedForTarget) Color(0xFF10B981) else accentColor.copy(alpha = 0.4f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("${prefsKeyPrefix}_email_otp_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isEmailVerifiedForTarget) {
+                                        "✅ Email Verified via OTP"
+                                    } else {
+                                        "📧 Email OTP Verification (Zero SMS Cost)"
+                                    },
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isEmailVerifiedForTarget) Color(0xFF065F46) else Color(0xFF0D1B2A)
+                                )
+                                OutlinedButton(
+                                    enabled = !emailOtpSending && targetOtpEmail.contains("@") && targetOtpEmail.contains("."),
+                                    onClick = {
+                                        emailOtpSending = true
+                                        emailOtpStatus = null
+                                        emailOtpIsError = false
+                                        authScope.launch {
+                                            com.example.data.cloud.MultiPhoneLiveSyncManager.sendSignUpEmailOtp(
+                                                context = context,
+                                                email = targetOtpEmail,
+                                                role = prefsKeyPrefix.uppercase()
+                                            ).onSuccess { msg ->
+                                                emailOtpSending = false
+                                                emailOtpSentTo = targetOtpEmail
+                                                emailOtpIsError = false
+                                                emailOtpStatus = msg
+                                            }.onFailure { err ->
+                                                emailOtpSending = false
+                                                emailOtpIsError = true
+                                                emailOtpStatus = err.message ?: "Failed to send Email OTP."
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("${prefsKeyPrefix}_send_email_otp_btn")
+                                ) {
+                                    if (emailOtpSending) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                    } else {
+                                        Text(
+                                            text = if (emailOtpSentTo.equals(targetOtpEmail, ignoreCase = true)) {
+                                                "Resend OTP"
+                                            } else {
+                                                "Send OTP"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (!isEmailVerifiedForTarget && (emailOtpSentTo.equals(targetOtpEmail, ignoreCase = true) || emailOtpInput.isNotEmpty())) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = emailOtpInput,
+                                        onValueChange = { raw ->
+                                            if (raw.length <= 6) emailOtpInput = raw.filter(Char::isDigit)
+                                        },
+                                        label = { Text("6-Digit Email OTP") },
+                                        placeholder = { Text("Enter OTP") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("${prefsKeyPrefix}_email_otp_input")
+                                    )
+                                    Button(
+                                        enabled = !emailOtpVerifying && emailOtpInput.length == 6,
+                                        onClick = {
+                                            emailOtpVerifying = true
+                                            emailOtpStatus = null
+                                            emailOtpIsError = false
+                                            authScope.launch {
+                                                com.example.data.cloud.MultiPhoneLiveSyncManager.verifySignUpEmailOtp(
+                                                    context = context,
+                                                    email = targetOtpEmail,
+                                                    otp = emailOtpInput,
+                                                    role = prefsKeyPrefix.uppercase()
+                                                ).onSuccess { msg ->
+                                                    emailOtpVerifying = false
+                                                    verifiedOtpEmail = targetOtpEmail
+                                                    emailOtpIsError = false
+                                                    emailOtpStatus = msg
+                                                    errorMessage = null
+                                                }.onFailure { err ->
+                                                    emailOtpVerifying = false
+                                                    emailOtpIsError = true
+                                                    emailOtpStatus = err.message ?: "Invalid OTP."
+                                                }
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                        modifier = Modifier
+                                            .height(52.dp)
+                                            .testTag("${prefsKeyPrefix}_verify_email_otp_btn")
+                                    ) {
+                                        if (emailOtpVerifying) {
+                                            CircularProgressIndicator(
+                                                color = Color.White,
+                                                modifier = Modifier.size(14.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                        } else {
+                                            Text("Verify", fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!emailOtpStatus.isNullOrBlank()) {
+                                Text(
+                                    text = emailOtpStatus.orEmpty(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (emailOtpIsError) Color(0xFFB91C1C) else Color(0xFF065F46)
+                                )
+                            } else if (!isEmailVerifiedForTarget) {
+                                Text(
+                                    text = "OTP will be sent from support@quickdelivery.co.in to your email.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF475569)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // REMEMBER LOGIN OPTION FOR PERSISTENT SESSION
@@ -1533,6 +1719,10 @@ fun QuickDeliveryUserAuthScreen(
                                 }
                                 !finalEmail.contains("@") || !finalEmail.contains(".") -> {
                                     errorMessage = "Please enter a valid Email Address."
+                                    return@Button
+                                }
+                                !verifiedOtpEmail.equals(finalEmail, ignoreCase = true) -> {
+                                    errorMessage = "Please tap 'Send OTP' and verify the Email OTP sent to $finalEmail."
                                     return@Button
                                 }
                             }
@@ -2314,6 +2504,7 @@ fun PhoneStorageLoginBackupCard(
 fun RiderMotivationNotificationBanner(
     message: String?,
     onDismiss: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -2329,6 +2520,7 @@ fun RiderMotivationNotificationBanner(
             elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
                 .testTag("rider_motivation_banner")
         ) {
             Row(

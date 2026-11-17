@@ -139,7 +139,10 @@ import com.example.data.delivery.AdminVehicleAndWeightPolicy
 import com.example.data.delivery.AutomatedFairRiderAssignmentEngine
 import com.example.data.model.CustomerOrder
 import com.example.data.model.CustomerPaymentMethod
+import com.example.data.model.DeliveryProof
+import com.example.data.model.OrderProofRegistry
 import com.example.data.model.OrderStatus
+import com.example.data.model.PickupProof
 import com.example.data.model.PricingConfig
 import com.example.data.model.RiderProfile
 import com.example.data.model.RiderShiftStatus
@@ -151,6 +154,8 @@ import com.example.security.RiderBatteryPowerMonitor
 import com.example.security.RiderBatteryPowerState
 import com.example.security.RiderOverspeedAlarmManager
 import com.example.security.RiderOverspeedState
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -247,6 +252,8 @@ fun QuickDeliveryEnterpriseAdminSuite(
     val isDarkMode by AdminExecutiveThemeManager.isDarkMode.collectAsState()
     val palette = remember(isDarkMode) { adminExecPalette(isDarkMode) }
     val fcmNotifications by FcmOrderNotificationManager.fcmMessages.collectAsState()
+    val pendingNotificationTap by FcmOrderNotificationManager.pendingNotificationTap.collectAsState()
+    val liveSyncStatus by MultiPhoneLiveSyncManager.syncStatus.collectAsState()
     val selfieCheckIns by RiderLiveSelfieCallAndExcelManager.selfieCheckIns.collectAsState()
     val callLogs by RiderLiveSelfieCallAndExcelManager.callLogs.collectAsState()
 
@@ -276,6 +283,30 @@ fun QuickDeliveryEnterpriseAdminSuite(
     var showDateFilterBar by rememberSaveable { mutableStateOf(false) }
     var selectedCityFilter by rememberSaveable { mutableStateOf("All Cities") }
     var isSyncLoading by remember { mutableStateOf(false) }
+
+    LaunchedEffect(pendingNotificationTap?.eventSeq) {
+        val tap = pendingNotificationTap ?: return@LaunchedEffect
+        val oid = tap.orderId.trim()
+        val isSecurityOrSos = tap.orderStatus.equals("SOS", ignoreCase = true) ||
+            tap.title.contains("SOS", ignoreCase = true) ||
+            tap.title.contains("Security", ignoreCase = true) ||
+            tap.title.contains("Attack", ignoreCase = true)
+        when {
+            isSecurityOrSos -> {
+                currentPage = AdminDedicatedPage.COMPLAINTS_SOS
+            }
+            oid.isNotBlank() && !oid.contains("BROADCAST", ignoreCase = true) -> {
+                globalSearchQuery = oid
+                showSearchBar = true
+                currentPage = AdminDedicatedPage.ORDERS
+            }
+            else -> {
+                currentPage = AdminDedicatedPage.NOTIFICATIONS
+            }
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        FcmOrderNotificationManager.consumeNotificationTap(tap.eventSeq)
+    }
 
     // Admin Permission & Sensitive Data (PII) Protection State
     var adminSessionToken by remember { mutableStateOf(repository.issueAdminPreviewSessionToken()) }
@@ -404,7 +435,14 @@ fun QuickDeliveryEnterpriseAdminSuite(
                     .background(palette.background)
             ) {
                 // Emergency SOS Live Banner at top whenever an unresolved Rider SOS exists
-                AdminSosSupportLiveBanner()
+                AdminSosSupportLiveBanner(
+                    onAlertClick = { alert ->
+                        if (alert.orderId.isNotBlank()) {
+                            globalSearchQuery = alert.orderId
+                        }
+                        currentPage = AdminDedicatedPage.COMPLAINTS_SOS
+                    }
+                )
 
                 // 1. SLEEK EXECUTIVE TOP APP BAR
                 Surface(
@@ -463,8 +501,11 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Surface(
-                                                color = DashEmerald.copy(alpha = 0.2f),
-                                                shape = RoundedCornerShape(999.dp)
+                                                color = if (liveSyncStatus.isConnected) DashEmerald.copy(alpha = 0.2f) else DashGold.copy(alpha = 0.25f),
+                                                shape = RoundedCornerShape(999.dp),
+                                                modifier = Modifier.clickable {
+                                                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                                }
                                             ) {
                                                 Row(
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -475,13 +516,16 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                                         modifier = Modifier
                                                             .size(6.dp)
                                                             .clip(CircleShape)
-                                                            .background(Color(0xFF34D399).copy(alpha = onlinePulseAlpha))
+                                                            .background(
+                                                                (if (liveSyncStatus.isConnected) Color(0xFF34D399) else Color(0xFFFBBF24))
+                                                                    .copy(alpha = onlinePulseAlpha)
+                                                            )
                                                     )
                                                     Text(
-                                                        text = "Live",
+                                                        text = if (liveSyncStatus.isConnected) "Live" else "Syncing",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = Color(0xFF6EE7B7)
+                                                        color = if (liveSyncStatus.isConnected) Color(0xFF6EE7B7) else Color(0xFFFDE68A)
                                                     )
                                                 }
                                             }
@@ -973,7 +1017,12 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                 fcmNotifications = fcmNotifications,
                                 dateRangeLabel = activeDateLabel,
                                 cityFilterLabel = selectedCityFilter,
-                                isLoading = isSyncLoading
+                                isLoading = isSyncLoading,
+                                onOrderSelected = { orderId ->
+                                    globalSearchQuery = orderId
+                                    showSearchBar = true
+                                    currentPage = AdminDedicatedPage.ORDERS
+                                }
                             )
 
                             AdminDedicatedPage.SETTINGS -> EnterpriseSettingsPage(
@@ -2242,44 +2291,12 @@ private fun DashboardEnterpriseDispatchCardsSection(
                 )
             },
             onAdvanceStage = { ord ->
-                when (ord.orderStatus) {
-                    OrderStatus.SEARCHING_RIDER -> {
-                        AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
-                        AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
-                            repository = repository,
-                            orderId = ord.orderId
-                        )
-                        val updatedOrder = repository.orders.value.firstOrNull { it.orderId == ord.orderId } ?: ord
-                        FcmOrderNotificationManager.dispatchOrderStatusPair(
-                            context = context,
-                            order = updatedOrder,
-                            postToSystemTray = true
-                        )
-                    }
-                    OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP -> {
-                        repository.verifyPickupOtpByRider(ord.orderId, ord.pickupOtp, ord.assignedRiderId)
-                        val updatedOrder = repository.orders.value.firstOrNull { it.orderId == ord.orderId } ?: ord
-                        FcmOrderNotificationManager.dispatchOrderStatusPair(
-                            context = context,
-                            order = updatedOrder,
-                            postToSystemTray = true
-                        )
-                    }
-                    OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> {
-                        repository.verifyDeliveryOtpByRider(ord.orderId, ord.deliveryOtp, ord.assignedRiderId)
-                        val delivered = ord.copy(orderStatus = OrderStatus.DELIVERED)
-                        MotivationAndPromoManager.notifySuccessfulDeliveryMotivationForBoth(
-                            order = delivered,
-                            forceTrigger = true
-                        )
-                        FcmOrderNotificationManager.dispatchOrderStatusPair(
-                            context = context,
-                            order = delivered,
-                            postToSystemTray = true
-                        )
-                    }
-                    else -> onExecuteAutoStepNow()
-                }
+                adminAuthenticateOrderStageAndSync(
+                    context = context,
+                    repository = repository,
+                    ord = ord,
+                    fallbackAdvance = onExecuteAutoStepNow
+                )
             }
         )
     }
@@ -2907,44 +2924,12 @@ private fun EnterpriseOrdersPage(
                 )
             },
             onAdvanceStage = { ord ->
-                when (ord.orderStatus) {
-                    OrderStatus.SEARCHING_RIDER -> {
-                        AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
-                        AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
-                            repository = repository,
-                            orderId = ord.orderId
-                        )
-                        val updatedOrder = repository.orders.value.firstOrNull { it.orderId == ord.orderId } ?: ord
-                        FcmOrderNotificationManager.dispatchOrderStatusPair(
-                            context = context,
-                            order = updatedOrder,
-                            postToSystemTray = true
-                        )
-                    }
-                    OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP -> {
-                        repository.verifyPickupOtpByRider(ord.orderId, ord.pickupOtp, ord.assignedRiderId)
-                        val updatedOrder = repository.orders.value.firstOrNull { it.orderId == ord.orderId } ?: ord
-                        FcmOrderNotificationManager.dispatchOrderStatusPair(
-                            context = context,
-                            order = updatedOrder,
-                            postToSystemTray = true
-                        )
-                    }
-                    OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> {
-                        repository.verifyDeliveryOtpByRider(ord.orderId, ord.deliveryOtp, ord.assignedRiderId)
-                        val delivered = ord.copy(orderStatus = OrderStatus.DELIVERED)
-                        MotivationAndPromoManager.notifySuccessfulDeliveryMotivationForBoth(
-                            order = delivered,
-                            forceTrigger = true
-                        )
-                        FcmOrderNotificationManager.dispatchOrderStatusPair(
-                            context = context,
-                            order = delivered,
-                            postToSystemTray = true
-                        )
-                    }
-                    else -> Unit
-                }
+                adminAuthenticateOrderStageAndSync(
+                    context = context,
+                    repository = repository,
+                    ord = ord,
+                    fallbackAdvance = onExecuteAutoStepNow
+                )
             }
         )
     }
@@ -3279,9 +3264,174 @@ private fun EnterpriseOrdersPage(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+
+                    if (!isDelivered && !isCancelled) {
+                        val riderRequestedAuth = order.latestRiderQuickNote
+                            ?.contains("OTP Auth", ignoreCase = true) == true
+                        Surface(
+                            color = if (riderRequestedAuth) Color(0xFFFEF3C7) else palette.surfaceSubtle,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (riderRequestedAuth) palette.accentAmber else palette.hairlineBorder
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "🔐 Synced Random OTPs (Zero SMS) • Pickup: ${order.pickupOtp} • Drop: ${order.deliveryOtp}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.textPrimary
+                                )
+                                if (riderRequestedAuth) {
+                                    Text(
+                                        text = "🔔 Rider requested Admin Sync-Auth to proceed!",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFFB45309)
+                                    )
+                                }
+                                val adminQuickBtnLabel = when (order.orderStatus) {
+                                    OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP ->
+                                        "✅ Authenticate Pickup OTP (${order.pickupOtp}) & Sync Rider"
+                                    OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT ->
+                                        "✅ Authenticate Drop OTP (${order.deliveryOtp}) & Sync Rider"
+                                    else -> null
+                                }
+                                if (adminQuickBtnLabel != null) {
+                                    Button(
+                                        onClick = {
+                                            adminAuthenticateOrderStageAndSync(
+                                                context = context,
+                                                repository = repository,
+                                                ord = order,
+                                                fallbackAdvance = onExecuteAutoStepNow
+                                            )
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentEmerald),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("admin_card_auth_otp_btn_${order.orderId}")
+                                    ) {
+                                        Text(
+                                            text = adminQuickBtnLabel,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+private fun adminAuthenticateOrderStageAndSync(
+    context: android.content.Context,
+    repository: SharedOrderRepository,
+    ord: CustomerOrder,
+    fallbackAdvance: () -> Unit
+) {
+    val ts = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
+    when (ord.orderStatus) {
+        OrderStatus.SEARCHING_RIDER -> {
+            AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
+            AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
+                repository = repository,
+                orderId = ord.orderId
+            )
+            val updatedOrder = repository.orders.value.firstOrNull { it.orderId == ord.orderId } ?: ord
+            FcmOrderNotificationManager.dispatchOrderStatusPair(
+                context = context,
+                order = updatedOrder,
+                postToSystemTray = true
+            )
+            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        }
+        OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP -> {
+            repository.verifyPickupOtpByRider(ord.orderId, ord.pickupOtp, ord.assignedRiderId)
+            if (OrderProofRegistry.getPickupProof(ord.orderId) == null) {
+                OrderProofRegistry.savePickupProof(
+                    PickupProof(
+                        orderId = ord.orderId,
+                        riderId = ord.assignedRiderId ?: "ADMIN-SYNC",
+                        riderName = ord.assignedRiderName ?: "Rider Partner",
+                        packagePhotoUrl = "admin_sync_otp_verified",
+                        packagePhotoSummary = "Admin Sync-Authenticated Pickup OTP (${ord.pickupOtp})",
+                        senderName = ord.customerName,
+                        senderSignatureSvg = "ADMIN_SYNC_AUTH_${ord.pickupOtp}",
+                        verifiedOtp = ord.pickupOtp,
+                        latitude = ord.pickupAddress.lat,
+                        longitude = ord.pickupAddress.lng,
+                        capturedAt = ts
+                    )
+                )
+            }
+            QuickDeliveryOperationsManager.recordOrderTimelineEvent(
+                context = context,
+                orderId = ord.orderId,
+                title = "Admin Sync-Authenticated Pickup OTP (${ord.pickupOtp})",
+                detail = "Verified remotely from Admin App (Zero SMS) — Rider unlocked for Drop",
+                actorRole = "ADMIN"
+            )
+            val updatedOrder = repository.orders.value.firstOrNull { it.orderId == ord.orderId } ?: ord
+            FcmOrderNotificationManager.dispatchOrderStatusPair(
+                context = context,
+                order = updatedOrder,
+                postToSystemTray = true
+            )
+            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        }
+        OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> {
+            repository.verifyDeliveryOtpByRider(ord.orderId, ord.deliveryOtp, ord.assignedRiderId)
+            if (OrderProofRegistry.getDeliveryProof(ord.orderId) == null) {
+                val fareInr = ord.totalAmount.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+                OrderProofRegistry.saveDeliveryProof(
+                    DeliveryProof(
+                        orderId = ord.orderId,
+                        riderId = ord.assignedRiderId ?: "ADMIN-SYNC",
+                        riderName = ord.assignedRiderName ?: "Rider Partner",
+                        deliveryPhotoUrl = "admin_sync_otp_verified",
+                        deliveryPhotoSummary = "Admin Sync-Authenticated Drop OTP (${ord.deliveryOtp})",
+                        recipientName = ord.dropAddress.contactName.ifBlank { ord.customerName },
+                        recipientSignatureSvg = "ADMIN_SYNC_AUTH_${ord.deliveryOtp}",
+                        verifiedOtp = ord.deliveryOtp,
+                        codAmountCollectedInr = if (ord.paymentMethod == CustomerPaymentMethod.CASH_ON_DELIVERY) fareInr else 0.0,
+                        latitude = ord.dropAddress.lat,
+                        longitude = ord.dropAddress.lng,
+                        capturedAt = ts
+                    )
+                )
+            }
+            QuickDeliveryOperationsManager.recordOrderTimelineEvent(
+                context = context,
+                orderId = ord.orderId,
+                title = "Admin Sync-Authenticated Delivery OTP (${ord.deliveryOtp})",
+                detail = "Delivery verified remotely from Admin App (Zero SMS) — Customer & Rider synced",
+                actorRole = "ADMIN"
+            )
+            val delivered = ord.copy(orderStatus = OrderStatus.DELIVERED)
+            MotivationAndPromoManager.notifySuccessfulDeliveryMotivationForBoth(
+                order = delivered,
+                forceTrigger = true
+            )
+            FcmOrderNotificationManager.dispatchOrderStatusPair(
+                context = context,
+                order = delivered,
+                postToSystemTray = true
+            )
+            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        }
+        else -> fallbackAdvance()
     }
 }
 
@@ -5434,7 +5584,8 @@ private fun EnterpriseNotificationsPage(
     fcmNotifications: List<FcmPushMessageRecord>,
     dateRangeLabel: String,
     cityFilterLabel: String,
-    isLoading: Boolean
+    isLoading: Boolean,
+    onOrderSelected: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     var broadcastTitle by remember { mutableStateOf("⚡ Quick Delivery Express Alert") }
@@ -5654,6 +5805,12 @@ private fun EnterpriseNotificationsPage(
                 dateRangeLabel = dateRangeLabel,
                 cityFilterLabel = cityFilterLabel,
                 isLoading = isLoading,
+                onRowClicked = { _, row ->
+                    val oid = row.getOrNull(1).orEmpty().trim()
+                    if (oid.isNotBlank() && !oid.contains("BROADCAST", ignoreCase = true)) {
+                        onOrderSelected(oid)
+                    }
+                },
                 testTagPrefix = "admin_notifications_table"
             )
         }

@@ -204,11 +204,12 @@ object OrderAlertSoundManager {
     fun notifySecurityAttackDetected(threat: SecurityThreatEvent, context: Context? = null) {
         _activeSecurityAttackAlert.value = threat
         if (context != null) {
-            postSystemNotification(
+            postSystemNotificationWithRouting(
                 context = context,
                 title = "Security Alert: ${threat.threatType}",
                 body = "${threat.detectedRule} (${threat.actionTaken})",
-                urgent = true
+                urgent = true,
+                targetRole = "ADMIN"
             )
         }
     }
@@ -391,12 +392,49 @@ object OrderAlertSoundManager {
         }
     }
 
+    /**
+     * Backward-compatible 5-arg signature required by precompiled core-compiled.jar
+     * (SharedOrderRepository.pushNotification calls postSystemNotification$default with 5 args).
+     */
     fun postSystemNotification(
         context: Context,
         title: String,
         body: String,
         urgent: Boolean = false,
         notificationId: Int = ((System.currentTimeMillis() % 100000L).toInt())
+    ) {
+        val extractedOrderId = Regex("QD-\\d+").find("$title $body")?.value?.let { "#$it" }.orEmpty()
+        val inferredRole = when {
+            title.contains("Security", ignoreCase = true) ||
+                title.contains("SOS", ignoreCase = true) ||
+                title.contains("Admin", ignoreCase = true) -> "ADMIN"
+            urgent ||
+                title.contains("Rider", ignoreCase = true) ||
+                title.contains("New Order", ignoreCase = true) ||
+                title.contains("Commission", ignoreCase = true) -> "RIDER"
+            else -> "CUSTOMER"
+        }
+        postSystemNotificationWithRouting(
+            context = context,
+            title = title,
+            body = body,
+            urgent = urgent,
+            notificationId = notificationId,
+            orderId = extractedOrderId,
+            orderStatus = "",
+            targetRole = inferredRole
+        )
+    }
+
+    fun postSystemNotificationWithRouting(
+        context: Context,
+        title: String,
+        body: String,
+        urgent: Boolean = false,
+        notificationId: Int = ((System.currentTimeMillis() % 100000L).toInt()),
+        orderId: String = "",
+        orderStatus: String = "",
+        targetRole: String = ""
     ) {
         val appCtx = context.applicationContext ?: context
         appContextRef = appCtx
@@ -411,6 +449,14 @@ object OrderAlertSoundManager {
         runCatching {
             val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
             val channelId = if (urgent) CHANNEL_ID_RIDER_ALARM else CHANNEL_ID_CUSTOMER_UPDATES
+            val pendingIntent = com.example.ui.components.FcmOrderNotificationManager.buildLaunchPendingIntent(
+                context = appCtx,
+                requestCode = notificationId,
+                orderId = orderId,
+                orderStatus = orderStatus,
+                targetRole = targetRole,
+                title = title
+            )
             val builder = NotificationCompat.Builder(appCtx, channelId)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle(title)
@@ -419,6 +465,9 @@ object OrderAlertSoundManager {
                 .setPriority(if (urgent) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
                 .setSilent(!urgent)
                 .setAutoCancel(true)
+            if (pendingIntent != null) {
+                builder.setContentIntent(pendingIntent)
+            }
             nm.notify(notificationId, builder.build())
         }
     }

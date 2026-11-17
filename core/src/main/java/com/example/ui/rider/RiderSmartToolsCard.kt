@@ -3,6 +3,7 @@ package com.example.ui.rider
 import android.content.Intent
 import android.graphics.Bitmap
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -76,7 +77,8 @@ fun RiderRemoteAlertsAndMissionCard(
     riderPhone: String,
     isDarkMode: Boolean = false,
     isRiderOnline: Boolean = true,
-    activeZoneHints: List<String> = emptyList()
+    activeZoneHints: List<String> = emptyList(),
+    onClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var dismissedBroadcastEpoch by remember { mutableLongStateOf(0L) }
@@ -111,6 +113,7 @@ fun RiderRemoteAlertsAndMissionCard(
                 border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
                     .testTag("rider_maintenance_banner")
             ) {
                 Row(
@@ -150,6 +153,7 @@ fun RiderRemoteAlertsAndMissionCard(
                 border = BorderStroke(1.dp, Color(0xFFFCD34D)),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
                     .testTag("rider_admin_broadcast_banner")
             ) {
                 Row(

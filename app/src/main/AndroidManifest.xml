@@ -45,6 +45,7 @@
         android:theme="@style/Theme.MyApplication">
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleTop"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:label="${appLauncherLabel}"
@@ -56,18 +57,21 @@
         </activity>
         <activity
             android:name=".CustomerMainActivity"
+            android:launchMode="singleTop"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:label="Quick Delivery"
             android:theme="@style/Theme.MyApplication" />
         <activity
             android:name=".RiderMainActivity"
+            android:launchMode="singleTop"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:label="Partner Quick Delivery"
             android:theme="@style/Theme.MyApplication" />
         <activity
             android:name=".AdminMainActivity"
+            android:launchMode="singleTop"
             android:configChanges="locale|layoutDirection|orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:label="Quick Delivery Admin"

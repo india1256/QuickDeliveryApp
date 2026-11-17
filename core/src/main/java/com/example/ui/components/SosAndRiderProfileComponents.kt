@@ -8,6 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -1207,7 +1208,8 @@ fun SosSafetyTriggerButtonAndBanner(
  */
 @Composable
 fun AdminSosSupportLiveBanner(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onAlertClick: ((SosSupportAlert) -> Unit)? = null
 ) {
     val context = LocalContext.current
     remember(context) { SosSafetySupportManager.ensureLoaded(context) }
@@ -1264,7 +1266,10 @@ fun AdminSosSupportLiveBanner(
             unresolvedAlerts.forEach { alert ->
                 HorizontalDivider(color = SosCrimson.copy(alpha = 0.25f))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (onAlertClick != null) Modifier.clickable { onAlertClick(alert) } else Modifier)
+                        .padding(vertical = 2.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {

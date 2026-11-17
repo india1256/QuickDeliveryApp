@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -63,6 +64,7 @@ import com.example.security.OrderAlertSoundManager
 import com.example.ui.auth.GoogleSignInButton
 import com.example.ui.auth.QuickDeliveryCloudSyncBar
 import com.example.ui.components.AdminEnterpriseControlCenter
+import com.example.ui.components.FcmOrderNotificationManager
 import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.LocalizedContextProvider
 import com.example.ui.theme.QuickDeliveryTheme
@@ -89,6 +91,7 @@ class AdminMainActivity : ComponentActivity() {
         AppPermissionManager.inspectPermissions(this)
         MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, "ADMIN")
         MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(this, "ADMIN")
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
         enableEdgeToEdge()
         setContent {
             QuickDeliveryTheme {
@@ -167,6 +170,19 @@ class AdminMainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
+        MultiPhoneLiveSyncManager.triggerImmediateSync(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        MultiPhoneLiveSyncManager.triggerImmediateSync(this)
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
     }
 }
 

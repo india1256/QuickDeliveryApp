@@ -65,6 +65,7 @@ import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Redeem
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.TwoWheeler
@@ -121,6 +122,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.cloud.DeliveryProofAndGpsManager
+import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.QuickDeliveryOperationsManager
 import com.example.data.delivery.AutomatedFairRiderAssignmentEngine
 import com.example.data.model.AddressDetails
@@ -427,6 +429,9 @@ fun CustomerAppScreen(
             }
         }
     }
+
+    val liveSyncStatus by MultiPhoneLiveSyncManager.syncStatus.collectAsState()
+    val pendingNotificationTap by FcmOrderNotificationManager.pendingNotificationTap.collectAsState()
 
     // Observe this customer's orders for automatic delivery motivation notifications & real-time FCM push updates
     LaunchedEffect(customerOrders) {
@@ -1028,12 +1033,12 @@ fun CustomerAppScreen(
                 repository = repository,
                 customerId = myCustomerId,
                 customerName = customerName.ifBlank { "Customer" },
-                customerPhone = normalizedCustomerPhone.ifBlank { customerEmail.ifBlank { "+91 98765 43210" } },
+                customerPhone = normalizedCustomerPhone.ifBlank { "9876543210" },
                 pickupAddress = AddressDetails(
                     fullAddress = resolvedPickupAddress,
                     landmark = pickupLandmark,
                     contactName = customerName.ifBlank { "Customer" },
-                    contactPhone = normalizedCustomerPhone.ifBlank { customerEmail.ifBlank { "+91 98765 43210" } },
+                    contactPhone = normalizedCustomerPhone.ifBlank { "9876543210" },
                     lat = pickupLat,
                     lng = pickupLng
                 ),
@@ -1160,6 +1165,35 @@ fun CustomerAppScreen(
             modifier = modifier
         )
         return@LocalizedContextProvider
+    }
+
+    LaunchedEffect(pendingNotificationTap?.eventSeq) {
+        val tap = pendingNotificationTap ?: return@LaunchedEffect
+        val tapOrderId = tap.orderId.trim()
+        showBookingConfirmationScreen = false
+        showOrderHistoryScreen = false
+        showCustomerTopOptionsDialog = false
+        showCustomerSupportTicketDialog = false
+        val matchedOrder = if (tapOrderId.isNotBlank()) {
+            customerOrders.firstOrNull { it.orderId.equals(tapOrderId, ignoreCase = true) }
+        } else null
+        if (matchedOrder != null) {
+            selectedTrackingOrderId = matchedOrder.orderId
+            currentStep = 3
+        } else if (activeOrder != null) {
+            currentStep = 3
+        } else {
+            currentStep = 1
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        isErrorBanner = false
+        statusBanner = when {
+            tap.title.isNotBlank() -> tap.title
+            tapOrderId.isNotBlank() -> "📦 Opened live tracking for Order #$tapOrderId"
+            else -> "🔔 Notification opened"
+        }
+        runCatching { customerMainListState.animateScrollToItem(0) }
+        FcmOrderNotificationManager.consumeNotificationTap(tap.eventSeq)
     }
 
     if (showCustomerTopOptionsDialog) {
@@ -2430,12 +2464,68 @@ fun CustomerAppScreen(
                         roleLabel = "CUSTOMER",
                         message = customerPostDeliveryMotivation,
                         accentColor = PrimaryTeal,
-                        onDismiss = { MotivationAndPromoManager.dismissCustomerPostDeliveryMotivation() }
+                        onDismiss = { MotivationAndPromoManager.dismissCustomerPostDeliveryMotivation() },
+                        onClick = {
+                            MotivationAndPromoManager.dismissCustomerPostDeliveryMotivation()
+                            if (activeOrder != null) {
+                                currentStep = 3
+                            } else {
+                                showOrderHistoryScreen = true
+                            }
+                        }
                     )
                 }
             }
 
-            // Clean Customer App layout: no extra FCM diagnostic banner clutter on top
+            // Live 3-Phone Cloud Sync Strip (shows real server connection / wakeup state & allows instant tap retry)
+            item(key = "customer_live_sync_status_strip") {
+                val syncConnected = liveSyncStatus.isConnected
+                Surface(
+                    color = if (syncConnected) Color(0xFFECFDF5) else Color(0xFFFFFBEB),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (syncConnected) Color(0xFF10B981).copy(alpha = 0.45f) else Color(0xFFF59E0B)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                            isErrorBanner = false
+                            statusBanner = "🔄 Syncing orders with live server..."
+                        }
+                        .testTag("customer_live_sync_pill")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (syncConnected) {
+                                "🟢 Live Dispatch Connected (${liveSyncStatus.lastLatencyMs}ms) • ${liveSyncStatus.syncedOrdersCount} Orders"
+                            } else {
+                                "🟡 Waking dispatch server... Tap to Sync Now"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (syncConnected) Color(0xFF065F46) else Color(0xFF92400E),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Sync Live Orders",
+                            tint = if (syncConnected) Color(0xFF047857) else Color(0xFFB45309),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
 
             // Customer Promo Notification Banner
             if (!customerPromoNotification.isNullOrBlank()) {
@@ -2465,7 +2555,14 @@ fun CustomerAppScreen(
                 item(key = "customer_remote_alerts_banner") {
                     CustomerRemoteAlertsBanner(
                         flags = remoteFlags,
-                        activePinCode = activeZonePin
+                        activePinCode = activeZonePin,
+                        onClick = {
+                            if (activeOrder != null) {
+                                currentStep = 3
+                            } else {
+                                currentStep = 1
+                            }
+                        }
                     )
                 }
             }
@@ -5133,6 +5230,12 @@ fun CustomerAppScreen(
             ),
             modifier = Modifier
                 .fillMaxWidth()
+                .clickable {
+                    if (!isErrorBanner && activeOrder != null) {
+                        currentStep = 3
+                    }
+                    statusBanner = null
+                }
                 .testTag("customer_status_banner")
         ) {
             Row(

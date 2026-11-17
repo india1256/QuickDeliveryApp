@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Redeem
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Star
@@ -180,6 +181,8 @@ fun RiderPartnerCompactScreen(
     remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
     remember(context) { RiderSmartToolsPrefs.ensureLoaded(context) }
     val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+    val liveSyncStatus by MultiPhoneLiveSyncManager.syncStatus.collectAsState()
+    val pendingNotificationTap by FcmOrderNotificationManager.pendingNotificationTap.collectAsState()
     val voiceAlertEnabled by RiderSmartToolsPrefs.voiceAlertEnabled.collectAsState()
     val minPayoutFilterInr by RiderSmartToolsPrefs.minPayoutFilterInr.collectAsState()
     val preferredAreaKeyword by RiderSmartToolsPrefs.preferredAreaKeyword.collectAsState()
@@ -725,6 +728,44 @@ fun RiderPartnerCompactScreen(
     var orderPendingRejection by remember { mutableStateOf<CustomerOrder?>(null) }
     val selfieCheckIns by RiderLiveSelfieCallAndExcelManager.selfieCheckIns.collectAsState()
     val partnerSupportTickets by com.example.data.cloud.QuickDeliveryOperationsManager.supportTickets.collectAsState()
+
+    LaunchedEffect(pendingNotificationTap?.eventSeq) {
+        val tap = pendingNotificationTap ?: return@LaunchedEffect
+        val tapOrderId = tap.orderId.trim()
+        showEarningsDashboard = false
+        showTripHistoryDialog = false
+        showKycCenterDialog = false
+        showPartnerSupportDialog = false
+        showBankAccountDialog = false
+        showRiderProfileDialog = false
+        showCashoutDialog = false
+        showRechargeDialog = false
+        showIncentivesDialog = false
+        showGuidelinesDialog = false
+        showRiderSuggestionDialog = false
+        showTopSosEmergencyDialog = false
+        if (drawerState.isOpen) {
+            scope.launch { drawerState.close() }
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        isErrorBanner = false
+        statusMessage = when {
+            tap.title.isNotBlank() -> tap.title
+            tapOrderId.isNotBlank() -> "🛵 Opened Order #$tapOrderId"
+            else -> "🔔 Notification opened"
+        }
+        val orderIdxInList = if (tapOrderId.isNotBlank()) {
+            activeHomeOrders.indexOfFirst { it.orderId.equals(tapOrderId, ignoreCase = true) }
+        } else -1
+        runCatching {
+            if (orderIdxInList >= 0) {
+                riderMainListState.animateScrollToItem(orderIdxInList + 3)
+            } else {
+                riderMainListState.animateScrollToItem(0)
+            }
+        }
+        FcmOrderNotificationManager.consumeNotificationTap(tap.eventSeq)
+    }
 
     val hasRiderSubNavigation = orderPendingRejection != null ||
         showRiderDeleteAccountDialog ||
@@ -1772,7 +1813,11 @@ fun RiderPartnerCompactScreen(
                         roleLabel = "RIDER",
                         message = riderPostDeliveryMotivation,
                         accentColor = RiderOrange,
-                        onDismiss = { MotivationAndPromoManager.dismissRiderPostDeliveryMotivation() }
+                        onDismiss = { MotivationAndPromoManager.dismissRiderPostDeliveryMotivation() },
+                        onClick = {
+                            MotivationAndPromoManager.dismissRiderPostDeliveryMotivation()
+                            showEarningsDashboard = true
+                        }
                     )
                 }
             }
@@ -1784,7 +1829,11 @@ fun RiderPartnerCompactScreen(
                 item {
                     RiderMotivationNotificationBanner(
                         message = riderPickupMotivationMessage,
-                        onDismiss = { riderPickupMotivationMessage = null }
+                        onDismiss = { riderPickupMotivationMessage = null },
+                        onClick = {
+                            riderPickupMotivationMessage = null
+                            showEarningsDashboard = true
+                        }
                     )
                 }
             }
@@ -1886,6 +1935,42 @@ fun RiderPartnerCompactScreen(
                             )
                         }
                     }
+                    HorizontalDivider(color = Color(0xFFE2E8F0))
+                    val syncOk = liveSyncStatus.isConnected
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                isErrorBanner = false
+                                statusMessage = "🔄 Syncing live orders from server..."
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                            .testTag("rider_live_sync_status_strip"),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (syncOk) {
+                                "🟢 Live Dispatch (${liveSyncStatus.lastLatencyMs}ms) • ${liveSyncStatus.syncedOrdersCount} Orders • Sync ${liveSyncStatus.lastSyncTimeLabel}"
+                            } else {
+                                "🟡 Connecting to server... Tap to Sync Now"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (syncOk) Color(0xFF047857) else Color(0xFFB45309),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh Live Orders",
+                            tint = if (syncOk) RiderTeal else Color(0xFFB45309),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                     if (todayCodCollectedInr > 0.0) {
                         val codLimit = remoteFlags.maxCodLimitInr.coerceAtLeast(500).toDouble()
                         val codRatio = (todayCodCollectedInr / codLimit).toFloat().coerceIn(0f, 1f)
@@ -1935,7 +2020,13 @@ fun RiderPartnerCompactScreen(
                     riderPhone = riderPhone,
                     isRiderOnline = currentRider?.isOnline == true,
                     activeZoneHints = listOfNotNull(preferredAreaKeyword.takeIf { it.isNotBlank() }),
-                    isDarkMode = isDarkMode
+                    isDarkMode = isDarkMode,
+                    onClick = {
+                        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                        scope.launch {
+                            runCatching { riderMainListState.animateScrollToItem(4) }
+                        }
+                    }
                 )
             }
 
@@ -1974,7 +2065,14 @@ fun RiderPartnerCompactScreen(
                     Surface(
                         color = if (isErrorBanner) Color(0xFFFEE2E2) else Color(0xFFECFDF5),
                         shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                statusMessage = null
+                                if (activeHomeOrders.isNotEmpty()) {
+                                    scope.launch { runCatching { riderMainListState.animateScrollToItem(4) } }
+                                }
+                            }
                     ) {
                         Text(
                             text = statusMessage.orEmpty(),
@@ -2346,6 +2444,35 @@ fun RiderPartnerCompactScreen(
                         onNavigationMessage = { msg ->
                             isErrorBanner = false
                             statusMessage = msg
+                        },
+                        onRequestAdminOtpSync = { stageLabel ->
+                            runCatching {
+                                val field = repository.javaClass.getDeclaredField("_orders")
+                                field.isAccessible = true
+                                @Suppress("UNCHECKED_CAST")
+                                val flow = field.get(repository) as? kotlinx.coroutines.flow.MutableStateFlow<List<CustomerOrder>>
+                                if (flow != null) {
+                                    flow.value = flow.value.map { existing ->
+                                        if (existing.orderId == order.orderId) {
+                                            existing.copy(
+                                                latestRiderQuickNote = "🔔 Rider requested Admin Sync-Auth $stageLabel OTP (#${order.orderId})"
+                                            )
+                                        } else {
+                                            existing
+                                        }
+                                    }
+                                }
+                            }
+                            QuickDeliveryOperationsManager.recordOrderTimelineEvent(
+                                context = context,
+                                orderId = order.orderId,
+                                title = "Rider Requested Admin $stageLabel OTP Auth",
+                                detail = "$riderDisplayName requested remote Admin OTP sync authentication (Zero SMS)",
+                                actorRole = "RIDER"
+                            )
+                            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                            isErrorBanner = false
+                            statusMessage = "🔔 Admin Sync-Auth requested for $stageLabel OTP! As soon as Admin authenticates, this screen advances automatically."
                         }
                     )
                 }
@@ -2381,7 +2508,8 @@ private fun RiderProgressiveOrderCard(
     onCompletePickupWithSignature: (enteredOtp: String, senderName: String, signatureSvg: String) -> Unit,
     onCompleteDropWithSignature: (enteredOtp: String, receiverName: String, signatureSvg: String) -> Unit,
     onOrderDeliveredToHistory: (String) -> Unit,
-    onNavigationMessage: (String) -> Unit
+    onNavigationMessage: (String) -> Unit,
+    onRequestAdminOtpSync: (String) -> Unit = {}
 ) {
     var pickupOtpInput by remember(order.orderId) { mutableStateOf("") }
     var deliveryOtpInput by remember(order.orderId) { mutableStateOf("") }
@@ -2960,13 +3088,28 @@ private fun RiderProgressiveOrderCard(
                                 value = pickupOtpInput,
                                 onValueChange = { if (it.length <= 4) pickupOtpInput = it.filter(Char::isDigit) },
                                 label = { Text("Enter 4-Digit Pickup OTP *") },
-                                placeholder = { Text("Ask customer for Pickup OTP") },
+                                placeholder = { Text("Customer App OTP or ask Admin") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 singleLine = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("rider_pickup_otp_input_${order.orderId}")
                             )
+                            OutlinedButton(
+                                onClick = { onRequestAdminOtpSync("Pickup") },
+                                border = BorderStroke(1.dp, RiderOrange),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_request_admin_pickup_otp_${order.orderId}")
+                            ) {
+                                Text(
+                                    text = "🔄 Request Admin Sync-Auth Pickup OTP (Zero SMS)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = RiderOrange
+                                )
+                            }
                         } else {
                             Surface(
                                 color = Color(0xFFECFDF5),
@@ -3090,13 +3233,28 @@ private fun RiderProgressiveOrderCard(
                                 value = deliveryOtpInput,
                                 onValueChange = { if (it.length <= 4) deliveryOtpInput = it.filter(Char::isDigit) },
                                 label = { Text("Enter 4-Digit Drop OTP *") },
-                                placeholder = { Text("Ask receiver for Drop OTP") },
+                                placeholder = { Text("Customer App OTP or ask Admin") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 singleLine = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("rider_delivery_otp_input_${order.orderId}")
                             )
+                            OutlinedButton(
+                                onClick = { onRequestAdminOtpSync("Drop") },
+                                border = BorderStroke(1.dp, RiderOrange),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("rider_request_admin_drop_otp_${order.orderId}")
+                            ) {
+                                Text(
+                                    text = "🔄 Request Admin Sync-Auth Drop OTP (Zero SMS)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = RiderOrange
+                                )
+                            }
                         } else {
                             Surface(
                                 color = Color(0xFFECFDF5),

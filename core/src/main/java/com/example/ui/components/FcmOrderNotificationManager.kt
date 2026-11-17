@@ -4,11 +4,13 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -107,6 +109,18 @@ data class FcmPushMessageRecord(
     val createdAtEpochMs: Long = System.currentTimeMillis(),
     val isReadByCustomer: Boolean = false,
     val isReadByRider: Boolean = false
+)
+
+/**
+ * Emitted whenever a user taps a system tray notification or an in-app notification banner/card
+ * in Customer, Rider, or Admin app so the UI navigates directly to the relevant order/tab.
+ */
+data class NotificationTapNavigationEvent(
+    val eventSeq: Long,
+    val orderId: String,
+    val targetRole: String,
+    val orderStatus: String,
+    val title: String
 )
 
 /**
@@ -209,9 +223,120 @@ object FcmOrderNotificationManager {
     private val _latestRiderBanner = MutableStateFlow<FcmPushMessageRecord?>(null)
     val latestRiderBanner: StateFlow<FcmPushMessageRecord?> = _latestRiderBanner.asStateFlow()
 
+    private val tapEventSeqCounter = AtomicLong(0L)
+    private val _pendingNotificationTap = MutableStateFlow<NotificationTapNavigationEvent?>(null)
+    val pendingNotificationTap: StateFlow<NotificationTapNavigationEvent?> = _pendingNotificationTap.asStateFlow()
+
     // Tracks last observed status per orderId so every real transition fires an immediate FCM push
     private val observedOrderStatuses = mutableMapOf<String, OrderStatus>()
+    @Volatile
+    private var hasCompletedInitialOrderSeed = false
     private var isInitialized = false
+
+    fun buildLaunchPendingIntent(
+        context: Context,
+        requestCode: Int,
+        orderId: String = "",
+        orderStatus: String = "",
+        targetRole: String = "",
+        title: String = ""
+    ): PendingIntent? {
+        val appCtx = context.applicationContext ?: context
+        val role = resolveCurrentAppRole(appCtx)
+        val activityClassName = when (role) {
+            "CUSTOMER" -> "com.example.CustomerMainActivity"
+            "RIDER" -> "com.example.RiderMainActivity"
+            "ADMIN" -> "com.example.AdminMainActivity"
+            else -> "com.example.MainActivity"
+        }
+        val launchIntent = (appCtx.packageManager.getLaunchIntentForPackage(appCtx.packageName)
+            ?: Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                component = ComponentName(appCtx.packageName, activityClassName)
+            }).apply {
+            `package` = appCtx.packageName
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("qd_notification_tap", true)
+            if (orderId.isNotBlank()) {
+                putExtra("fcm_order_id", orderId)
+                putExtra("orderId", orderId)
+            }
+            if (orderStatus.isNotBlank()) {
+                putExtra("fcm_order_status", orderStatus)
+                putExtra("orderStatus", orderStatus)
+            }
+            if (targetRole.isNotBlank()) {
+                putExtra("fcm_target_role", targetRole)
+                putExtra("targetRole", targetRole)
+            }
+            if (title.isNotBlank()) {
+                putExtra("fcm_title", title)
+            }
+        }
+        return runCatching {
+            PendingIntent.getActivity(
+                appCtx,
+                requestCode,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }.getOrNull()
+    }
+
+    fun triggerInAppNotificationTap(
+        orderId: String,
+        targetRole: String = "",
+        orderStatus: String = "",
+        title: String = ""
+    ) {
+        val nextSeq = tapEventSeqCounter.incrementAndGet()
+        _pendingNotificationTap.value = NotificationTapNavigationEvent(
+            eventSeq = nextSeq,
+            orderId = orderId.trim(),
+            targetRole = targetRole.trim(),
+            orderStatus = orderStatus.trim(),
+            title = title.trim()
+        )
+    }
+
+    fun handleLaunchIntent(intent: Intent?) {
+        if (intent == null) return
+        val orderId = intent.getStringExtra("fcm_order_id")
+            ?: intent.getStringExtra("orderId")
+            ?: ""
+        val isTap = intent.getBooleanExtra("qd_notification_tap", false) || orderId.isNotBlank()
+        if (!isTap) return
+        val orderStatus = intent.getStringExtra("fcm_order_status")
+            ?: intent.getStringExtra("orderStatus")
+            ?: ""
+        val targetRole = intent.getStringExtra("fcm_target_role")
+            ?: intent.getStringExtra("targetRole")
+            ?: ""
+        val title = intent.getStringExtra("fcm_title") ?: ""
+        triggerInAppNotificationTap(
+            orderId = orderId,
+            targetRole = targetRole,
+            orderStatus = orderStatus,
+            title = title
+        )
+        runCatching {
+            intent.removeExtra("qd_notification_tap")
+            intent.removeExtra("fcm_order_id")
+            intent.removeExtra("orderId")
+            intent.removeExtra("fcm_order_status")
+            intent.removeExtra("fcm_target_role")
+            intent.removeExtra("fcm_title")
+        }
+    }
+
+    fun consumeNotificationTap(eventSeq: Long) {
+        val current = _pendingNotificationTap.value
+        if (current != null && current.eventSeq == eventSeq) {
+            _pendingNotificationTap.value = null
+        }
+    }
 
     fun ensureInitialized(context: Context) {
         val appContext = context.applicationContext
@@ -336,6 +461,7 @@ object FcmOrderNotificationManager {
     fun clearAllNotifications() {
         observedOrderStatuses.clear()
         observedRejectionCounts.clear()
+        hasCompletedInitialOrderSeed = false
         _fcmMessages.value = emptyList()
         _latestCustomerBanner.value = null
         _latestRiderBanner.value = null
@@ -352,11 +478,13 @@ object FcmOrderNotificationManager {
         ensureInitialized(context)
         val realOrders = orders.filterNot { it.orderId in DEMO_ORDER_IDS }
         if (realOrders.isEmpty()) {
+            hasCompletedInitialOrderSeed = true
             _latestCustomerBanner.value = null
             _latestRiderBanner.value = null
             return
         }
-        val isInitialSeed = observedOrderStatuses.isEmpty() && _fcmMessages.value.isEmpty()
+        val isInitialSeed = !hasCompletedInitialOrderSeed
+        hasCompletedInitialOrderSeed = true
 
         realOrders.forEach { order ->
             subscribeToOrderTopic(order.orderId)
@@ -586,23 +714,18 @@ object FcmOrderNotificationManager {
             postToSystemTray = false
         )
         if (!hasNotificationPermission(context)) return
-        if (appRole == "ADMIN") return
         if (appRole == "CUSTOMER" && targetRole != FcmTargetAppRole.CUSTOMER) return
         if (appRole == "RIDER" && targetRole != FcmTargetAppRole.RIDER) return
 
         runCatching {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra("fcm_order_id", message.orderId)
-            }
-            val pendingIntent = if (launchIntent != null) {
-                PendingIntent.getActivity(
-                    context,
-                    message.messageId.hashCode(),
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-            } else null
+            val pendingIntent = buildLaunchPendingIntent(
+                context = context,
+                requestCode = message.messageId.hashCode(),
+                orderId = message.orderId,
+                orderStatus = OrderStatus.IN_TRANSIT.name,
+                targetRole = targetRole.name,
+                title = record.title
+            )
 
             val builder = NotificationCompat.Builder(context, CHANNEL_ORDER_CHAT)
                 .setSmallIcon(android.R.drawable.ic_dialog_email)
@@ -648,46 +771,41 @@ object FcmOrderNotificationManager {
             record.orderStatus == OrderStatus.SEARCHING_RIDER &&
             record.title.contains("Rider Declined", ignoreCase = true)
 
-        // Strict role isolation so Customer app NEVER rings/vibrates for Rider dispatch or initial Order Confirm!
+        // Strict role isolation so Customer/Rider/Admin each get clean non-duplicate clickable alerts
         if (appRole == "CUSTOMER") {
             if (record.targetRole == FcmTargetAppRole.RIDER) return
             if (record.orderStatus == OrderStatus.SEARCHING_RIDER && !isDeclinedReSearchCustomerAlert) return
         } else if (appRole == "RIDER") {
             if (record.targetRole == FcmTargetAppRole.CUSTOMER) return
         } else if (appRole == "ADMIN") {
-            return
+            // Admin monitors order creation & delivery completion once (skip Customer duplicate copy)
+            if (record.targetRole == FcmTargetAppRole.CUSTOMER) return
         } else if (appRole == "UNIFIED" && record.orderStatus == OrderStatus.SEARCHING_RIDER && record.targetRole == FcmTargetAppRole.RIDER) {
             // Avoid ringing when user clicks Confirm Order inside the Customer tab of Unified preview
             return
         }
 
         val isCustomerNotification = record.targetRole == FcmTargetAppRole.CUSTOMER || appRole == "CUSTOMER"
+        val isAdminMonitor = appRole == "ADMIN"
 
         runCatching {
             val channelId = when {
+                isAdminMonitor -> CHANNEL_CUSTOMER_ORDER_UPDATES
                 isCustomerNotification -> CHANNEL_CUSTOMER_ORDER_UPDATES
                 record.isDeliveryCompletion -> CHANNEL_DELIVERY_COMPLETION
                 record.targetRole == FcmTargetAppRole.RIDER -> CHANNEL_RIDER_DISPATCH_UPDATES
                 else -> CHANNEL_CUSTOMER_ORDER_UPDATES
             }
 
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra("fcm_order_id", record.orderId)
-                putExtra("fcm_order_status", record.orderStatus.name)
-                putExtra("fcm_target_role", record.targetRole.name)
-            }
-
-            val pendingIntent = if (launchIntent != null) {
-                PendingIntent.getActivity(
-                    context,
-                    record.messageId.hashCode(),
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-            } else {
-                null
-            }
+            val notifId = (record.messageId + "_" + record.targetRole.name).hashCode()
+            val pendingIntent = buildLaunchPendingIntent(
+                context = context,
+                requestCode = notifId,
+                orderId = record.orderId,
+                orderStatus = record.orderStatus.name,
+                targetRole = if (isAdminMonitor) "ADMIN" else record.targetRole.name,
+                title = record.title
+            )
 
             val builder = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -696,10 +814,13 @@ object FcmOrderNotificationManager {
                 .setStyle(
                     NotificationCompat.BigTextStyle()
                         .bigText(record.body)
-                        .setSummaryText("FCM • ${record.targetRole.label} • #${record.orderId}")
+                        .setSummaryText(
+                            if (isAdminMonitor) "Admin Monitor • #${record.orderId}"
+                            else "FCM • ${record.targetRole.label} • #${record.orderId}"
+                        )
                 )
-                .setPriority(if (isCustomerNotification) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_HIGH)
-                .setSilent(isCustomerNotification)
+                .setPriority(if (isCustomerNotification || isAdminMonitor) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_HIGH)
+                .setSilent(isCustomerNotification || isAdminMonitor)
                 .setCategory(NotificationCompat.CATEGORY_STATUS)
                 .setAutoCancel(true)
 
@@ -708,7 +829,7 @@ object FcmOrderNotificationManager {
             }
 
             NotificationManagerCompat.from(context).notify(
-                record.messageId.hashCode(),
+                notifId,
                 builder.build()
             )
         }
@@ -793,6 +914,14 @@ fun FcmRealtimeNotificationCenterCard(
                     elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clickable {
+                            FcmOrderNotificationManager.triggerInAppNotificationTap(
+                                orderId = banner.orderId,
+                                targetRole = banner.targetRole.name,
+                                orderStatus = banner.orderStatus.name,
+                                title = banner.title
+                            )
+                        }
                         .testTag("${rolePrefix}_fcm_live_push_banner")
                 ) {
                     Column(
@@ -1113,7 +1242,16 @@ fun FcmRealtimeNotificationCenterCard(
                                     1.dp,
                                     if (msg.isDeliveryCompletion) Color(0xFFA7F3D0) else Color(0xFFE2E8F0)
                                 ),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        FcmOrderNotificationManager.triggerInAppNotificationTap(
+                                            orderId = msg.orderId,
+                                            targetRole = msg.targetRole.name,
+                                            orderStatus = msg.orderStatus.name,
+                                            title = msg.title
+                                        )
+                                    }
                             ) {
                                 Column(
                                     modifier = Modifier

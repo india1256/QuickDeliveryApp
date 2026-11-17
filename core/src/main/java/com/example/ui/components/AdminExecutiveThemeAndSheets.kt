@@ -592,7 +592,7 @@ fun AdminOrderDetailBottomSheet(
                     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.LocationOn, contentDescription = null, tint = palette.accentEmerald, modifier = Modifier.size(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("PICKUP • OTP ${order.pickupOtp}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = palette.accentEmerald)
+                            Text("PICKUP • SYNCED RANDOM OTP ${order.pickupOtp} (Zero SMS)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = palette.accentEmerald)
                             Text(order.pickupAddress.fullAddress, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
                         }
                     }
@@ -600,7 +600,7 @@ fun AdminOrderDetailBottomSheet(
                     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.LocationOn, contentDescription = null, tint = palette.accentAmber, modifier = Modifier.size(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("DROP • OTP ${order.deliveryOtp}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = palette.accentAmber)
+                            Text("DROP • SYNCED RANDOM OTP ${order.deliveryOtp} (Zero SMS)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = palette.accentAmber)
                             Text(order.dropAddress.fullAddress, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
                         }
                     }
@@ -742,11 +742,17 @@ fun AdminOrderDetailBottomSheet(
                             onDismiss()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = palette.accentEmerald),
-                        modifier = Modifier.weight(1.1f).height(46.dp)
+                        modifier = Modifier.weight(1.3f).height(46.dp)
                     ) {
                         Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Advance", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        val btnText = when (order.orderStatus) {
+                            OrderStatus.SEARCHING_RIDER -> "Assign"
+                            OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP -> "Auth Pickup OTP"
+                            OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> "Auth Drop OTP"
+                            else -> "Advance"
+                        }
+                        Text(btnText, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                     }
                 }
 

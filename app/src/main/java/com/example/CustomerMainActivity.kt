@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,11 +23,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.QuickDeliveryFirebaseInitializer
 import com.example.security.AppPermissionManager
 import com.example.security.OrderAlertSoundManager
 import com.example.ui.auth.QuickDeliveryCloudSyncBar
 import com.example.ui.auth.QuickDeliveryTopOptionsDialog
+import com.example.ui.components.FcmOrderNotificationManager
 import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.LocalizedContextProvider
 import com.example.ui.screens.CustomerAppScreen
@@ -48,8 +51,9 @@ class CustomerMainActivity : ComponentActivity() {
         OrderAlertSoundManager.ensureChannels(this)
         OrderAlertSoundManager.stopOrderAlert()
         AppPermissionManager.inspectPermissions(this)
-        com.example.data.cloud.MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, "CUSTOMER")
-        com.example.data.cloud.MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(this, "CUSTOMER")
+        MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, "CUSTOMER")
+        MultiPhoneLiveSyncManager.startBackgroundMultiPhoneSync(this, "CUSTOMER")
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
         enableEdgeToEdge()
         setContent {
             QuickDeliveryTheme {
@@ -61,5 +65,18 @@ class CustomerMainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
+        MultiPhoneLiveSyncManager.triggerImmediateSync(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        MultiPhoneLiveSyncManager.triggerImmediateSync(this)
+        FcmOrderNotificationManager.handleLaunchIntent(intent)
     }
 }
