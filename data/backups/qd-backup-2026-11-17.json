@@ -2,20 +2,25 @@
   "resetEpochMs": 1794881079209,
   "ordersById": {},
   "devicesById": {
-    "PH-D50028F0": {
-      "deviceId": "PH-D50028F0",
+    "PH-7C04D353": {
+      "deviceId": "PH-7C04D353",
       "role": "UNIFIED",
       "deviceModel": "Google sdk_gphone64_arm64",
       "lat": 0,
       "lng": 0,
-      "lastSeenEpochMs": 1794884277966
+      "lastSeenEpochMs": 1794884824684
     }
   },
   "fcmTokensByDevice": {
     "PH-D50028F0": {
       "token": "fcm_qd_sdkgphone64arm64_live_98450",
       "role": "UNIFIED",
-      "updatedAtEpochMs": 1794884277966
+      "updatedAtEpochMs": 1794884399097
+    },
+    "PH-7C04D353": {
+      "token": "fcm_qd_sdkgphone64arm64_live_98450",
+      "role": "UNIFIED",
+      "updatedAtEpochMs": 1794884824684
     }
   },
   "riderRegistrationsByKey": {},
