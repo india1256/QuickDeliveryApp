@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node scripts/apk-download-server.mjs",
     "dev": "node scripts/apk-download-server.mjs",
-    "build": "python3 scripts/build-standalone-role-apks.py && node scripts/apk-download-server.mjs --configure-nginx",
+    "build": "node scripts/apk-download-server.mjs --configure-nginx",
     "preview": "node scripts/apk-download-server.mjs"
   },
   "dependencies": {}

@@ -1321,6 +1321,13 @@ function ensureStandaloneRoleApksBuilt() {
     configureNginxDirectApkServing();
     return;
   }
+  const hasBaseApk =
+    fs.existsSync(path.join(ROOT, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')) ||
+    fs.existsSync(path.join(ROOT, '.build-outputs', 'app-debug.apk'));
+  if (!hasBaseApk) {
+    configureNginxDirectApkServing();
+    return;
+  }
   try {
     const child = spawn('python3', ['scripts/build-standalone-role-apks.py'], {
       cwd: ROOT,
