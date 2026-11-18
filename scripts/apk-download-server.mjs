@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 import tls from 'node:tls';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -500,102 +501,269 @@ function sendFcmPushNotifications({ tokens, title, body, data = {} }) {
   } catch {}
 }
 
+function formatNodeError(err) {
+  if (!err) return 'Unknown error';
+  const parts = [];
+  if (err.code) parts.push(String(err.code));
+  if (err.message) parts.push(String(err.message));
+  if (Array.isArray(err.errors) && err.errors.length > 0) {
+    const sub = err.errors
+      .map(e => [e?.code, e?.message].filter(Boolean).join(': '))
+      .filter(Boolean)
+      .join(' | ');
+    if (sub) parts.push(sub);
+  }
+  return parts.filter(Boolean).join(' - ') || String(err);
+}
+
+let lastEmailDiagnostics = {
+  channel: null,
+  status: 'IDLE',
+  error: null,
+  updatedAtIso: null,
+};
+
+function buildMimeMessage({ resolvedFrom, replyToEmail, toEmail, subject, textBody, htmlBody, messageIdDomain }) {
+  const boundary = `qd_${crypto.randomBytes(8).toString('hex')}`;
+  const cleanSubject = String(subject || '').replace(/[\r\n]+/g, ' ');
+  const msgId = `<${crypto.randomUUID()}@${messageIdDomain}>`;
+  const safeText = String(textBody || '').replace(/\r?\n/g, '\r\n').replace(/\r\n\./g, '\r\n..');
+  const safeHtml = htmlBody ? String(htmlBody).replace(/\r?\n/g, '\r\n').replace(/\r\n\./g, '\r\n..') : '';
+  const commonHeaders = [
+    `From: "Quick Delivery" <${resolvedFrom}>`,
+    `Reply-To: <${replyToEmail}>`,
+    `To: <${toEmail}>`,
+    `Subject: ${cleanSubject}`,
+    `Date: ${new Date().toUTCString()}`,
+    `Message-ID: ${msgId}`,
+    `MIME-Version: 1.0`,
+  ];
+  if (!safeHtml) {
+    return [
+      ...commonHeaders,
+      `Content-Type: text/plain; charset=UTF-8`,
+      '',
+      safeText,
+      '.',
+      '',
+    ].join('\r\n');
+  }
+  return [
+    ...commonHeaders,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    `Content-Type: text/plain; charset=UTF-8`,
+    '',
+    safeText,
+    '',
+    `--${boundary}`,
+    `Content-Type: text/html; charset=UTF-8`,
+    '',
+    safeHtml,
+    '',
+    `--${boundary}--`,
+    '.',
+    '',
+  ].join('\r\n');
+}
+
 function sendWorkspaceSmtpTlsMail({ smtpHost, smtpPort, smtpUser, smtpPass, fromEmail, toEmail, subject, textBody, htmlBody }) {
   return new Promise((resolve, reject) => {
-    const socket = tls.connect(smtpPort, smtpHost, { servername: smtpHost, timeout: 12000 });
+    const useStartTls = Number(smtpPort) === 587;
     const resolvedFrom = (fromEmail && fromEmail.includes('@') && smtpUser.includes('@') && fromEmail.split('@')[1] === smtpUser.split('@')[1])
       ? fromEmail
       : smtpUser;
     const replyToEmail = (fromEmail && fromEmail.includes('@')) ? fromEmail : resolvedFrom;
     const messageIdDomain = (resolvedFrom.split('@')[1] || BRAND_DOMAIN).trim();
-    const boundary = `qd_${crypto.randomBytes(8).toString('hex')}`;
+
+    let activeSocket = useStartTls
+      ? net.connect({ host: smtpHost, port: smtpPort, family: 4, timeout: 10000 })
+      : tls.connect({ host: smtpHost, port: smtpPort, servername: smtpHost, family: 4, timeout: 10000 });
+
     let buffer = '';
-    const steps = [
-      () => `EHLO ${messageIdDomain}\r\n`,
+    let settled = false;
+    let awaitingStartTlsUpgrade = false;
+
+    const authAndSendSteps = [
       () => `AUTH LOGIN\r\n`,
       () => `${Buffer.from(smtpUser, 'utf-8').toString('base64')}\r\n`,
       () => `${Buffer.from(smtpPass, 'utf-8').toString('base64')}\r\n`,
       () => `MAIL FROM:<${smtpUser}>\r\n`,
       () => `RCPT TO:<${toEmail}>\r\n`,
       () => `DATA\r\n`,
-      () => {
-        const cleanSubject = String(subject || '').replace(/[\r\n]+/g, ' ');
-        const msgId = `<${crypto.randomUUID()}@${messageIdDomain}>`;
-        const safeText = String(textBody || '').replace(/\r?\n/g, '\r\n').replace(/\r\n\./g, '\r\n..');
-        const safeHtml = htmlBody ? String(htmlBody).replace(/\r?\n/g, '\r\n').replace(/\r\n\./g, '\r\n..') : '';
-        const commonHeaders = [
-          `From: "Quick Delivery" <${resolvedFrom}>`,
-          `Reply-To: <${replyToEmail}>`,
-          `To: <${toEmail}>`,
-          `Subject: ${cleanSubject}`,
-          `Date: ${new Date().toUTCString()}`,
-          `Message-ID: ${msgId}`,
-          `MIME-Version: 1.0`,
-        ];
-        if (!safeHtml) {
-          return [
-            ...commonHeaders,
-            `Content-Type: text/plain; charset=UTF-8`,
-            '',
-            safeText,
-            '.',
-            '',
-          ].join('\r\n');
-        }
-        return [
-          ...commonHeaders,
-          `Content-Type: multipart/alternative; boundary="${boundary}"`,
-          '',
-          `--${boundary}`,
-          `Content-Type: text/plain; charset=UTF-8`,
-          '',
-          safeText,
-          '',
-          `--${boundary}`,
-          `Content-Type: text/html; charset=UTF-8`,
-          '',
-          safeHtml,
-          '',
-          `--${boundary}--`,
-          '.',
-          '',
-        ].join('\r\n');
-      },
+      () => buildMimeMessage({ resolvedFrom, replyToEmail, toEmail, subject, textBody, htmlBody, messageIdDomain }),
       () => `QUIT\r\n`,
     ];
+
+    const steps = useStartTls
+      ? [() => `EHLO ${messageIdDomain}\r\n`, () => `STARTTLS\r\n`, () => `EHLO ${messageIdDomain}\r\n`, ...authAndSendSteps]
+      : [() => `EHLO ${messageIdDomain}\r\n`, ...authAndSendSteps];
+
     let stepIndex = 0;
-    let settled = false;
     const finish = (err, val) => {
       if (settled) return;
       settled = true;
-      try { socket.end(); } catch {}
+      try { activeSocket.end(); } catch {}
       if (err) reject(err);
       else resolve(val);
     };
-    socket.on('timeout', () => finish(new Error('SMTP timeout')));
-    socket.on('error', err => finish(err));
-    socket.on('data', chunk => {
-      buffer += chunk.toString('utf-8');
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line) continue;
-        // Multi-line SMTP responses have '-' at index 3 (e.g. 250-...)
-        if (line.length >= 4 && line[3] === '-') continue;
-        const code = Number(line.slice(0, 3));
-        if (!Number.isFinite(code) || code >= 400) {
-          finish(new Error(`SMTP error ${line}`));
-          return;
+
+    const attachHandlers = sock => {
+      sock.on('timeout', () => finish(new Error(`SMTP timeout on ${smtpHost}:${smtpPort}`)));
+      sock.on('error', err => finish(new Error(formatNodeError(err))));
+      sock.on('data', chunk => {
+        buffer += chunk.toString('utf-8');
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line) continue;
+          if (line.length >= 4 && line[3] === '-') continue;
+          const code = Number(line.slice(0, 3));
+          if (!Number.isFinite(code) || code >= 400) {
+            finish(new Error(`SMTP error ${line}`));
+            return;
+          }
+          if (awaitingStartTlsUpgrade && code === 220) {
+            awaitingStartTlsUpgrade = false;
+            buffer = '';
+            const plainSock = activeSocket;
+            plainSock.removeAllListeners('data');
+            plainSock.removeAllListeners('error');
+            plainSock.removeAllListeners('timeout');
+            activeSocket = tls.connect({ socket: plainSock, servername: smtpHost, timeout: 10000 });
+            attachHandlers(activeSocket);
+            activeSocket.write(steps[stepIndex++]());
+            return;
+          }
+          if (stepIndex < steps.length) {
+            const nextCmd = steps[stepIndex++]();
+            if (useStartTls && nextCmd === 'STARTTLS\r\n') {
+              awaitingStartTlsUpgrade = true;
+            }
+            activeSocket.write(nextCmd);
+          } else {
+            finish(null, true);
+            return;
+          }
         }
-        if (stepIndex < steps.length) {
-          socket.write(steps[stepIndex++]());
-        } else {
-          finish(null, true);
-          return;
+      });
+    };
+
+    attachHandlers(activeSocket);
+  });
+}
+
+async function sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subject, textBody, htmlBody, type, extra = {} }) {
+  const payload = JSON.stringify({
+    from: fromEmail,
+    to: toEmail,
+    subject,
+    textBody,
+    htmlBody,
+    type,
+    ...extra,
+  });
+  const resp = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: payload,
+    redirect: 'follow',
+    signal: AbortSignal.timeout(15000),
+  });
+  const bodyText = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Webhook HTTP ${resp.status}: ${bodyText.slice(0, 120)}`);
+  }
+  const trimmed = bodyText.trim();
+  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.includes('accounts.google.com')) {
+    throw new Error("Google Apps Script Web App access must be set to 'Anyone' (got HTML login redirect).");
+  }
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && parsed.ok === false) {
+        throw new Error(parsed.error || 'Webhook returned ok=false');
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        // Non-JSON 200 text response
+      } else {
+        throw e;
+      }
+    }
+  }
+  return true;
+}
+
+async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '', type = 'GENERAL', extra = {} }) {
+  const smtpUser = String(process.env.SUPPORT_SMTP_USER || '').trim();
+  const rawSmtpPass = String(process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS || '').trim();
+  const smtpHost = String(process.env.SUPPORT_SMTP_HOST || 'smtp.gmail.com').trim();
+  const smtpPass = smtpHost.includes('gmail.com') ? rawSmtpPass.replace(/\s+/g, '') : rawSmtpPass;
+  const smtpPort = Number(String(process.env.SUPPORT_SMTP_PORT || '465').trim()) || 465;
+  const webhookUrl = String(process.env.SUPPORT_EMAIL_WEBHOOK_URL || '').trim();
+  const fromEmail = OTP_FROM_EMAIL;
+
+  // Prefer HTTPS Webhook (port 443) first when configured (avoids cloud SMTP port blocks)
+  if (webhookUrl) {
+    try {
+      await sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subject, textBody, htmlBody, type, extra });
+      lastEmailDiagnostics = { channel: 'WEBHOOK', status: 'OK', error: null, updatedAtIso: new Date().toISOString() };
+      return { deliveryChannel: 'WEBHOOK', fromEmail };
+    } catch (whErr) {
+      const whMsg = formatNodeError(whErr);
+      lastEmailDiagnostics = { channel: 'WEBHOOK', status: 'ERROR', error: whMsg, updatedAtIso: new Date().toISOString() };
+      if (!smtpUser || !smtpPass) {
+        throw new Error(`Email webhook send failed: ${whMsg}`);
+      }
+    }
+  }
+
+  if (smtpUser && smtpPass) {
+    const portsToTry = smtpPort === 587 ? [587, 465] : [smtpPort, 587];
+    let lastSmtpErr = null;
+    for (const port of portsToTry) {
+      try {
+        await sendWorkspaceSmtpTlsMail({
+          smtpHost,
+          smtpPort: port,
+          smtpUser,
+          smtpPass,
+          fromEmail,
+          toEmail,
+          subject,
+          textBody,
+          htmlBody,
+        });
+        lastEmailDiagnostics = { channel: `SMTP_${port}`, status: 'OK', error: null, updatedAtIso: new Date().toISOString() };
+        return {
+          deliveryChannel: 'SMTP',
+          fromEmail: smtpUser.includes('@') ? smtpUser : fromEmail,
+        };
+      } catch (err) {
+        lastSmtpErr = formatNodeError(err);
+        // Do not retry alternate port if Gmail explicitly rejected credentials (535)
+        if (lastSmtpErr.includes('SMTP error 535') || lastSmtpErr.includes('SMTP error 534')) {
+          break;
         }
       }
-    });
-  });
+    }
+    lastEmailDiagnostics = { channel: 'SMTP', status: 'ERROR', error: lastSmtpErr, updatedAtIso: new Date().toISOString() };
+    const isPortBlocked = /EACCES|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|timeout/i.test(lastSmtpErr || '');
+    if (isPortBlocked && !webhookUrl) {
+      throw new Error(
+        `Cloud host blocked SMTP (${lastSmtpErr}). Add SUPPORT_EMAIL_WEBHOOK_URL (Google Apps Script HTTPS) in Render Environment.`
+      );
+    }
+    throw new Error(`Email SMTP send failed: ${lastSmtpErr}`);
+  }
+
+  const errMsg = `Email sender not configured. Set SUPPORT_EMAIL_WEBHOOK_URL (or SMTP vars) in Render Environment.`;
+  lastEmailDiagnostics = { channel: 'NONE', status: 'UNCONFIGURED', error: errMsg, updatedAtIso: new Date().toISOString() };
+  const err = new Error(errMsg);
+  err.statusCode = 503;
+  throw err;
 }
 
 function dispatchSupportTicketToWorkspaceEmail(ticket) {
@@ -604,13 +772,7 @@ function dispatchSupportTicketToWorkspaceEmail(ticket) {
   if (!syncState.emailedTicketIds) syncState.emailedTicketIds = {};
   if (syncState.emailedTicketIds[tid]) return;
 
-  const smtpUser = process.env.SUPPORT_SMTP_USER || '';
-  const smtpPass = process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS || '';
-  const smtpHost = process.env.SUPPORT_SMTP_HOST || 'smtp.gmail.com';
-  const smtpPort = Number(process.env.SUPPORT_SMTP_PORT || 465);
-  const webhookUrl = process.env.SUPPORT_EMAIL_WEBHOOK_URL || '';
   const targetEmail = process.env.SUPPORT_TO_EMAIL || BRAND_SUPPORT_EMAIL;
-
   const subject = `[Quick Delivery Ticket #${tid}] ${ticket.senderRole || 'USER'}: ${ticket.category || 'Support'}`;
   const textBody = [
     `New Support Ticket Logged on ${BRAND_DOMAIN}`,
@@ -631,81 +793,35 @@ function dispatchSupportTicketToWorkspaceEmail(ticket) {
   syncState.emailedTicketIds[tid] = {
     ticketId: tid,
     to: targetEmail,
-    status: smtpUser && smtpPass ? 'SENDING_SMTP' : webhookUrl ? 'SENDING_WEBHOOK' : 'PENDING_WORKSPACE_ENV',
+    status: 'SENDING',
     updatedAtIso: new Date().toISOString(),
   };
 
-  if (smtpUser && smtpPass) {
-    sendWorkspaceSmtpTlsMail({
-      smtpHost,
-      smtpPort,
-      smtpUser,
-      smtpPass,
-      toEmail: targetEmail,
-      subject,
-      textBody,
+  sendQuickDeliveryEmail({
+    toEmail: targetEmail,
+    subject,
+    textBody,
+    type: 'SUPPORT_TICKET',
+    extra: { ticket },
+  })
+    .then(info => {
+      syncState.emailedTicketIds[tid] = {
+        ticketId: tid,
+        to: targetEmail,
+        status: `SENT_${info.deliveryChannel}`,
+        updatedAtIso: new Date().toISOString(),
+      };
+      saveSyncState();
     })
-      .then(() => {
-        syncState.emailedTicketIds[tid] = {
-          ticketId: tid,
-          to: targetEmail,
-          status: 'SENT_WORKSPACE_SMTP',
-          updatedAtIso: new Date().toISOString(),
-        };
-        saveSyncState();
-      })
-      .catch(err => {
-        syncState.emailedTicketIds[tid] = {
-          ticketId: tid,
-          to: targetEmail,
-          status: `SMTP_ERROR: ${err.message}`,
-          updatedAtIso: new Date().toISOString(),
-        };
-        saveSyncState();
-      });
-    return;
-  }
-
-  if (webhookUrl) {
-    try {
-      const u = new URL(webhookUrl);
-      const client = u.protocol === 'http:' ? http : https;
-      const bodyJson = JSON.stringify({ to: targetEmail, subject, textBody, ticket });
-      const req = client.request(
-        {
-          hostname: u.hostname,
-          port: u.port || (u.protocol === 'http:' ? 80 : 443),
-          path: u.pathname + (u.search || ''),
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(bodyJson),
-          },
-        },
-        res => {
-          res.resume();
-          syncState.emailedTicketIds[tid] = {
-            ticketId: tid,
-            to: targetEmail,
-            status: res.statusCode && res.statusCode < 400 ? 'SENT_WEBHOOK' : `WEBHOOK_HTTP_${res.statusCode}`,
-            updatedAtIso: new Date().toISOString(),
-          };
-          saveSyncState();
-        }
-      );
-      req.on('error', err => {
-        syncState.emailedTicketIds[tid] = {
-          ticketId: tid,
-          to: targetEmail,
-          status: `WEBHOOK_ERROR: ${err.message}`,
-          updatedAtIso: new Date().toISOString(),
-        };
-        saveSyncState();
-      });
-      req.write(bodyJson);
-      req.end();
-    } catch {}
-  }
+    .catch(err => {
+      syncState.emailedTicketIds[tid] = {
+        ticketId: tid,
+        to: targetEmail,
+        status: `ERROR: ${formatNodeError(err)}`,
+        updatedAtIso: new Date().toISOString(),
+      };
+      saveSyncState();
+    });
 }
 
 function saveSyncState() {
@@ -2066,21 +2182,6 @@ const server = http.createServer((req, res) => {
         const otpCode = String(crypto.randomInt(100000, 1000000));
         const otpHash = crypto.createHmac('sha256', SYNC_HMAC_SECRET).update(`${rawEmail}|${otpCode}`).digest('hex');
         const expiresInSec = 600;
-        syncState.emailOtpsByEmail[rawEmail] = {
-          otpHash,
-          role,
-          attemptsLeft: 5,
-          createdAtEpochMs: now,
-          expiresAtEpochMs: now + expiresInSec * 1000,
-        };
-        saveSyncState();
-
-        const smtpUser = String(process.env.SUPPORT_SMTP_USER || '').trim();
-        const rawSmtpPass = String(process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS || '').trim();
-        const smtpHost = String(process.env.SUPPORT_SMTP_HOST || 'smtp.gmail.com').trim();
-        const smtpPass = smtpHost.includes('gmail.com') ? rawSmtpPass.replace(/\s+/g, '') : rawSmtpPass;
-        const smtpPort = Number(String(process.env.SUPPORT_SMTP_PORT || '465').trim()) || 465;
-        const webhookUrl = String(process.env.SUPPORT_EMAIL_WEBHOOK_URL || '').trim();
         const roleLabel = role === 'RIDER' ? 'Rider Partner' : 'Customer';
         const subject = `${otpCode} is your Quick Delivery ${roleLabel} verification code`;
         const textBody = [
@@ -2107,78 +2208,42 @@ const server = http.createServer((req, res) => {
           </div>
         `.trim();
 
-        if (smtpUser && smtpPass) {
-          try {
-            await sendWorkspaceSmtpTlsMail({
-              smtpHost,
-              smtpPort,
-              smtpUser,
-              smtpPass,
-              fromEmail: OTP_FROM_EMAIL,
-              toEmail: rawEmail,
-              subject,
-              textBody,
-              htmlBody,
-            });
-            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-            res.end(JSON.stringify({
-              ok: true,
-              deliveryChannel: 'SMTP',
-              fromEmail: smtpUser.includes('@') ? smtpUser : OTP_FROM_EMAIL,
-              expiresInSec,
-              message: `OTP sent to ${rawEmail} from ${OTP_FROM_EMAIL}. Check Inbox or Spam.`,
-            }));
-            return;
-          } catch (smtpErr) {
-            res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-            res.end(JSON.stringify({ ok: false, error: `Email SMTP send failed: ${smtpErr.message}` }));
-            return;
-          }
+        try {
+          const deliveryInfo = await sendQuickDeliveryEmail({
+            toEmail: rawEmail,
+            subject,
+            textBody,
+            htmlBody,
+            type: 'EMAIL_OTP',
+            extra: { role: roleLabel },
+          });
+          // Only persist OTP and enforce 25s resend cooldown AFTER delivery succeeds
+          syncState.emailOtpsByEmail[rawEmail] = {
+            otpHash,
+            role,
+            attemptsLeft: 5,
+            createdAtEpochMs: Date.now(),
+            expiresAtEpochMs: Date.now() + expiresInSec * 1000,
+          };
+          saveSyncState();
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({
+            ok: true,
+            deliveryChannel: deliveryInfo.deliveryChannel,
+            fromEmail: deliveryInfo.fromEmail,
+            expiresInSec,
+            message: `OTP sent to ${rawEmail} from ${OTP_FROM_EMAIL}. Check Inbox or Spam.`,
+          }));
+          return;
+        } catch (sendErr) {
+          const errStatus = Number(sendErr?.statusCode) || 502;
+          res.writeHead(errStatus, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({
+            ok: false,
+            error: formatNodeError(sendErr),
+          }));
+          return;
         }
-
-        if (webhookUrl) {
-          try {
-            const u = new URL(webhookUrl);
-            const client = u.protocol === 'http:' ? http : https;
-            const bodyJson = JSON.stringify({ from: OTP_FROM_EMAIL, to: rawEmail, subject, textBody, htmlBody, type: 'EMAIL_OTP' });
-            await new Promise((resolve, reject) => {
-              const wReq = client.request({
-                hostname: u.hostname,
-                port: u.port || (u.protocol === 'http:' ? 80 : 443),
-                path: u.pathname + (u.search || ''),
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyJson) },
-              }, wRes => {
-                wRes.resume();
-                if (wRes.statusCode && wRes.statusCode < 400) resolve(true);
-                else reject(new Error(`Webhook HTTP ${wRes.statusCode}`));
-              });
-              wReq.on('error', reject);
-              wReq.write(bodyJson);
-              wReq.end();
-            });
-            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-            res.end(JSON.stringify({
-              ok: true,
-              deliveryChannel: 'WEBHOOK',
-              fromEmail: OTP_FROM_EMAIL,
-              expiresInSec,
-              message: `OTP sent to ${rawEmail} via Email Webhook.`,
-            }));
-            return;
-          } catch (whErr) {
-            res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-            res.end(JSON.stringify({ ok: false, error: `Email webhook send failed: ${whErr.message}` }));
-            return;
-          }
-        }
-
-        res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({
-          ok: false,
-          smtpConfigured: false,
-          error: `Email server SMTP is not configured on backend yet. Set SUPPORT_SMTP_USER (${OTP_FROM_EMAIL}) & SUPPORT_SMTP_APP_PASSWORD in Render Environment Variables.`,
-        }));
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ ok: false, error: 'Invalid OTP request payload.' }));
@@ -2391,6 +2456,7 @@ const server = http.createServer((req, res) => {
         targetEmail: process.env.SUPPORT_TO_EMAIL || BRAND_SUPPORT_EMAIL,
         smtpConfigured: Boolean(process.env.SUPPORT_SMTP_USER && (process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS)),
         webhookConfigured: Boolean(process.env.SUPPORT_EMAIL_WEBHOOK_URL),
+        lastEmailDiagnostics,
         totalTickets: Object.keys(syncState.supportTicketsById || {}).length,
         emailedTickets: dispatches.length,
         recentDispatches: dispatches.slice(-15),
