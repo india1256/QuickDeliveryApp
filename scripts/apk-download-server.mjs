@@ -12,6 +12,7 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
+const APP_SUITE_VERSION = '6.3.2';
 const OTP_FROM_EMAIL = (process.env.OTP_FROM_EMAIL || process.env.SUPPORT_FROM_EMAIL || BRAND_SUPPORT_EMAIL).trim();
 const SYNC_STATE_FILE = process.env.SYNC_STATE_FILE || '/tmp/quickdelivery-live-sync.json';
 const BACKUP_DIR = path.join(ROOT, 'data', 'backups');
@@ -60,6 +61,44 @@ function getApkSizeBytes(fileName = 'QuickDelivery-Customer.apk') {
 function getApkSizeMb(fileName = 'QuickDelivery-Customer.apk') {
   const bytes = getApkSizeBytes(fileName);
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const apkHashCache = new Map();
+
+function getFileSha256Short(filePath) {
+  try {
+    const st = fs.statSync(filePath);
+    const cacheKey = `${filePath}:${Math.floor(st.mtimeMs)}:${st.size}`;
+    const cached = apkHashCache.get(cacheKey);
+    if (cached) return cached;
+    const hash = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').slice(0, 8);
+    apkHashCache.set(cacheKey, hash);
+    return hash;
+  } catch {
+    return '00000000';
+  }
+}
+
+function getApkSha256Short(fileName = 'QuickDelivery-Customer.apk') {
+  const apkPath = resolveSourceApkPath(fileName);
+  if (!apkPath) return '00000000';
+  return getFileSha256Short(apkPath);
+}
+
+function getVersionedDownloadFileName(fileName = 'QuickDelivery-Customer.apk') {
+  const base = fileName.endsWith('.apk') ? fileName.slice(0, -4) : fileName;
+  return `${base}-v${APP_SUITE_VERSION}.apk`;
+}
+
+function getApkCacheTag(fileName = 'QuickDelivery-Customer.apk') {
+  const apkPath = resolveSourceApkPath(fileName);
+  if (!apkPath) return String(Date.now());
+  try {
+    const st = fs.statSync(apkPath);
+    return `${APP_SUITE_VERSION}-${getFileSha256Short(apkPath)}-${Math.floor(st.mtimeMs)}`;
+  } catch {
+    return String(Date.now());
+  }
 }
 
 const DEMO_ORDER_IDS = new Set([
@@ -482,8 +521,8 @@ function sendWorkspaceSmtpTlsMail({ smtpHost, smtpPort, smtpUser, smtpPass, from
       () => {
         const cleanSubject = String(subject || '').replace(/[\r\n]+/g, ' ');
         const msgId = `<${crypto.randomUUID()}@${messageIdDomain}>`;
-        const safeText = String(textBody || '').replace(/\r?\n\./g, '\r\n..');
-        const safeHtml = htmlBody ? String(htmlBody).replace(/\r?\n\./g, '\r\n..') : '';
+        const safeText = String(textBody || '').replace(/\r?\n/g, '\r\n').replace(/\r\n\./g, '\r\n..');
+        const safeHtml = htmlBody ? String(htmlBody).replace(/\r?\n/g, '\r\n').replace(/\r\n\./g, '\r\n..') : '';
         const commonHeaders = [
           `From: "Quick Delivery" <${resolvedFrom}>`,
           `Reply-To: <${replyToEmail}>`,
@@ -680,6 +719,17 @@ function saveSyncState() {
 function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
   const safeAuto = autoDownloadFile.replace(/[^A-Za-z0-9._-]/g, '');
   const sizeMb = getApkSizeMb(safeAuto || 'QuickDelivery-Customer.apk');
+  const custTag = getApkCacheTag('QuickDelivery-Customer.apk');
+  const riderTag = getApkCacheTag('QuickDelivery-Rider-Partner.apk');
+  const adminTag = getApkCacheTag('QuickDelivery-Admin-Enterprise.apk');
+  const autoTag = getApkCacheTag(safeAuto || 'QuickDelivery-Customer.apk');
+
+  const custSha = getApkSha256Short('QuickDelivery-Customer.apk');
+  const riderSha = getApkSha256Short('QuickDelivery-Rider-Partner.apk');
+  const adminSha = getApkSha256Short('QuickDelivery-Admin-Enterprise.apk');
+  const custDlName = getVersionedDownloadFileName('QuickDelivery-Customer.apk');
+  const riderDlName = getVersionedDownloadFileName('QuickDelivery-Rider-Partner.apk');
+  const adminDlName = getVersionedDownloadFileName('QuickDelivery-Admin-Enterprise.apk');
 
   const roleUpper = String(singleRoleFilter || '').toUpperCase();
   const showCustomer = !roleUpper || roleUpper === 'CUSTOMER';
@@ -688,23 +738,23 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
 
   const pageHeading =
     roleUpper === 'CUSTOMER'
-      ? 'Quick Delivery — Customer App'
+      ? `Quick Delivery — Customer App (v${APP_SUITE_VERSION})`
       : roleUpper === 'RIDER'
-      ? 'Partner Quick Delivery — Rider App'
+      ? `Partner Quick Delivery — Rider App (v${APP_SUITE_VERSION})`
       : roleUpper === 'ADMIN'
-      ? 'Quick Delivery Admin — Console App'
-      : 'Quick Delivery — Standalone App Downloads (1 Link = 1 App)';
+      ? `Quick Delivery Admin — Console App (v${APP_SUITE_VERSION})`
+      : `Quick Delivery — Standalone App Downloads (v${APP_SUITE_VERSION})`;
 
   const customerCardHtml = showCustomer
     ? `
       <div class="apk-card" style="border-color: #10B981;">
-        <div class="apk-title" style="color: #6EE7B7;">Quick Delivery (Customer App) • ${getApkSizeMb('QuickDelivery-Customer.apk')}</div>
-        <div class="apk-desc">Installs ONLY the <b>Quick Delivery</b> customer booking app. Instant parcel booking, Auto-Capture exact address, UPI/COD checkout, GST receipts &amp; live tracking.</div>
-        <a class="dl-btn" style="background: #059669;" href="/dl/QuickDelivery-Customer.apk" download="QuickDelivery-Customer.apk" onclick="onDirectApkClick('QuickDelivery-Customer.apk')">
-          Download Quick Delivery (Customer APK)
+        <div class="apk-title" style="color: #6EE7B7;">Quick Delivery (Customer App) • v${APP_SUITE_VERSION} • ${getApkSizeMb('QuickDelivery-Customer.apk')}</div>
+        <div class="apk-desc">Installs ONLY the <b>Quick Delivery</b> customer booking app (Build <b>#${custSha}</b>). Instant parcel booking, clean Email OTP verification, UPI/COD checkout, GST receipts &amp; live tracking.</div>
+        <a class="dl-btn" style="background: #059669;" href="/dl/QuickDelivery-Customer.apk?v=${custTag}" download="${custDlName}" onclick="onDirectApkClick('${custDlName}')">
+          Download v${APP_SUITE_VERSION} Customer APK (Build #${custSha})
         </a>
-        <a class="direct-link" href="/dl/QuickDelivery-Customer.apk" download="QuickDelivery-Customer.apk">
-          Direct Download: /dl/QuickDelivery-Customer.apk
+        <a class="direct-link" href="/dl/QuickDelivery-Customer.apk?v=${custTag}" download="${custDlName}">
+          Direct Download: ${custDlName}
         </a>
       </div>`
     : '';
@@ -712,13 +762,13 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
   const riderCardHtml = showRider
     ? `
       <div class="apk-card" style="border-color: #F59E0B;">
-        <div class="apk-title" style="color: #FCD34D;">Partner Quick Delivery (Rider App) • ${getApkSizeMb('QuickDelivery-Rider-Partner.apk')}</div>
-        <div class="apk-desc">Installs ONLY the <b>Partner Quick Delivery</b> app. Accept/Reject delivery requests, OTP-verified pickup/drop, same-day earnings &amp; partner wallet.</div>
-        <a class="dl-btn" style="background: #D97706;" href="/dl/QuickDelivery-Rider-Partner.apk" download="QuickDelivery-Rider-Partner.apk" onclick="onDirectApkClick('QuickDelivery-Rider-Partner.apk')">
-          Download Partner Quick Delivery (Rider APK)
+        <div class="apk-title" style="color: #FCD34D;">Partner Quick Delivery (Rider App) • v${APP_SUITE_VERSION} • ${getApkSizeMb('QuickDelivery-Rider-Partner.apk')}</div>
+        <div class="apk-desc">Installs ONLY the <b>Partner Quick Delivery</b> app (Build <b>#${riderSha}</b>). Accept/Reject delivery requests, clean Email OTP verification, OTP-verified pickup/drop, same-day earnings &amp; partner wallet.</div>
+        <a class="dl-btn" style="background: #D97706;" href="/dl/QuickDelivery-Rider-Partner.apk?v=${riderTag}" download="${riderDlName}" onclick="onDirectApkClick('${riderDlName}')">
+          Download v${APP_SUITE_VERSION} Rider APK (Build #${riderSha})
         </a>
-        <a class="direct-link" href="/dl/QuickDelivery-Rider-Partner.apk" download="QuickDelivery-Rider-Partner.apk">
-          Direct Download: /dl/QuickDelivery-Rider-Partner.apk
+        <a class="direct-link" href="/dl/QuickDelivery-Rider-Partner.apk?v=${riderTag}" download="${riderDlName}">
+          Direct Download: ${riderDlName}
         </a>
       </div>`
     : '';
@@ -726,13 +776,13 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
   const adminCardHtml = showAdmin
     ? `
       <div class="apk-card" style="border-color: #14B8A6;">
-        <div class="apk-title" style="color: #5EEAD4;">Quick Delivery Admin (Operations Console) • ${getApkSizeMb('QuickDelivery-Admin-Enterprise.apk')}</div>
-        <div class="apk-desc">Installs ONLY the <b>Quick Delivery Admin</b> console. Live fleet GPS monitoring, order dispatch oversight, commission settlement &amp; SOS alerts.</div>
-        <a class="dl-btn" style="background: #0D9488;" href="/dl/QuickDelivery-Admin-Enterprise.apk" download="QuickDelivery-Admin-Enterprise.apk" onclick="onDirectApkClick('QuickDelivery-Admin-Enterprise.apk')">
-          Download Quick Delivery Admin (Admin APK)
+        <div class="apk-title" style="color: #5EEAD4;">Quick Delivery Admin (Operations Console) • v${APP_SUITE_VERSION} • ${getApkSizeMb('QuickDelivery-Admin-Enterprise.apk')}</div>
+        <div class="apk-desc">Installs ONLY the <b>Quick Delivery Admin</b> console (Build <b>#${adminSha}</b>). Live fleet GPS monitoring, order dispatch oversight, commission settlement &amp; SOS alerts.</div>
+        <a class="dl-btn" style="background: #0D9488;" href="/dl/QuickDelivery-Admin-Enterprise.apk?v=${adminTag}" download="${adminDlName}" onclick="onDirectApkClick('${adminDlName}')">
+          Download v${APP_SUITE_VERSION} Admin APK (Build #${adminSha})
         </a>
-        <a class="direct-link" href="/dl/QuickDelivery-Admin-Enterprise.apk" download="QuickDelivery-Admin-Enterprise.apk">
-          Direct Download: /dl/QuickDelivery-Admin-Enterprise.apk
+        <a class="direct-link" href="/dl/QuickDelivery-Admin-Enterprise.apk?v=${adminTag}" download="${adminDlName}">
+          Direct Download: ${adminDlName}
         </a>
       </div>`
     : '';
@@ -924,7 +974,7 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     </div>
 
     <div class="guide-box">
-      <h2>✨ v6.3.1 ${BRAND_DOMAIN} • Cloud Firestore &amp; Enterprise Suite</h2>
+      <h2>✨ v${APP_SUITE_VERSION} ${BRAND_DOMAIN} • Cloud Firestore &amp; Enterprise Suite</h2>
       <ol class="step-list">
         <li><b>Customer App:</b> Clean Booking Flow, Address Autocomplete, Saved Address Labels, Phonebook Picker, Proximity Arrival OTP, Post-Delivery Rating/Tip &amp; Optional B2B Dukaan Monthly Postpaid / Bulk Dispatch (only visible when enabled by Admin).</li>
         <li><b>Rider Partner App:</b> 30s Ringing Offer Countdown with Distance &amp; ₹/km Payout, Rejection Reason Tracking &amp; Auto Re-Search, Reached Pickup Gate Check-In, Unreachable Call Logger &amp; Complete Earnings / TDS Breakdown.</li>
@@ -966,7 +1016,7 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
       window.addEventListener('DOMContentLoaded', () => {
         onDirectApkClick(AUTO_DOWNLOAD_FILE);
         setTimeout(() => {
-          window.location.href = '/dl/' + AUTO_DOWNLOAD_FILE;
+          window.location.href = '/dl/' + AUTO_DOWNLOAD_FILE + '?v=' + ${JSON.stringify(autoTag)};
         }, 150);
       });
     }
@@ -1122,7 +1172,7 @@ function renderFirebaseHostingHomeHtml() {
       <p>Fast door-to-door local parcel delivery, OTP &amp; digital-signature handover, transparent upfront pricing, and live GPS partner tracking.</p>
     </div>
     <div class="card">
-      <h2>Quick Delivery Mobile Suite (v6.3.1)</h2>
+      <h2>Quick Delivery Mobile Suite (v${APP_SUITE_VERSION})</h2>
       <p><b>Customer App:</b> Instant booking, saved address labels, live GPS tracking, UPI/COD checkout &amp; GST receipts.</p>
       <p><b>Partner Quick Delivery:</b> 80% base fare + 100% customer tips, same-day payouts, pickup/drop camera proof &amp; smart shift controls.</p>
       <p><b>Quick Delivery Admin:</b> Cloud Firestore real-time fleet console, B2B/Enterprise switches &amp; settlement ledger.</p>
@@ -1157,11 +1207,9 @@ function configureNginxDirectApkServing() {
         const dest = path.join(apkDir, fileName);
         if (isValidStandaloneApk(pubApk)) {
           try {
-            const srcStat = fs.statSync(pubApk);
             let needsCopy = true;
             if (isValidStandaloneApk(dest)) {
-              const destStat = fs.statSync(dest);
-              if (destStat.size === srcStat.size) {
+              if (getFileSha256Short(pubApk) === getFileSha256Short(dest)) {
                 needsCopy = false;
               }
             }
@@ -1215,8 +1263,8 @@ function configureNginxDirectApkServing() {
             alias /var/www/assets/apks/QuickDelivery-Customer.apk;
             types { }
             default_type application/vnd.android.package-archive;
-            add_header Content-Disposition 'attachment; filename="QuickDelivery-Customer.apk"';
-            add_header Cache-Control "no-cache";
+            add_header Content-Disposition 'attachment; filename="${getVersionedDownloadFileName('QuickDelivery-Customer.apk')}"';
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
@@ -1225,8 +1273,8 @@ function configureNginxDirectApkServing() {
             alias /var/www/assets/apks/QuickDelivery-Rider-Partner.apk;
             types { }
             default_type application/vnd.android.package-archive;
-            add_header Content-Disposition 'attachment; filename="QuickDelivery-Rider-Partner.apk"';
-            add_header Cache-Control "no-cache";
+            add_header Content-Disposition 'attachment; filename="${getVersionedDownloadFileName('QuickDelivery-Rider-Partner.apk')}"';
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
@@ -1235,8 +1283,8 @@ function configureNginxDirectApkServing() {
             alias /var/www/assets/apks/QuickDelivery-Admin-Enterprise.apk;
             types { }
             default_type application/vnd.android.package-archive;
-            add_header Content-Disposition 'attachment; filename="QuickDelivery-Admin-Enterprise.apk"';
-            add_header Cache-Control "no-cache";
+            add_header Content-Disposition 'attachment; filename="${getVersionedDownloadFileName('QuickDelivery-Admin-Enterprise.apk')}"';
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
@@ -1282,7 +1330,7 @@ function configureNginxDirectApkServing() {
             types { }
             default_type application/vnd.android.package-archive;
             add_header Content-Disposition "attachment";
-            add_header Cache-Control "no-cache";
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
@@ -1954,7 +2002,7 @@ const server = http.createServer((req, res) => {
     const snapshot = JSON.stringify(
       {
         exportedAtIso: new Date().toISOString(),
-        version: '6.3.1',
+        version: APP_SUITE_VERSION,
         ...syncState,
       },
       null,
@@ -2027,11 +2075,12 @@ const server = http.createServer((req, res) => {
         };
         saveSyncState();
 
-        const smtpUser = process.env.SUPPORT_SMTP_USER || '';
-        const smtpPass = process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS || '';
-        const smtpHost = process.env.SUPPORT_SMTP_HOST || 'smtp.gmail.com';
-        const smtpPort = Number(process.env.SUPPORT_SMTP_PORT || 465);
-        const webhookUrl = process.env.SUPPORT_EMAIL_WEBHOOK_URL || '';
+        const smtpUser = String(process.env.SUPPORT_SMTP_USER || '').trim();
+        const rawSmtpPass = String(process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS || '').trim();
+        const smtpHost = String(process.env.SUPPORT_SMTP_HOST || 'smtp.gmail.com').trim();
+        const smtpPass = smtpHost.includes('gmail.com') ? rawSmtpPass.replace(/\s+/g, '') : rawSmtpPass;
+        const smtpPort = Number(String(process.env.SUPPORT_SMTP_PORT || '465').trim()) || 465;
+        const webhookUrl = String(process.env.SUPPORT_EMAIL_WEBHOOK_URL || '').trim();
         const roleLabel = role === 'RIDER' ? 'Rider Partner' : 'Customer';
         const subject = `${otpCode} is your Quick Delivery ${roleLabel} verification code`;
         const textBody = [
@@ -2289,14 +2338,30 @@ const server = http.createServer((req, res) => {
     const syncPayload = buildSyncResponsePayload();
     const rolesConnected = Array.from(new Set(syncPayload.connectedDevices.map(d => d.role)));
     const activeSearchingOrders = syncPayload.orders.filter(o => o && o.orderStatus === 'SEARCHING_RIDER').length;
+    const apkBuilds = Object.fromEntries(
+      APK_FILE_NAMES.map(name => {
+        const p = resolveSourceApkPath(name);
+        return [
+          name,
+          p
+            ? {
+                sizeBytes: fs.statSync(p).size,
+                sha256Short: getFileSha256Short(p),
+                mtimeIso: fs.statSync(p).mtime.toISOString(),
+              }
+            : null,
+        ];
+      })
+    );
     const healthJson = JSON.stringify(
       {
         ok: true,
         service: 'QuickDelivery Live Dispatch & APK Server',
-        version: '6.3.1',
+        version: APP_SUITE_VERSION,
         domain: BRAND_DOMAIN,
         targetSupportEmail: process.env.SUPPORT_TO_EMAIL || BRAND_SUPPORT_EMAIL,
         serverTimeIso: new Date().toISOString(),
+        apkBuilds,
         connectedDevicesCount: syncPayload.connectedDevices.length,
         connectedRoles: rolesConnected,
         connectedDevices: syncPayload.connectedDevices,
@@ -2350,6 +2415,7 @@ const server = http.createServer((req, res) => {
     if (apkFilePath && fs.existsSync(apkFilePath)) {
       const stat = fs.statSync(apkFilePath);
       const total = stat.size;
+      const downloadFileName = getVersionedDownloadFileName(finalFileName);
       const range = req.headers.range;
 
       if (range) {
@@ -2362,8 +2428,8 @@ const server = http.createServer((req, res) => {
             'Accept-Ranges': 'bytes',
             'Content-Length': String(end - start + 1),
             'Content-Type': 'application/vnd.android.package-archive',
-            'Content-Disposition': `attachment; filename="${finalFileName}"`,
-            'Cache-Control': 'public, max-age=86400',
+            'Content-Disposition': `attachment; filename="${downloadFileName}"`,
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
             'Access-Control-Allow-Origin': '*',
           });
           if (req.method === 'HEAD') {
@@ -2377,10 +2443,10 @@ const server = http.createServer((req, res) => {
 
       res.writeHead(200, {
         'Content-Type': 'application/vnd.android.package-archive',
-        'Content-Disposition': `attachment; filename="${finalFileName}"`,
+        'Content-Disposition': `attachment; filename="${downloadFileName}"`,
         'Content-Length': String(total),
         'Accept-Ranges': 'bytes',
-        'Cache-Control': 'public, max-age=86400',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
         'Access-Control-Allow-Origin': '*',
       });
       if (req.method === 'HEAD') {
