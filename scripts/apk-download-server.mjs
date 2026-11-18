@@ -676,8 +676,11 @@ async function sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subjec
     throw new Error(`Webhook HTTP ${resp.status}: ${bodyText.slice(0, 120)}`);
   }
   const trimmed = bodyText.trim();
-  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.includes('accounts.google.com')) {
-    throw new Error("Google Apps Script Web App access must be set to 'Anyone' (got HTML login redirect).");
+  if (/^(<!doctype|<html|<head|<body)/i.test(trimmed) || trimmed.includes('accounts.google.com')) {
+    throw new Error("Google Apps Script Web App access must be set to 'Anyone' (got HTML response instead of JSON).");
+  }
+  if (webhookUrl.includes('script.google.com') && !trimmed.startsWith('{')) {
+    throw new Error(`Unexpected Apps Script response: ${trimmed.slice(0, 140)}`);
   }
   if (trimmed.startsWith('{')) {
     try {
@@ -685,15 +688,18 @@ async function sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subjec
       if (parsed && parsed.ok === false) {
         throw new Error(parsed.error || 'Webhook returned ok=false');
       }
+      if (webhookUrl.includes('script.google.com') && parsed.ok !== true) {
+        throw new Error(`Apps Script did not return ok=true: ${trimmed.slice(0, 140)}`);
+      }
     } catch (e) {
       if (e instanceof SyntaxError) {
-        // Non-JSON 200 text response
+        throw new Error(`Malformed webhook JSON: ${trimmed.slice(0, 140)}`);
       } else {
         throw e;
       }
     }
   }
-  return true;
+  return trimmed.slice(0, 140) || 'OK';
 }
 
 async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '', type = 'GENERAL', extra = {} }) {
@@ -708,8 +714,8 @@ async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '
   // Prefer HTTPS Webhook (port 443) first when configured (avoids cloud SMTP port blocks)
   if (webhookUrl) {
     try {
-      await sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subject, textBody, htmlBody, type, extra });
-      lastEmailDiagnostics = { channel: 'WEBHOOK', status: 'OK', error: null, updatedAtIso: new Date().toISOString() };
+      const responsePreview = await sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subject, textBody, htmlBody, type, extra });
+      lastEmailDiagnostics = { channel: 'WEBHOOK', status: 'OK', responsePreview, error: null, updatedAtIso: new Date().toISOString() };
       return { deliveryChannel: 'WEBHOOK', fromEmail };
     } catch (whErr) {
       const whMsg = formatNodeError(whErr);
