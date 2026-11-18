@@ -702,7 +702,61 @@ async function sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subjec
   return trimmed.slice(0, 140) || 'OK';
 }
 
+async function sendEmailViaBrevoApi({ apiKey, fromEmail, fromName = 'Quick Delivery', toEmail, subject, textBody, htmlBody }) {
+  const payload = {
+    sender: { name: fromName, email: fromEmail },
+    to: [{ email: toEmail }],
+    replyTo: { email: fromEmail, name: fromName },
+    subject,
+    textContent: textBody,
+    ...(htmlBody ? { htmlContent: htmlBody } : {}),
+  };
+  const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': apiKey,
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15000),
+  });
+  const bodyText = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Brevo API HTTP ${resp.status}: ${bodyText.slice(0, 220)}`);
+  }
+  return bodyText.trim().slice(0, 140) || 'OK';
+}
+
+async function sendEmailViaResendApi({ apiKey, fromEmail, fromName = 'Quick Delivery', toEmail, subject, textBody, htmlBody }) {
+  const payload = {
+    from: `${fromName} <${fromEmail}>`,
+    to: [toEmail],
+    reply_to: fromEmail,
+    subject,
+    text: textBody,
+    ...(htmlBody ? { html: htmlBody } : {}),
+  };
+  const resp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15000),
+  });
+  const bodyText = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Resend API HTTP ${resp.status}: ${bodyText.slice(0, 220)}`);
+  }
+  return bodyText.trim().slice(0, 140) || 'OK';
+}
+
 async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '', type = 'GENERAL', extra = {} }) {
+  const resendApiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const brevoApiKey = String(process.env.BREVO_API_KEY || '').trim();
   const smtpUser = String(process.env.SUPPORT_SMTP_USER || '').trim();
   const rawSmtpPass = String(process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS || '').trim();
   const smtpHost = String(process.env.SUPPORT_SMTP_HOST || 'smtp.gmail.com').trim();
@@ -710,8 +764,51 @@ async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '
   const smtpPort = Number(String(process.env.SUPPORT_SMTP_PORT || '465').trim()) || 465;
   const webhookUrl = String(process.env.SUPPORT_EMAIL_WEBHOOK_URL || '').trim();
   const fromEmail = OTP_FROM_EMAIL;
+  const fromName = String(process.env.OTP_FROM_NAME || 'Quick Delivery').trim() || 'Quick Delivery';
 
-  // Prefer HTTPS Webhook (port 443) first when configured (avoids cloud SMTP port blocks)
+  // 1. Authoritative Production Transactional Email API: Brevo (300/day free, HTTPS port 443)
+  if (brevoApiKey) {
+    try {
+      const responsePreview = await sendEmailViaBrevoApi({
+        apiKey: brevoApiKey,
+        fromEmail,
+        fromName,
+        toEmail,
+        subject,
+        textBody,
+        htmlBody,
+      });
+      lastEmailDiagnostics = { channel: 'BREVO_API', status: 'OK', responsePreview, error: null, updatedAtIso: new Date().toISOString() };
+      return { deliveryChannel: 'BREVO_API', fromEmail };
+    } catch (brevoErr) {
+      const msg = formatNodeError(brevoErr);
+      lastEmailDiagnostics = { channel: 'BREVO_API', status: 'ERROR', error: msg, updatedAtIso: new Date().toISOString() };
+      throw new Error(`Brevo email send failed: ${msg}`);
+    }
+  }
+
+  // 2. Authoritative Production Transactional Email API: Resend (HTTPS port 443)
+  if (resendApiKey) {
+    try {
+      const responsePreview = await sendEmailViaResendApi({
+        apiKey: resendApiKey,
+        fromEmail,
+        fromName,
+        toEmail,
+        subject,
+        textBody,
+        htmlBody,
+      });
+      lastEmailDiagnostics = { channel: 'RESEND_API', status: 'OK', responsePreview, error: null, updatedAtIso: new Date().toISOString() };
+      return { deliveryChannel: 'RESEND_API', fromEmail };
+    } catch (resendErr) {
+      const msg = formatNodeError(resendErr);
+      lastEmailDiagnostics = { channel: 'RESEND_API', status: 'ERROR', error: msg, updatedAtIso: new Date().toISOString() };
+      throw new Error(`Resend email send failed: ${msg}`);
+    }
+  }
+
+  // 3. Fallback: HTTPS Webhook (Google Apps Script, port 443)
   if (webhookUrl) {
     try {
       const responsePreview = await sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subject, textBody, htmlBody, type, extra });
@@ -2456,12 +2553,29 @@ const server = http.createServer((req, res) => {
 
   if (pathname === '/api/support-email-status') {
     const dispatches = Object.values(syncState.emailedTicketIds || {});
+    const brevoConfigured = Boolean(process.env.BREVO_API_KEY);
+    const resendConfigured = Boolean(process.env.RESEND_API_KEY);
+    const webhookConfigured = Boolean(process.env.SUPPORT_EMAIL_WEBHOOK_URL);
+    const smtpConfigured = Boolean(process.env.SUPPORT_SMTP_USER && (process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS));
+    const activeProvider = brevoConfigured
+      ? 'BREVO_API'
+      : resendConfigured
+      ? 'RESEND_API'
+      : webhookConfigured
+      ? 'WEBHOOK'
+      : smtpConfigured
+      ? 'SMTP'
+      : 'NONE';
     const statusPayload = JSON.stringify(
       {
         ok: true,
         targetEmail: process.env.SUPPORT_TO_EMAIL || BRAND_SUPPORT_EMAIL,
-        smtpConfigured: Boolean(process.env.SUPPORT_SMTP_USER && (process.env.SUPPORT_SMTP_APP_PASSWORD || process.env.SUPPORT_SMTP_PASS)),
-        webhookConfigured: Boolean(process.env.SUPPORT_EMAIL_WEBHOOK_URL),
+        fromEmail: OTP_FROM_EMAIL,
+        activeProvider,
+        brevoConfigured,
+        resendConfigured,
+        smtpConfigured,
+        webhookConfigured,
         lastEmailDiagnostics,
         totalTickets: Object.keys(syncState.supportTicketsById || {}).length,
         emailedTickets: dispatches.length,
