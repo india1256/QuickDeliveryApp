@@ -174,6 +174,14 @@ fun AdminRemoteFeatureSwitchesCard(
                 }
             }
 
+            // 0. Master Sync, Business KPIs, App Updates, Live Rate Card, Future Switches & Fraud Blocklist
+            AdminMasterSyncAndAppUpdateCard(
+                repository = repository,
+                onFeedback = { note -> feedbackNote = note }
+            )
+
+            HorizontalDivider()
+
             // 1. Scheduled Delivery
             FeatureToggleRow(
                 title = "Scheduled Delivery (Later Date & Slot)",

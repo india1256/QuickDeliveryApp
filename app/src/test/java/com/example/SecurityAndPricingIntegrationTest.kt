@@ -14,6 +14,7 @@ import com.example.data.model.VehicleType
 import com.example.data.model.WalletAccountRole
 import com.example.data.repository.SharedOrderRepository
 import com.example.security.RiderBatteryPowerMonitor
+import com.example.ui.auth.findActivity
 import com.example.ui.wallet.WalletViewModel
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -392,6 +393,98 @@ class SecurityAndPricingIntegrationTest {
 
         com.example.security.AdminCredentialsManager.clearForTesting(context)
     }
+
+    @Test
+    fun testAdminMasterSyncUpdateGateRateCardAndFraudBlocklist() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val flags = com.example.data.cloud.AdminRemoteFeatureFlags(
+            latestAppVersionName = "6.4.0",
+            latestAppVersionCode = 78,
+            forceUpdateRequired = true,
+            updateNotes = "Critical speed upgrade",
+            emergencyBookingsPaused = true,
+            operatingHoursEnabled = true,
+            operatingStartHour = 7,
+            operatingEndHour = 23,
+            nightSurchargeEnabled = true,
+            nightStartHour = 23,
+            nightEndHour = 6,
+            nightSurchargeMultiplier = 1.25,
+            remoteRateCardOverrideEnabled = true,
+            bikeEnabled = true,
+            scooterEnabled = false,
+            autoEnabled = true,
+            bikeBaseFareInr = 40.0,
+            bikeRatePerKmInr = 12.0,
+            smsOtpGatewayEnabled = true,
+            blockedCustomerPhonesCsv = "9876543210, +919988776655",
+            masterSyncRevision = 5
+        )
+
+        // 1. JSON round-trip preserves all Schema v4 controls
+        val roundTripped = com.example.data.cloud.AdminRemoteFeatureFlags.fromJson(flags.toJson())
+        assertEquals("6.4.0", roundTripped.latestAppVersionName)
+        assertEquals(78, roundTripped.latestAppVersionCode)
+        assertTrue(roundTripped.forceUpdateRequired)
+        assertTrue(roundTripped.emergencyBookingsPaused)
+        assertTrue(roundTripped.smsOtpGatewayEnabled)
+        assertEquals(5, roundTripped.masterSyncRevision)
+
+        // 2. App Update Gate (semver & versionCode)
+        assertTrue(roundTripped.isUpdateAvailableForApp("6.3.7", 77))
+        assertFalse(roundTripped.isUpdateAvailableForApp("6.4.0", 78))
+        assertFalse(roundTripped.isUpdateAvailableForApp("6.5.0", 80))
+
+        // 3. Operating Hours & Night Surcharge windows
+        assertTrue(roundTripped.isWithinOperatingHours(10))
+        assertFalse(roundTripped.isWithinOperatingHours(2))
+        assertTrue(roundTripped.isCurrentHourInNightWindow(23))
+        assertTrue(roundTripped.isCurrentHourInNightWindow(3))
+        assertFalse(roundTripped.isCurrentHourInNightWindow(14))
+
+        // 4. Fake Customer / COD Fraud Blocklist
+        assertTrue(roundTripped.isCustomerPhoneBlocked("9876543210"))
+        assertTrue(roundTripped.isCustomerPhoneBlocked("+91 99887 76655"))
+        assertFalse(roundTripped.isCustomerPhoneBlocked("9123456789"))
+
+        // 5. Live Rate Card & Vehicle Availability propagation
+        com.example.data.cloud.QuickDeliveryOperationsManager.applyPricingOverridesFromFlags(roundTripped, sharedRepo)
+        assertEquals(40.0, sharedRepo.pricingConfig.value.bikeBaseFare, 0.01)
+        assertEquals(12.0, sharedRepo.pricingConfig.value.bikeRatePerKm, 0.01)
+        assertFalse(com.example.data.delivery.AutomatedFairRiderAssignmentEngine.vehicleAndWeightPolicy.value.scooterEnabled)
+        assertTrue(com.example.data.delivery.AutomatedFairRiderAssignmentEngine.vehicleAndWeightPolicy.value.bikeEnabled)
+
+        // Restore defaults cleanly for subsequent tests
+        com.example.data.delivery.AutomatedFairRiderAssignmentEngine.resetPricingAndWeightPolicyToDefaults(sharedRepo)
+    }
+
+    @Test
+    fun testGoogleSignInActivityUnwrappingAndCleanAuthLabels() {
+        // 1. Nested ContextWrapper (like LocalizedActivityContextWrapper) must cleanly unwrap to the real Activity
+        val controller = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup()
+        val realActivity = controller.get()
+        val localizedWrapper = object : android.content.ContextWrapper(realActivity) {}
+        val doubleWrapped = android.content.ContextWrapper(localizedWrapper)
+
+        val unwrapped = doubleWrapped.findActivity()
+        assertEquals(realActivity, unwrapped)
+
+        // Application context (not an Activity) must safely return null instead of throwing ClassCastException
+        val appContext = ApplicationProvider.getApplicationContext<Context>()
+        assertEquals(null, appContext.findActivity())
+
+        // 2. Customer & Rider Sign-In labels must never contain the confusing word "Address"
+        val englishStrings = com.example.ui.i18n.DynamicUiStringsCatalog.forLanguage(com.example.ui.i18n.AppLanguage.ENGLISH)
+        assertEquals("Mobile Number or Email *", englishStrings.mobileOrEmailLabel)
+        assertFalse(englishStrings.mobileOrEmailLabel.contains("Address", ignoreCase = true))
+        assertFalse(englishStrings.emailAddressLabel.contains("Address", ignoreCase = true))
+
+        val hindiStrings = com.example.ui.i18n.DynamicUiStringsCatalog.forLanguage(com.example.ui.i18n.AppLanguage.HINDI)
+        assertEquals("मोबाइल नंबर या ईमेल *", hindiStrings.mobileOrEmailLabel)
+        assertFalse(hindiStrings.mobileOrEmailLabel.contains("पता"))
+        assertFalse(hindiStrings.emailAddressLabel.contains("पता"))
+    }
 }
+
 
 

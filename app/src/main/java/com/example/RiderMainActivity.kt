@@ -15,9 +15,11 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.Modifier
 import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.QuickDeliveryFirebaseInitializer
+import com.example.data.cloud.QuickDeliveryOperationsManager
 import com.example.security.AppPermissionManager
 import com.example.security.OrderAlertSoundManager
 import com.example.ui.auth.QuickDeliveryCloudSyncBar
+import com.example.ui.components.AppRemoteUpdateGateOverlay
 import com.example.ui.components.FcmOrderNotificationManager
 import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.LocalizedContextProvider
@@ -37,6 +39,7 @@ class RiderMainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AppPermissionManager.installCrashPreventionGuard()
         QuickDeliveryFirebaseInitializer.ensureInitialized(this)
+        QuickDeliveryOperationsManager.ensureLoaded(this)
         OrderAlertSoundManager.ensureChannels(this)
         AppPermissionManager.inspectPermissions(this)
         MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, "RIDER")
@@ -54,6 +57,11 @@ class RiderMainActivity : ComponentActivity() {
                             .windowInsetsPadding(WindowInsets.navigationBars)
                     ) {
                         RiderPartnerCompactScreen(modifier = Modifier.fillMaxSize())
+                        AppRemoteUpdateGateOverlay(
+                            appRole = "RIDER",
+                            currentVersionName = BuildConfig.VERSION_NAME,
+                            currentVersionCode = BuildConfig.VERSION_CODE
+                        )
                     }
                 }
             }

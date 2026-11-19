@@ -56,7 +56,36 @@ data class AdminRemoteFeatureFlags(
     val b2bBillingCycleDays: Int = 30,
     val razorpayRouteSplitEnabled: Boolean = false,
     val autoKycApiEnabled: Boolean = false,
-    val flagsSchemaVersion: Int = 3,
+    // Schema v4 — 1-Click App Update, Master Sync, Live Rate Card, Future Switches & Fraud Blocklist
+    val latestAppVersionName: String = "",
+    val latestAppVersionCode: Int = 0,
+    val forceUpdateRequired: Boolean = false,
+    val updateNotes: String = "",
+    val customerUpdateUrl: String = QuickDeliveryBrandLinks.CUSTOMER_APK_URL,
+    val riderUpdateUrl: String = QuickDeliveryBrandLinks.RIDER_APK_URL,
+    val emergencyBookingsPaused: Boolean = false,
+    val emergencyPauseReason: String = "New bookings are temporarily paused by Operations. Please try again shortly.",
+    val operatingHoursEnabled: Boolean = false,
+    val operatingStartHour: Int = 7,
+    val operatingEndHour: Int = 23,
+    val nightSurchargeEnabled: Boolean = false,
+    val nightStartHour: Int = 23,
+    val nightEndHour: Int = 6,
+    val nightSurchargeMultiplier: Double = 1.20,
+    val remoteRateCardOverrideEnabled: Boolean = false,
+    val bikeEnabled: Boolean = true,
+    val scooterEnabled: Boolean = true,
+    val autoEnabled: Boolean = true,
+    val bikeBaseFareInr: Double = 35.0,
+    val bikeRatePerKmInr: Double = 10.0,
+    val scooterBaseFareInr: Double = 45.0,
+    val scooterRatePerKmInr: Double = 12.0,
+    val autoBaseFareInr: Double = 85.0,
+    val autoRatePerKmInr: Double = 18.0,
+    val smsOtpGatewayEnabled: Boolean = false,
+    val blockedCustomerPhonesCsv: String = "",
+    val masterSyncRevision: Int = 1,
+    val flagsSchemaVersion: Int = 4,
     val updatedAtEpochMs: Long = 0L
 ) {
     val riderSharePercent: Int
@@ -75,10 +104,77 @@ data class AdminRemoteFeatureFlags(
         }
     }
 
+    fun isCurrentHourInNightWindow(
+        hourOfDay24: Int = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    ): Boolean {
+        if (!nightSurchargeEnabled) return false
+        val startH = nightStartHour.coerceIn(0, 23)
+        val endH = nightEndHour.coerceIn(0, 23)
+        return if (startH > endH) {
+            hourOfDay24 >= startH || hourOfDay24 < endH
+        } else {
+            hourOfDay24 in startH until endH
+        }
+    }
+
+    fun isWithinOperatingHours(
+        hourOfDay24: Int = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    ): Boolean {
+        if (!operatingHoursEnabled) return true
+        val startH = operatingStartHour.coerceIn(0, 23)
+        val endH = operatingEndHour.coerceIn(1, 24)
+        return if (startH < endH) {
+            hourOfDay24 in startH until endH
+        } else {
+            hourOfDay24 >= startH || hourOfDay24 < endH
+        }
+    }
+
+    fun operatingHoursLabel(): String {
+        fun fmt(h: Int): String {
+            val normalized = ((h % 24) + 24) % 24
+            return when {
+                normalized == 0 -> "12 AM"
+                normalized < 12 -> "$normalized AM"
+                normalized == 12 -> "12 PM"
+                else -> "${normalized - 12} PM"
+            }
+        }
+        return "${fmt(operatingStartHour)} – ${fmt(operatingEndHour)}"
+    }
+
+    fun isVehicleEnabled(vehicle: com.example.data.model.VehicleType): Boolean = when (vehicle) {
+        com.example.data.model.VehicleType.BIKE -> bikeEnabled
+        com.example.data.model.VehicleType.SCOOTER -> scooterEnabled
+        com.example.data.model.VehicleType.AUTO -> autoEnabled
+        else -> true
+    }
+
+    fun getBlockedCustomerPhonesList(): List<String> = blockedCustomerPhonesCsv
+        .split(',', ' ', '\n', ';')
+        .map { it.filter(Char::isDigit).takeLast(10) }
+        .filter { it.length == 10 }
+        .distinct()
+
+    fun isCustomerPhoneBlocked(phone: String): Boolean {
+        val clean = phone.filter(Char::isDigit).takeLast(10)
+        if (clean.length != 10) return false
+        return clean in getBlockedCustomerPhonesList()
+    }
+
+    fun isUpdateAvailableForApp(currentVersionName: String, currentVersionCode: Int): Boolean {
+        if (latestAppVersionCode > 0 && latestAppVersionCode > currentVersionCode) return true
+        val target = latestAppVersionName.trim().removePrefix("v").removePrefix("V")
+        if (target.isBlank()) return false
+        val current = currentVersionName.trim().removePrefix("v").removePrefix("V")
+        return compareSemver(target, current) > 0
+    }
+
     fun effectiveSurgeMultiplier(): Double {
         val manual = if (surgePricingEnabled) surgeMultiplier.coerceIn(1.0, 3.0) else 1.0
         val peak = if (isCurrentHourInPeakWindow()) peakSurgeMultiplier.coerceIn(1.0, 3.0) else 1.0
-        return maxOf(manual, peak)
+        val night = if (isCurrentHourInNightWindow()) nightSurchargeMultiplier.coerceIn(1.0, 3.0) else 1.0
+        return maxOf(manual, peak, night)
     }
 
     fun isPinCodeAllowed(pinCode: String): Boolean {
@@ -133,17 +229,61 @@ data class AdminRemoteFeatureFlags(
         put("b2bBillingCycleDays", b2bBillingCycleDays)
         put("razorpayRouteSplitEnabled", razorpayRouteSplitEnabled)
         put("autoKycApiEnabled", autoKycApiEnabled)
+        put("latestAppVersionName", latestAppVersionName)
+        put("latestAppVersionCode", latestAppVersionCode)
+        put("forceUpdateRequired", forceUpdateRequired)
+        put("updateNotes", updateNotes)
+        put("customerUpdateUrl", customerUpdateUrl)
+        put("riderUpdateUrl", riderUpdateUrl)
+        put("emergencyBookingsPaused", emergencyBookingsPaused)
+        put("emergencyPauseReason", emergencyPauseReason)
+        put("operatingHoursEnabled", operatingHoursEnabled)
+        put("operatingStartHour", operatingStartHour)
+        put("operatingEndHour", operatingEndHour)
+        put("nightSurchargeEnabled", nightSurchargeEnabled)
+        put("nightStartHour", nightStartHour)
+        put("nightEndHour", nightEndHour)
+        put("nightSurchargeMultiplier", nightSurchargeMultiplier)
+        put("remoteRateCardOverrideEnabled", remoteRateCardOverrideEnabled)
+        put("bikeEnabled", bikeEnabled)
+        put("scooterEnabled", scooterEnabled)
+        put("autoEnabled", autoEnabled)
+        put("bikeBaseFareInr", bikeBaseFareInr)
+        put("bikeRatePerKmInr", bikeRatePerKmInr)
+        put("scooterBaseFareInr", scooterBaseFareInr)
+        put("scooterRatePerKmInr", scooterRatePerKmInr)
+        put("autoBaseFareInr", autoBaseFareInr)
+        put("autoRatePerKmInr", autoRatePerKmInr)
+        put("smsOtpGatewayEnabled", smsOtpGatewayEnabled)
+        put("blockedCustomerPhonesCsv", blockedCustomerPhonesCsv)
+        put("masterSyncRevision", masterSyncRevision)
         put("flagsSchemaVersion", flagsSchemaVersion)
         put("updatedAtEpochMs", updatedAtEpochMs)
     }
 
     companion object {
-        const val CURRENT_FLAGS_SCHEMA_VERSION = 3
+        const val CURRENT_FLAGS_SCHEMA_VERSION = 4
+
+        fun compareSemver(a: String, b: String): Int {
+            val pa = a.split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
+            val pb = b.split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
+            val maxLen = maxOf(pa.size, pb.size)
+            for (i in 0 until maxLen) {
+                val va = pa.getOrElse(i) { 0 }
+                val vb = pb.getOrElse(i) { 0 }
+                if (va != vb) return va.compareTo(vb)
+            }
+            return 0
+        }
 
         fun fromJson(obj: JSONObject): AdminRemoteFeatureFlags {
             val schemaVer = obj.optInt("flagsSchemaVersion", 1)
             val isLegacyV1Schema = schemaVer < 2
             val isLegacyV2Schema = schemaVer < 3
+            val bikeOn = obj.optBoolean("bikeEnabled", true)
+            val scooterOn = obj.optBoolean("scooterEnabled", true)
+            val autoOn = obj.optBoolean("autoEnabled", true)
+            val safeBikeOn = if (!bikeOn && !scooterOn && !autoOn) true else bikeOn
             return AdminRemoteFeatureFlags(
                 scheduledDeliveryEnabled = if (isLegacyV1Schema) true else obj.optBoolean("scheduledDeliveryEnabled", true),
                 multiDropEnabled = if (isLegacyV1Schema) true else obj.optBoolean("multiDropEnabled", true),
@@ -184,6 +324,39 @@ data class AdminRemoteFeatureFlags(
                 b2bBillingCycleDays = obj.optInt("b2bBillingCycleDays", 30).coerceIn(7, 45),
                 razorpayRouteSplitEnabled = if (isLegacyV2Schema) false else obj.optBoolean("razorpayRouteSplitEnabled", false),
                 autoKycApiEnabled = if (isLegacyV2Schema) false else obj.optBoolean("autoKycApiEnabled", false),
+                latestAppVersionName = obj.optString("latestAppVersionName", "").trim().take(24),
+                latestAppVersionCode = obj.optInt("latestAppVersionCode", 0).coerceAtLeast(0),
+                forceUpdateRequired = obj.optBoolean("forceUpdateRequired", false),
+                updateNotes = obj.optString("updateNotes", "").trim().take(240),
+                customerUpdateUrl = obj.optString("customerUpdateUrl", QuickDeliveryBrandLinks.CUSTOMER_APK_URL)
+                    .trim().ifBlank { QuickDeliveryBrandLinks.CUSTOMER_APK_URL },
+                riderUpdateUrl = obj.optString("riderUpdateUrl", QuickDeliveryBrandLinks.RIDER_APK_URL)
+                    .trim().ifBlank { QuickDeliveryBrandLinks.RIDER_APK_URL },
+                emergencyBookingsPaused = obj.optBoolean("emergencyBookingsPaused", false),
+                emergencyPauseReason = obj.optString(
+                    "emergencyPauseReason",
+                    "New bookings are temporarily paused by Operations. Please try again shortly."
+                ).trim(),
+                operatingHoursEnabled = obj.optBoolean("operatingHoursEnabled", false),
+                operatingStartHour = obj.optInt("operatingStartHour", 7).coerceIn(0, 23),
+                operatingEndHour = obj.optInt("operatingEndHour", 23).coerceIn(1, 24),
+                nightSurchargeEnabled = obj.optBoolean("nightSurchargeEnabled", false),
+                nightStartHour = obj.optInt("nightStartHour", 23).coerceIn(0, 23),
+                nightEndHour = obj.optInt("nightEndHour", 6).coerceIn(0, 23),
+                nightSurchargeMultiplier = obj.optDouble("nightSurchargeMultiplier", 1.20).coerceIn(1.0, 2.5),
+                remoteRateCardOverrideEnabled = obj.optBoolean("remoteRateCardOverrideEnabled", false),
+                bikeEnabled = safeBikeOn,
+                scooterEnabled = scooterOn,
+                autoEnabled = autoOn,
+                bikeBaseFareInr = obj.optDouble("bikeBaseFareInr", 35.0).coerceIn(10.0, 2000.0),
+                bikeRatePerKmInr = obj.optDouble("bikeRatePerKmInr", 10.0).coerceIn(2.0, 500.0),
+                scooterBaseFareInr = obj.optDouble("scooterBaseFareInr", 45.0).coerceIn(10.0, 2000.0),
+                scooterRatePerKmInr = obj.optDouble("scooterRatePerKmInr", 12.0).coerceIn(2.0, 500.0),
+                autoBaseFareInr = obj.optDouble("autoBaseFareInr", 85.0).coerceIn(15.0, 3000.0),
+                autoRatePerKmInr = obj.optDouble("autoRatePerKmInr", 18.0).coerceIn(3.0, 600.0),
+                smsOtpGatewayEnabled = obj.optBoolean("smsOtpGatewayEnabled", false),
+                blockedCustomerPhonesCsv = obj.optString("blockedCustomerPhonesCsv", "").trim(),
+                masterSyncRevision = obj.optInt("masterSyncRevision", 1).coerceAtLeast(1),
                 flagsSchemaVersion = CURRENT_FLAGS_SCHEMA_VERSION,
                 updatedAtEpochMs = obj.optLong("updatedAtEpochMs", 0L)
             )

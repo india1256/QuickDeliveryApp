@@ -115,6 +115,8 @@ object QuickDeliveryFirebaseInitializer {
         return runCatching {
             FirebaseApp.initializeApp(appContext) ?: run {
                 val apiKeyId = appContext.resources.getIdentifier("google_api_key", "string", appContext.packageName)
+                    .takeIf { it != 0 }
+                    ?: appContext.resources.getIdentifier("google_api_key", "string", "com.example")
                 val apiKey = if (apiKeyId != 0) appContext.getString(apiKeyId) else ""
                 if (apiKey.isNotBlank()) {
                     val options = FirebaseOptions.Builder()
@@ -134,6 +136,8 @@ object QuickDeliveryFirebaseInitializer {
 
     fun resolveWebClientId(context: Context): String {
         val defaultId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+            .takeIf { it != 0 }
+            ?: context.resources.getIdentifier("default_web_client_id", "string", "com.example")
         if (defaultId != 0) {
             return context.getString(defaultId)
         }

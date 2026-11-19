@@ -120,6 +120,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.data.model.CustomerOrder
@@ -1347,7 +1348,13 @@ fun QuickDeliveryUserAuthScreen(
                             signupPhoneOverLimit = parsed.overLimitAttempted
                             if (errorMessage != null) errorMessage = null
                         },
-                        label = { Text(uiStrings.mobileNumberLabel) },
+                        label = {
+                            Text(
+                                text = uiStrings.mobileNumberLabel,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
                         placeholder = { Text("10-digit mobile number") },
                         leadingIcon = { IndianPhonePrefixBadge(accentColor = accentColor) },
                         trailingIcon = {
@@ -1387,7 +1394,13 @@ fun QuickDeliveryUserAuthScreen(
                             }
                             if (errorMessage != null) errorMessage = null
                         },
-                        label = { Text(uiStrings.emailAddressLabel) },
+                        label = {
+                            Text(
+                                text = uiStrings.emailAddressLabel,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
                         placeholder = { Text("name@example.com") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
@@ -1397,10 +1410,12 @@ fun QuickDeliveryUserAuthScreen(
                             .testTag("${prefsKeyPrefix}_signup_email_input")
                     )
                 } else {
-                    // EXISTING USER SIGN IN: 10-Digit Mobile Number (+91) OR Email Address
-                    val isSignInPhoneMode = !existingMobileOrEmail.contains("@") &&
-                        !existingMobileOrEmail.any(Char::isLetter)
+                    // EXISTING USER SIGN IN: 10-Digit Mobile Number (+91) OR Email ID
+                    val isSignInEmailMode = existingMobileOrEmail.contains("@") ||
+                        existingMobileOrEmail.any(Char::isLetter)
+                    val isSignInPhoneMode = !isSignInEmailMode
                     val signInDigits = existingMobileOrEmail.filter(Char::isDigit)
+                    val showIndianPrefixBadge = isSignInPhoneMode && signInDigits.isNotEmpty()
                     val signInPhoneError = if (isSignInPhoneMode) {
                         when {
                             signinPhoneOverLimit -> "Only 10 digits allowed (cannot exceed 10 digits)"
@@ -1431,13 +1446,25 @@ fun QuickDeliveryUserAuthScreen(
                             }
                             if (errorMessage != null) errorMessage = null
                         },
-                        label = { Text(uiStrings.mobileOrEmailLabel) },
-                        placeholder = { Text("10-digit mobile or email") },
+                        label = {
+                            Text(
+                                text = uiStrings.mobileOrEmailLabel,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        placeholder = {
+                            Text(
+                                text = uiStrings.mobileOrEmailPlaceholder,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
                         leadingIcon = {
-                            if (isSignInPhoneMode) {
-                                IndianPhonePrefixBadge(accentColor = accentColor)
-                            } else {
-                                Icon(Icons.Default.Email, contentDescription = null)
+                            when {
+                                showIndianPrefixBadge -> IndianPhonePrefixBadge(accentColor = accentColor)
+                                isSignInEmailMode -> Icon(Icons.Default.Email, contentDescription = null, tint = accentColor)
+                                else -> Icon(Icons.Default.Person, contentDescription = null, tint = accentColor)
                             }
                         },
                         trailingIcon = {

@@ -1069,10 +1069,17 @@ object QuickDeliveryOperationsManager {
             val effectiveComm = flags.platformCommissionPercent.toDouble().coerceIn(0.0, 40.0)
             val surgeLabel = when {
                 flags.surgePricingEnabled -> "Admin Surge ${String.format(Locale.US, "%.2fx", effectiveSurge)}"
+                flags.isCurrentHourInNightWindow() -> "Night Surcharge ${String.format(Locale.US, "%.2fx", effectiveSurge)}"
                 flags.isCurrentHourInPeakWindow() -> "Peak Auto-Surge ${String.format(Locale.US, "%.2fx", effectiveSurge)}"
                 else -> "Normal (1.0x)"
             }
             val nextPricing = currentPricing.copy(
+                bikeBaseFare = if (flags.remoteRateCardOverrideEnabled) flags.bikeBaseFareInr else currentPricing.bikeBaseFare,
+                bikeRatePerKm = if (flags.remoteRateCardOverrideEnabled) flags.bikeRatePerKmInr else currentPricing.bikeRatePerKm,
+                scooterBaseFare = if (flags.remoteRateCardOverrideEnabled) flags.scooterBaseFareInr else currentPricing.scooterBaseFare,
+                scooterRatePerKm = if (flags.remoteRateCardOverrideEnabled) flags.scooterRatePerKmInr else currentPricing.scooterRatePerKm,
+                autoBaseFare = if (flags.remoteRateCardOverrideEnabled) flags.autoBaseFareInr else currentPricing.autoBaseFare,
+                autoRatePerKm = if (flags.remoteRateCardOverrideEnabled) flags.autoRatePerKmInr else currentPricing.autoRatePerKm,
                 surgeMultiplier = effectiveSurge,
                 surgePresetName = surgeLabel,
                 platformCommissionPercent = effectiveComm
@@ -1084,6 +1091,14 @@ object QuickDeliveryOperationsManager {
                 val flow = field.get(repository) as MutableStateFlow<com.example.data.model.PricingConfig>
                 flow.value = saved
             }
+            // Also sync vehicle availability flags to AutomatedFairRiderAssignmentEngine
+            com.example.data.delivery.AutomatedFairRiderAssignmentEngine.updateLivePricingAndWeightPolicyFromAdmin(
+                repository = repository,
+                bikeEnabled = flags.bikeEnabled,
+                scooterEnabled = flags.scooterEnabled,
+                autoEnabled = flags.autoEnabled,
+                updatedBy = "Admin Master Sync"
+            )
         }
     }
 

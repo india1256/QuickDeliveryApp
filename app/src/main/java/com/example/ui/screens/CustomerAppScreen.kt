@@ -809,6 +809,14 @@ fun CustomerAppScreen(
             selectedVehicle
         )
         when {
+            remoteFlags.emergencyBookingsPaused ->
+                remoteFlags.emergencyPauseReason.ifBlank { "New bookings are temporarily paused by Operations. Please try again shortly." }
+            remoteFlags.operatingHoursEnabled && !remoteFlags.isWithinOperatingHours() ->
+                "Service hours are ${remoteFlags.operatingHoursLabel()}. Please book during active working hours."
+            remoteFlags.isCustomerPhoneBlocked(customerPhone) || remoteFlags.isCustomerPhoneBlocked(receiverMobilePhone) ->
+                "This mobile number is currently restricted from placing orders. Contact support@quickdelivery.co.in."
+            !remoteFlags.isVehicleEnabled(selectedVehicle) ->
+                "${selectedVehicle.title} is temporarily unavailable. Please choose another vehicle."
             pickupHouseFlat.isBlank() -> "Pickup House / Flat No. (*) is mandatory"
             pickupBuilding.isBlank() -> "Pickup Building / Society (*) is mandatory"
             pickupAddressText.isBlank() -> "Pickup Area / Locality / Street (*) is mandatory"
@@ -2509,6 +2517,47 @@ fun CustomerAppScreen(
                 (remoteFlags.adminBroadcastTarget.startsWith("PIN:") &&
                     activeZonePin.isNotBlank() &&
                     remoteFlags.adminBroadcastTarget.removePrefix("PIN:").trim() == activeZonePin.trim())
+            if (remoteFlags.emergencyBookingsPaused ||
+                (remoteFlags.operatingHoursEnabled && !remoteFlags.isWithinOperatingHours())
+            ) {
+                item(key = "customer_service_pause_banner") {
+                    Surface(
+                        color = Color(0xFFFEF2F2),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_service_pause_banner")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = if (remoteFlags.emergencyBookingsPaused) {
+                                    "Service Temporarily Paused"
+                                } else {
+                                    "Outside Service Working Hours (${remoteFlags.operatingHoursLabel()})"
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF991B1B)
+                            )
+                            Text(
+                                text = if (remoteFlags.emergencyBookingsPaused) {
+                                    remoteFlags.emergencyPauseReason.ifBlank {
+                                        "New bookings are temporarily paused by Operations. Active deliveries continue normally."
+                                    }
+                                } else {
+                                    "Bookings reopen during ${remoteFlags.operatingHoursLabel()}. Thank you for your patience."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFB91C1C)
+                            )
+                        }
+                    }
+                }
+            }
             if (remoteFlags.maintenanceBannerEnabled ||
                 (remoteFlags.adminBroadcastMessage.isNotBlank() && broadcastTargetOk)
             ) {

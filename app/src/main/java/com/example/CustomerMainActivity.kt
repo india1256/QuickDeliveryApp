@@ -25,10 +25,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.QuickDeliveryFirebaseInitializer
+import com.example.data.cloud.QuickDeliveryOperationsManager
 import com.example.security.AppPermissionManager
 import com.example.security.OrderAlertSoundManager
 import com.example.ui.auth.QuickDeliveryCloudSyncBar
 import com.example.ui.auth.QuickDeliveryTopOptionsDialog
+import com.example.ui.components.AppRemoteUpdateGateOverlay
 import com.example.ui.components.FcmOrderNotificationManager
 import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.LocalizedContextProvider
@@ -48,6 +50,7 @@ class CustomerMainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AppPermissionManager.installCrashPreventionGuard()
         QuickDeliveryFirebaseInitializer.ensureInitialized(this)
+        QuickDeliveryOperationsManager.ensureLoaded(this)
         OrderAlertSoundManager.ensureChannels(this)
         OrderAlertSoundManager.stopOrderAlert()
         AppPermissionManager.inspectPermissions(this)
@@ -61,6 +64,11 @@ class CustomerMainActivity : ComponentActivity() {
                     QuickDeliveryCloudSyncBar(showCardUi = false)
                     Box(modifier = Modifier.fillMaxSize()) {
                         CustomerAppScreen()
+                        AppRemoteUpdateGateOverlay(
+                            appRole = "CUSTOMER",
+                            currentVersionName = BuildConfig.VERSION_NAME,
+                            currentVersionCode = BuildConfig.VERSION_CODE
+                        )
                     }
                 }
             }

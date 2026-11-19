@@ -3,6 +3,7 @@ package com.example.ui.auth
 import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -50,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,6 +60,8 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import com.example.data.cloud.CloudDeliveryOrder
 import com.example.data.cloud.CloudRiderWallet
 import com.example.data.cloud.DeliveryProofAndGpsManager
@@ -83,6 +87,19 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
+/**
+ * Safely unwraps localized/themed ContextWrapper chains (such as LocalizedActivityContextWrapper)
+ * to retrieve the underlying host Activity required by Jetpack Credential Manager.
+ */
+tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> {
+        val next = baseContext
+        if (next == null || next === this) null else next.findActivity()
+    }
+    else -> null
+}
+
 fun attemptAutoSignIn(
     context: Context,
     credentialManager: CredentialManager,
@@ -96,6 +113,11 @@ fun attemptAutoSignIn(
     }
     if (runCatching { Firebase.auth.currentUser }.getOrNull() != null) {
         onAuthSuccess()
+        return
+    }
+    val activity = context.findActivity()
+    if (activity == null) {
+        onUnauthenticated()
         return
     }
     val clientId = try {
@@ -115,7 +137,7 @@ fun attemptAutoSignIn(
 
     scope.launch {
         try {
-            val result = credentialManager.getCredential(context, request)
+            val result = credentialManager.getCredential(activity, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
@@ -139,15 +161,20 @@ fun GoogleSignInButton(
     enabled: Boolean = true
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val coroutineScope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val hostActivity = remember(context, view) {
+        context.findActivity() ?: view.context.findActivity()
+    }
+    val credentialContext = hostActivity ?: context
+    val credentialManager = remember(credentialContext) { CredentialManager.create(credentialContext) }
     var isLoading by remember { mutableStateOf(false) }
 
     Button(
         onClick = {
             isLoading = true
             onGoogleSignInClicked(
-                context = context,
+                context = credentialContext,
                 credentialManager = credentialManager,
                 onAuthSuccess = {
                     isLoading = false
@@ -187,14 +214,19 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
-    if (QuickDeliveryFirebaseInitializer.ensureInitialized(context) == null) {
-        onAuthError("Firebase is not initialized for this package (${context.packageName}).")
+    val activity = context.findActivity()
+    if (activity == null) {
+        onAuthError("Unable to open Google Sign-In on this screen. Please sign in with Mobile Number or Email above.")
+        return
+    }
+    if (QuickDeliveryFirebaseInitializer.ensureInitialized(activity) == null) {
+        onAuthError("Google Sign-In service is unavailable right now. Please sign in with Mobile Number or Email above.")
         return
     }
     val clientId = try {
-        QuickDeliveryFirebaseInitializer.resolveWebClientId(context)
+        QuickDeliveryFirebaseInitializer.resolveWebClientId(activity)
     } catch (e: Exception) {
-        onAuthError("Google Sign-In configuration missing: web client ID not found")
+        onAuthError("Google Sign-In is not configured on this build. Please sign in with Mobile Number or Email above.")
         return
     }
 
@@ -203,7 +235,7 @@ fun onGoogleSignInClicked(
 
     scope.launch {
         try {
-            val result = credentialManager.getCredential(context as Activity, request)
+            val result = credentialManager.getCredential(activity, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
@@ -211,14 +243,33 @@ fun onGoogleSignInClicked(
                 Firebase.auth.signInWithCredential(authCredential).await()
                 onAuthSuccess()
             } else {
-                onAuthError("Unexpected credential type")
+                onAuthError("Could not verify Google account. Please sign in with Mobile Number or Email above.")
             }
         } catch (e: GetCredentialCancellationException) {
             Log.w("Auth", "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
             onAuthCancelled()
+        } catch (e: NoCredentialException) {
+            Log.w("Auth", "No Google credential available: ${e.message}", e)
+            onAuthError("No Google account ready on this device. Please sign in with Mobile Number or Email above.")
+        } catch (e: GetCredentialException) {
+            Log.e("Auth", "Google Credential Manager error: ${e.type} - ${e.message}", e)
+            val msg = e.errorMessage?.toString().orEmpty()
+            val friendlyMessage = when {
+                msg.contains("28444", ignoreCase = true) ||
+                    msg.contains("DEVELOPER_ERROR", ignoreCase = true) ||
+                    msg.contains("not configured", ignoreCase = true) ||
+                    msg.contains("SHA", ignoreCase = true) ||
+                    msg.contains("reauth", ignoreCase = true) ->
+                    "Google Sign-In needs this standalone APK package added in Firebase Console. Please use Mobile Number or Email login above."
+                msg.contains("network", ignoreCase = true) ->
+                    "Network error while contacting Google. Check your internet connection and retry."
+                else ->
+                    "Google Sign-In could not complete right now. Please sign in with Mobile Number or Email above."
+            }
+            onAuthError(friendlyMessage)
         } catch (e: Exception) {
             Log.e("Auth", "Google Sign-In failed", e)
-            onAuthError(e.localizedMessage ?: "Sign in failed")
+            onAuthError("Google Sign-In could not complete right now. Please sign in with Mobile Number or Email above.")
         }
     }
 }
@@ -252,9 +303,14 @@ fun QuickDeliveryCloudSyncBar(
     showCardUi: Boolean = false
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
+    val hostActivity = remember(context, view) {
+        context.findActivity() ?: view.context.findActivity()
+    }
+    val credentialContext = hostActivity ?: context
     val firebaseReady = remember(context) { QuickDeliveryFirebaseInitializer.ensureInitialized(context) != null }
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(credentialContext) { CredentialManager.create(credentialContext) }
     val localRepo = remember(context) {
         SharedOrderRepository.getInstance(context).also { repo ->
             com.example.data.delivery.AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
@@ -298,7 +354,7 @@ fun QuickDeliveryCloudSyncBar(
     LaunchedEffect(firebaseReady) {
         if (!firebaseReady) return@LaunchedEffect
         attemptAutoSignIn(
-            context = context,
+            context = credentialContext,
             credentialManager = credentialManager,
             onAuthSuccess = { currentUser = runCatching { Firebase.auth.currentUser }.getOrNull() },
             onUnauthenticated = {},
