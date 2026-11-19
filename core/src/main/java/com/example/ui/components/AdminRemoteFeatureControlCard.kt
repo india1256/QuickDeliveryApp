@@ -20,13 +20,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Payment
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -34,6 +38,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -47,6 +52,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +62,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.data.cloud.AdminRemoteFeatureFlags
 import com.example.data.cloud.MultiPhoneLiveSyncManager
@@ -65,7 +73,9 @@ import com.example.data.model.CustomerOrder
 import com.example.data.model.OrderStatus
 import com.example.data.model.RiderProfile
 import com.example.data.repository.SharedOrderRepository
+import com.example.security.AdminCredentialsManager
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 private val CtrlTeal = Color(0xFF0A3D3F)
 private val CtrlEmerald = Color(0xFF10B981)
@@ -83,8 +93,14 @@ fun AdminRemoteFeatureSwitchesCard(
     repository: SharedOrderRepository
 ) {
     val context = LocalContext.current
-    remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
+    val scope = rememberCoroutineScope()
+    remember(context) {
+        QuickDeliveryOperationsManager.ensureLoaded(context)
+        AdminCredentialsManager.ensureLoaded(context)
+    }
     val flags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+    val adminCreds by AdminCredentialsManager.credentialsState.collectAsState()
+    val signedInAdminEmail by QuickDeliveryOperationsManager.signedInAdminEmail.collectAsState()
 
     var maintenanceDraft by remember(flags.maintenanceMessage) { mutableStateOf(flags.maintenanceMessage) }
     var pinCodesDraft by remember(flags.serviceablePinCodesCsv) { mutableStateOf(flags.serviceablePinCodesCsv) }
@@ -92,6 +108,16 @@ fun AdminRemoteFeatureSwitchesCard(
     var broadcastTarget by remember(flags.adminBroadcastTarget) { mutableStateOf(flags.adminBroadcastTarget) }
     var securityPinDraft by remember(flags.adminSecurityPin) { mutableStateOf(flags.adminSecurityPin) }
     var feedbackNote by remember { mutableStateOf<String?>(null) }
+
+    var showCredentialEditor by remember(adminCreds.isConfigured) { mutableStateOf(!adminCreds.isConfigured) }
+    var currentPassInput by remember { mutableStateOf("") }
+    var newUserIdInput by remember(adminCreds.userId) { mutableStateOf(adminCreds.userId) }
+    var newPassInput by remember { mutableStateOf("") }
+    var confirmPassInput by remember { mutableStateOf("") }
+    var showCurrentPass by remember { mutableStateOf(false) }
+    var showNewPass by remember { mutableStateOf(false) }
+    var credError by remember { mutableStateOf<String?>(null) }
+    var isSavingCreds by remember { mutableStateOf(false) }
 
     fun pushUpdate(transform: (AdminRemoteFeatureFlags) -> AdminRemoteFeatureFlags, note: String) {
         val next = transform(flags)
@@ -546,6 +572,250 @@ fun AdminRemoteFeatureSwitchesCard(
                         modifier = Modifier.height(48.dp)
                     ) {
                         Text("Clear", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            HorizontalDivider()
+
+            // 10.5 Admin Login Credentials (User ID & Password)
+            Surface(
+                color = Color(0xFFF8FAFC),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, if (adminCreds.isConfigured) Color(0xFF99F6E4) else Color(0xFFFDBA74)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_credentials_settings_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Key,
+                                contentDescription = null,
+                                tint = CtrlTeal,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Column {
+                                Text(
+                                    text = "Admin Login Credentials (ID & Password)",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = CtrlNavy
+                                )
+                                Text(
+                                    text = if (adminCreds.isConfigured) {
+                                        "Active User ID: ${adminCreds.userId} • Recovery: ${adminCreds.recoveryEmail}"
+                                    } else {
+                                        "Not set yet — Set your Admin User ID & Password now"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (adminCreds.isConfigured) Color(0xFF065F46) else Color(0xFFC2410C)
+                                )
+                            }
+                        }
+                        if (adminCreds.isConfigured) {
+                            OutlinedButton(
+                                onClick = {
+                                    showCredentialEditor = !showCredentialEditor
+                                    credError = null
+                                },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .testTag("admin_toggle_credentials_editor_btn")
+                            ) {
+                                Text(
+                                    text = if (showCredentialEditor) "Close" else "Change",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    if (showCredentialEditor) {
+                        if (adminCreds.isConfigured) {
+                            OutlinedTextField(
+                                value = currentPassInput,
+                                onValueChange = {
+                                    currentPassInput = it
+                                    credError = null
+                                },
+                                enabled = !isSavingCreds,
+                                label = { Text("Current Password *") },
+                                trailingIcon = {
+                                    IconButton(onClick = { showCurrentPass = !showCurrentPass }) {
+                                        Icon(
+                                            imageVector = if (showCurrentPass) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = if (showCurrentPass) "Hide current password" else "Show current password"
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (showCurrentPass) VisualTransformation.None else PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("admin_settings_current_password_input")
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = newUserIdInput,
+                            onValueChange = {
+                                newUserIdInput = it.replace(" ", "").take(32)
+                                credError = null
+                            },
+                            enabled = !isSavingCreds,
+                            label = { Text("Admin User ID (4-32 chars) *") },
+                            placeholder = { Text("e.g., ravinder_admin") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Person, contentDescription = null, tint = CtrlTeal)
+                            },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("admin_settings_userid_input")
+                        )
+
+                        OutlinedTextField(
+                            value = newPassInput,
+                            onValueChange = {
+                                newPassInput = it
+                                credError = null
+                            },
+                            enabled = !isSavingCreds,
+                            label = { Text("New Password (min 6 chars) *") },
+                            trailingIcon = {
+                                IconButton(onClick = { showNewPass = !showNewPass }) {
+                                    Icon(
+                                        imageVector = if (showNewPass) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (showNewPass) "Hide new password" else "Show new password"
+                                    )
+                                }
+                            },
+                            visualTransformation = if (showNewPass) VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("admin_settings_new_password_input")
+                        )
+
+                        OutlinedTextField(
+                            value = confirmPassInput,
+                            onValueChange = {
+                                confirmPassInput = it
+                                credError = null
+                            },
+                            enabled = !isSavingCreds,
+                            label = { Text("Confirm New Password *") },
+                            visualTransformation = if (showNewPass) VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("admin_settings_confirm_password_input")
+                        )
+
+                        credError?.let { err ->
+                            Text(
+                                text = err,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = CtrlCrimson
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                val wasConfigured = adminCreds.isConfigured
+                                val oldPassSnapshot = currentPassInput
+                                if (wasConfigured && !AdminCredentialsManager.verifyCurrentPassword(context, oldPassSnapshot)) {
+                                    credError = "Current password is incorrect."
+                                    return@Button
+                                }
+                                val idErr = AdminCredentialsManager.validateUserId(newUserIdInput)
+                                if (idErr != null) {
+                                    credError = idErr
+                                    return@Button
+                                }
+                                val passErr = AdminCredentialsManager.validatePassword(newPassInput)
+                                if (passErr != null) {
+                                    credError = passErr
+                                    return@Button
+                                }
+                                if (newPassInput != confirmPassInput) {
+                                    credError = "New passwords do not match."
+                                    return@Button
+                                }
+                                val recoveryEmail = adminCreds.recoveryEmail
+                                    .ifBlank { signedInAdminEmail.orEmpty() }
+                                    .takeIf { QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(it) }
+                                    ?: QuickDeliveryOperationsManager.ALLOWED_ADMIN_EMAILS.first()
+
+                                scope.launch {
+                                    isSavingCreds = true
+                                    credError = null
+                                    val savedRes = AdminCredentialsManager.saveCredentials(
+                                        context = context,
+                                        rawUserId = newUserIdInput,
+                                        plainPassword = newPassInput,
+                                        recoveryEmail = recoveryEmail
+                                    )
+                                    savedRes.onSuccess { saved ->
+                                        val syncRes = MultiPhoneLiveSyncManager.saveAdminCredentialsToServer(
+                                            context = context,
+                                            userId = saved.userId,
+                                            recoveryEmail = saved.recoveryEmail,
+                                            saltHex = saved.saltHex,
+                                            hashHex = saved.hashHex,
+                                            authProof = if (wasConfigured) "CURRENT_PASSWORD" else "SETTINGS_INITIAL_SETUP",
+                                            currentPassword = oldPassSnapshot.takeIf { wasConfigured }
+                                        )
+                                        isSavingCreds = false
+                                        currentPassInput = ""
+                                        newPassInput = ""
+                                        confirmPassInput = ""
+                                        showCredentialEditor = false
+                                        feedbackNote = if (syncRes.isSuccess) {
+                                            "🔐 Admin User ID (${saved.userId}) & Password updated & synced!"
+                                        } else {
+                                            "🔐 Admin User ID (${saved.userId}) & Password saved on this device!"
+                                        }
+                                    }.onFailure { err ->
+                                        isSavingCreds = false
+                                        credError = err.message ?: "Failed to update Admin credentials."
+                                    }
+                                }
+                            },
+                            enabled = !isSavingCreds && newUserIdInput.length >= 4 && newPassInput.length >= 6 && confirmPassInput.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(containerColor = CtrlTeal),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("admin_settings_save_credentials_btn")
+                        ) {
+                            Text(
+                                text = if (isSavingCreds) "Saving..." else "Save Admin ID & Password",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }

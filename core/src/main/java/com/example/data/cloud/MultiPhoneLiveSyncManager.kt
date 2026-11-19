@@ -386,7 +386,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.3.5")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.3.6")
                     setRequestProperty("X-QD-App-Role", activeRole)
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
                     setRequestProperty("X-QD-Sync-Sig", syncSig)
@@ -839,12 +839,105 @@ object MultiPhoneLiveSyncManager {
         )
     }
 
+    data class AdminRemoteCredStatus(
+        val configured: Boolean,
+        val userId: String = "",
+        val recoveryEmailMasked: String = ""
+    )
+
+    data class AdminRemoteVerifiedCreds(
+        val userId: String,
+        val recoveryEmail: String,
+        val saltHex: String,
+        val hashHex: String,
+        val updatedAtEpochMs: Long
+    )
+
+    suspend fun fetchAdminCredentialsStatus(context: Context): Result<AdminRemoteCredStatus> = withContext(Dispatchers.IO) {
+        postSignedAuthJsonRaw(
+            context = context,
+            apiPath = "/api/admin/credentials/status",
+            role = "ADMIN",
+            bodyJson = JSONObject().apply {
+                put("deviceId", getOrInitDeviceId(context))
+            }
+        ).map { json ->
+            AdminRemoteCredStatus(
+                configured = json.optBoolean("configured", false),
+                userId = json.optString("userId", ""),
+                recoveryEmailMasked = json.optString("recoveryEmailMasked", "")
+            )
+        }
+    }
+
+    suspend fun saveAdminCredentialsToServer(
+        context: Context,
+        userId: String,
+        recoveryEmail: String,
+        saltHex: String,
+        hashHex: String,
+        authProof: String,
+        currentPassword: String? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        postSignedAuthJson(
+            context = context,
+            apiPath = "/api/admin/credentials/save",
+            role = "ADMIN",
+            bodyJson = JSONObject().apply {
+                put("deviceId", getOrInitDeviceId(context))
+                put("userId", userId.trim().lowercase())
+                put("recoveryEmail", recoveryEmail.trim().lowercase())
+                put("saltHex", saltHex.trim().lowercase())
+                put("hashHex", hashHex.trim().lowercase())
+                put("authProof", authProof.trim().uppercase())
+                if (!currentPassword.isNullOrEmpty()) {
+                    put("currentPassword", currentPassword)
+                }
+            }
+        )
+    }
+
+    suspend fun verifyAdminCredentialsOnServer(
+        context: Context,
+        identifier: String,
+        plainPassword: String
+    ): Result<AdminRemoteVerifiedCreds> = withContext(Dispatchers.IO) {
+        postSignedAuthJsonRaw(
+            context = context,
+            apiPath = "/api/admin/credentials/verify",
+            role = "ADMIN",
+            bodyJson = JSONObject().apply {
+                put("deviceId", getOrInitDeviceId(context))
+                put("identifier", identifier.trim().lowercase())
+                put("password", plainPassword)
+            }
+        ).map { json ->
+            AdminRemoteVerifiedCreds(
+                userId = json.optString("userId", ""),
+                recoveryEmail = json.optString("recoveryEmail", ""),
+                saltHex = json.optString("saltHex", ""),
+                hashHex = json.optString("hashHex", ""),
+                updatedAtEpochMs = json.optLong("updatedAtEpochMs", System.currentTimeMillis())
+            )
+        }
+    }
+
     private fun postSignedAuthJson(
         context: Context,
         apiPath: String,
         role: String,
         bodyJson: JSONObject
     ): Result<String> {
+        return postSignedAuthJsonRaw(context, apiPath, role, bodyJson)
+            .map { it.optString("message", "Success") }
+    }
+
+    private fun postSignedAuthJsonRaw(
+        context: Context,
+        apiPath: String,
+        role: String,
+        bodyJson: JSONObject
+    ): Result<JSONObject> {
         val deviceId = getOrInitDeviceId(context)
         val cleanRole = role.trim().uppercase().ifBlank { "CUSTOMER" }
         val syncTs = System.currentTimeMillis()
@@ -872,7 +965,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.3.6")
                     setRequestProperty("X-QD-App-Role", cleanRole)
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
                     setRequestProperty("X-QD-Sync-Sig", syncSig)
@@ -888,7 +981,7 @@ object MultiPhoneLiveSyncManager {
                 val json = runCatching { JSONObject(rawResp) }.getOrNull()
                 if (code in 200..299 && json?.optBoolean("ok", false) == true) {
                     lastWorkingEndpoint = endpoint.replace(apiPath, "/api/live-sync")
-                    return Result.success(json.optString("message", "Success"))
+                    return Result.success(json)
                 } else {
                     val serverErr = json?.optString("error")?.takeIf { it.isNotBlank() }
                         ?: "Server returned HTTP $code"

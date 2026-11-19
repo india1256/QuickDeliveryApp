@@ -13,7 +13,27 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
-const APP_SUITE_VERSION = '6.3.5';
+const APP_SUITE_VERSION = '6.3.6';
+const ADMIN_ALLOWLIST_EMAILS = new Set([
+  'ravindergupta141@gmail.com',
+  'admin@quickdelivery.co.in',
+  'admin@quickdelivery.in',
+]);
+
+function computeStretchedAdminPasswordHash(saltHex, plainPassword) {
+  let buf = Buffer.from(`QD_ADMIN_V1|${String(saltHex || '').toLowerCase()}|${String(plainPassword || '')}`, 'utf8');
+  for (let i = 0; i < 10000; i += 1) {
+    buf = crypto.createHash('sha256').update(buf).digest();
+  }
+  return buf.toString('hex');
+}
+
+function maskEmailForHint(email) {
+  const clean = String(email || '').trim().toLowerCase();
+  const at = clean.indexOf('@');
+  if (at <= 2) return clean;
+  return `${clean.slice(0, 2)}***${clean.slice(at)}`;
+}
 const OTP_FROM_EMAIL = (process.env.OTP_FROM_EMAIL || process.env.SUPPORT_FROM_EMAIL || BRAND_SUPPORT_EMAIL).trim();
 const SYNC_STATE_FILE = process.env.SYNC_STATE_FILE || '/tmp/quickdelivery-live-sync.json';
 const BACKUP_DIR = path.join(ROOT, 'data', 'backups');
@@ -165,6 +185,7 @@ function loadSyncState() {
           emailedTicketIds: parsed.emailedTicketIds || {},
           emailOtpsByEmail: parsed.emailOtpsByEmail || {},
           verifiedEmails: parsed.verifiedEmails || {},
+          adminCredentials: parsed.adminCredentials || null,
           securityStats: parsed.securityStats || {
             blockedFakeOrders: 0,
             rateLimitedRequests: 0,
@@ -199,6 +220,7 @@ function loadSyncState() {
     emailedTicketIds: {},
     emailOtpsByEmail: {},
     verifiedEmails: {},
+    adminCredentials: null,
     securityStats: {
       blockedFakeOrders: 0,
       rateLimitedRequests: 0,
@@ -2300,7 +2322,7 @@ const server = http.createServer((req, res) => {
         const otpCode = String(crypto.randomInt(100000, 1000000));
         const otpHash = crypto.createHmac('sha256', SYNC_HMAC_SECRET).update(`${rawEmail}|${otpCode}`).digest('hex');
         const expiresInSec = 600;
-        const roleLabel = role === 'RIDER' ? 'Rider Partner' : 'Customer';
+        const roleLabel = role === 'ADMIN' ? 'Admin Console' : role === 'RIDER' ? 'Rider Partner' : 'Customer';
         const subject = `${otpCode} is your Quick Delivery ${roleLabel} verification code`;
         const textBody = [
           `Hello,`,
@@ -2437,6 +2459,187 @@ const server = http.createServer((req, res) => {
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ ok: false, error: 'Invalid OTP verification payload.' }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/admin/credentials/status' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 32 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const deviceId = String(parsed.deviceId || '');
+        const sigCheck = verifySyncHmacHeaders(req, deviceId, 'ADMIN');
+        if (!sigCheck.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
+          return;
+        }
+        const creds = syncState.adminCredentials;
+        const configured = Boolean(creds && creds.userId && creds.saltHex && creds.hashHex);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({
+          ok: true,
+          configured,
+          userId: configured ? creds.userId : '',
+          recoveryEmailMasked: configured ? maskEmailForHint(creds.recoveryEmail) : '',
+        }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid admin credentials status request.' }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/admin/credentials/save' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many requests. Please wait shortly.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 32 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const deviceId = String(parsed.deviceId || '');
+        const sigCheck = verifySyncHmacHeaders(req, deviceId, 'ADMIN');
+        if (!sigCheck.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
+          return;
+        }
+        const userId = String(parsed.userId || '').trim().toLowerCase();
+        const recoveryEmail = String(parsed.recoveryEmail || '').trim().toLowerCase();
+        const saltHex = String(parsed.saltHex || '').trim().toLowerCase();
+        const hashHex = String(parsed.hashHex || '').trim().toLowerCase();
+        const authProof = String(parsed.authProof || '').trim().toUpperCase();
+        const currentPassword = String(parsed.currentPassword || '');
+
+        if (!/^[a-z0-9._-]{4,32}$/.test(userId)) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'User ID must be 4-32 characters (letters, numbers, . _ -).' }));
+          return;
+        }
+        if (!ADMIN_ALLOWLIST_EMAILS.has(recoveryEmail)) {
+          res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Only allowlisted Admin emails can configure Admin login.' }));
+          return;
+        }
+        if (!/^[0-9a-f]{32}$/.test(saltHex) || !/^[0-9a-f]{64}$/.test(hashHex)) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Invalid password hash format.' }));
+          return;
+        }
+
+        const existing = syncState.adminCredentials;
+        const verifiedRec = syncState.verifiedEmails && syncState.verifiedEmails[recoveryEmail];
+        const hasRecentOtp = Boolean(verifiedRec && (Date.now() - Number(verifiedRec.verifiedAtEpochMs || 0)) <= 15 * 60 * 1000);
+        let authorizedToSave = false;
+        if (authProof === 'EMAIL_OTP' && hasRecentOtp) {
+          authorizedToSave = true;
+        } else if (authProof === 'CURRENT_PASSWORD') {
+          if (existing && existing.saltHex && existing.hashHex) {
+            const checkHash = computeStretchedAdminPasswordHash(existing.saltHex, currentPassword);
+            const a = Buffer.from(checkHash, 'utf8');
+            const b = Buffer.from(String(existing.hashHex), 'utf8');
+            authorizedToSave = a.length === b.length && crypto.timingSafeEqual(a, b);
+          } else if (!existing) {
+            authorizedToSave = true;
+          }
+        } else if (authProof === 'SETTINGS_INITIAL_SETUP' && !existing) {
+          authorizedToSave = true;
+        } else if (authProof === 'GOOGLE_SIGNIN') {
+          authorizedToSave = true;
+        }
+
+        if (!authorizedToSave) {
+          res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Verification required (Email OTP or Current Password) to update Admin credentials.' }));
+          return;
+        }
+
+        syncState.adminCredentials = {
+          userId,
+          recoveryEmail,
+          saltHex,
+          hashHex,
+          updatedAtEpochMs: Date.now(),
+        };
+        saveSyncState();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: true, userId, message: 'Admin User ID & Password saved securely.' }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid save admin credentials payload.' }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/admin/credentials/verify' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many login attempts. Please wait 30 seconds.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 32 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const deviceId = String(parsed.deviceId || '');
+        const sigCheck = verifySyncHmacHeaders(req, deviceId, 'ADMIN');
+        if (!sigCheck.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
+          return;
+        }
+        const existing = syncState.adminCredentials;
+        if (!existing || !existing.userId || !existing.saltHex || !existing.hashHex) {
+          res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'No Admin User ID & Password set yet. Please complete First-Time Setup.' }));
+          return;
+        }
+        const identifier = String(parsed.identifier || '').trim().toLowerCase();
+        const password = String(parsed.password || '');
+        const idMatches = identifier === existing.userId || identifier === existing.recoveryEmail;
+        const computed = computeStretchedAdminPasswordHash(existing.saltHex, password);
+        const a = Buffer.from(computed, 'utf8');
+        const b = Buffer.from(String(existing.hashHex), 'utf8');
+        const hashMatches = a.length === b.length && crypto.timingSafeEqual(a, b);
+        if (!idMatches || !hashMatches) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Incorrect Admin User ID or Password.' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({
+          ok: true,
+          userId: existing.userId,
+          recoveryEmail: existing.recoveryEmail,
+          saltHex: existing.saltHex,
+          hashHex: existing.hashHex,
+          updatedAtEpochMs: Number(existing.updatedAtEpochMs || Date.now()),
+          message: 'Admin verified.',
+        }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid admin verify payload.' }));
       }
     });
     return;

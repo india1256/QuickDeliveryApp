@@ -329,5 +329,69 @@ class SecurityAndPricingIntegrationTest {
         assertTrue(downloadedBytes.isNotEmpty())
         connection.disconnect()
     }
+
+    @Test
+    fun testAdminUserIdAndPasswordCredentialsSecurity() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        com.example.security.AdminCredentialsManager.clearForTesting(context)
+        assertFalse(com.example.security.AdminCredentialsManager.credentialsState.value.isConfigured)
+
+        // Reject short User ID, weak password, and non-allowlisted recovery email
+        assertTrue(
+            com.example.security.AdminCredentialsManager.saveCredentials(
+                context, "abc", "StrongPass123", "ravindergupta141@gmail.com"
+            ).isFailure
+        )
+        assertTrue(
+            com.example.security.AdminCredentialsManager.saveCredentials(
+                context, "ravinder_admin", "12345", "ravindergupta141@gmail.com"
+            ).isFailure
+        )
+        assertTrue(
+            com.example.security.AdminCredentialsManager.saveCredentials(
+                context, "ravinder_admin", "StrongPass123", "random@hacker.com"
+            ).isFailure
+        )
+
+        // Valid save succeeds with 32-char salt and 64-char stretched SHA-256 hash
+        val saved = com.example.security.AdminCredentialsManager.saveCredentials(
+            context, "Ravinder_Admin", "Quick@2026", "ravindergupta141@gmail.com"
+        ).getOrThrow()
+        assertEquals("ravinder_admin", saved.userId)
+        assertEquals(32, saved.saltHex.length)
+        assertEquals(64, saved.hashHex.length)
+        assertTrue(com.example.security.AdminCredentialsManager.credentialsState.value.isConfigured)
+
+        // Valid login works by User ID (case-insensitive) and by allowlisted recovery email
+        val loginById = com.example.security.AdminCredentialsManager.verifyLocalLogin(
+            context, "RAVINDER_ADMIN", "Quick@2026"
+        )
+        assertTrue(loginById.isSuccess)
+        assertEquals("ravindergupta141@gmail.com", loginById.getOrThrow())
+
+        val loginByEmail = com.example.security.AdminCredentialsManager.verifyLocalLogin(
+            context, "ravindergupta141@gmail.com", "Quick@2026"
+        )
+        assertTrue(loginByEmail.isSuccess)
+
+        // Wrong password or wrong User ID must fail
+        assertTrue(
+            com.example.security.AdminCredentialsManager.verifyLocalLogin(
+                context, "ravinder_admin", "WrongPass999"
+            ).isFailure
+        )
+        assertTrue(
+            com.example.security.AdminCredentialsManager.verifyLocalLogin(
+                context, "other_admin", "Quick@2026"
+            ).isFailure
+        )
+
+        // Current password verification for Settings password change
+        assertTrue(com.example.security.AdminCredentialsManager.verifyCurrentPassword(context, "Quick@2026"))
+        assertFalse(com.example.security.AdminCredentialsManager.verifyCurrentPassword(context, "WrongPass999"))
+
+        com.example.security.AdminCredentialsManager.clearForTesting(context)
+    }
 }
+
 
