@@ -244,6 +244,9 @@ fun AdminMasterSyncAndAppUpdateCard(
     var scooterKmDraft by remember(flags.scooterRatePerKmInr) { mutableStateOf(flags.scooterRatePerKmInr.toInt().toString()) }
     var autoBaseDraft by remember(flags.autoBaseFareInr) { mutableStateOf(flags.autoBaseFareInr.toInt().toString()) }
     var autoKmDraft by remember(flags.autoRatePerKmInr) { mutableStateOf(flags.autoRatePerKmInr.toInt().toString()) }
+    var codLimitDraft by remember(flags.riderCodCommissionLimitInr) { mutableStateOf(flags.riderCodCommissionLimitInr.toString()) }
+    var adminUpiDraft by remember(flags.adminUpiSettlementId) { mutableStateOf(flags.adminUpiSettlementId) }
+    var adminAccountLabelDraft by remember(flags.adminSettlementAccountLabel) { mutableStateOf(flags.adminSettlementAccountLabel) }
 
     var pauseReasonDraft by remember(flags.emergencyPauseReason) { mutableStateOf(flags.emergencyPauseReason) }
     var blockPhoneDraft by remember { mutableStateOf("") }
@@ -265,8 +268,10 @@ fun AdminMasterSyncAndAppUpdateCard(
         val deliveredCod = validOrders
             .filter { it.orderStatus == OrderStatus.DELIVERED && it.paymentMethod == CustomerPaymentMethod.CASH_ON_DELIVERY }
             .sumOf { it.totalAmount.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0 }
-        val settledCod = codSettlements.sumOf { it.amountInr }
-        val pendingCod = (deliveredCod - settledCod).coerceAtLeast(0.0)
+        val settledCod = codSettlements
+            .filter { it.status == "VERIFIED" }
+            .sumOf { it.amountInr }
+        val pendingCod = (deliveredCod * (flags.platformCommissionPercent.toDouble() / 100.0) - settledCod).coerceAtLeast(0.0)
         QuadKpi(validOrders.size, totalGmv.toInt(), netProfit.toInt(), pendingCod.toInt())
     }
 
@@ -604,6 +609,79 @@ fun AdminMasterSyncAndAppUpdateCard(
                     }
                 }
             }
+
+            HorizontalDivider()
+
+            Text(
+                text = "Rider COD ${flags.platformCommissionPercent}% Commission Limit & Admin Transfer Account",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = SyncNavy
+            )
+            Text(
+                text = "Rider auto-locks at ₹${flags.riderCodCommissionLimitInr} unpaid commission until paid to your UPI/Account and reset to ₹0 (FREE).",
+                style = MaterialTheme.typography.labelSmall,
+                color = SyncSlate
+            )
+            OutlinedTextField(
+                value = codLimitDraft,
+                onValueChange = { codLimitDraft = it.filter(Char::isDigit).take(4) },
+                label = { Text("Rider COD Commission Lock Limit (₹)") },
+                placeholder = { Text("200") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_cod_commission_limit_input")
+            )
+            OutlinedTextField(
+                value = adminUpiDraft,
+                onValueChange = { adminUpiDraft = it.trim().take(64) },
+                label = { Text("Your Admin UPI ID (for Rider COD Transfers)") },
+                placeholder = { Text("Enter your real UPI ID (optional)") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_cod_upi_settlement_input")
+            )
+            OutlinedTextField(
+                value = adminAccountLabelDraft,
+                onValueChange = { adminAccountLabelDraft = it.take(64) },
+                label = { Text("Admin Account / Payee Name") },
+                placeholder = { Text("e.g., Business / Owner Name") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_cod_account_label_input")
+            )
+            Button(
+                onClick = {
+                    val limitVal = (codLimitDraft.toIntOrNull() ?: 200).coerceIn(50, 5000)
+                    codLimitDraft = limitVal.toString()
+                    pushFlags(
+                        {
+                            it.copy(
+                                riderCodCommissionLimitInr = limitVal,
+                                adminUpiSettlementId = adminUpiDraft.trim(),
+                                adminSettlementAccountLabel = adminAccountLabelDraft.trim()
+                            )
+                        },
+                        "💵 COD Lock Limit (₹$limitVal) & Admin Settlement Account synced to all Riders!"
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = SyncTeal),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("admin_sync_cod_limit_btn")
+            ) {
+                Text(
+                    text = "Sync COD Limit & Admin UPI to Riders",
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
         }
 
         // 4. COLLAPSIBLE GROUP 3: EMERGENCY PAUSE, WORKING HOURS & FUTURE MODULES
@@ -768,6 +846,18 @@ fun AdminMasterSyncAndAppUpdateCard(
                     )
                 },
                 testTag = "admin_switch_route_split"
+            )
+            CompactSwitchRow(
+                title = "🔐 Pickup & Drop OTP Verification System",
+                subtitle = "Default OFF (Direct Handover active) • Turn ON in 1 click to require 4-digit Pickup & Drop OTPs on Customer & Rider apps",
+                checked = flags.pickupDropOtpEnabled,
+                onCheckedChange = { on ->
+                    pushFlags(
+                        { it.copy(pickupDropOtpEnabled = on) },
+                        if (on) "🔐 Pickup & Drop OTP Verification ACTIVATED across Customer & Rider apps!" else "Pickup & Drop OTP turned OFF (Direct Handover active)"
+                    )
+                },
+                testTag = "admin_switch_pickup_drop_otp_master"
             )
             CompactSwitchRow(
                 title = "Auto-KYC Instant Verification API",
@@ -961,6 +1051,9 @@ fun AdminMasterSyncAndAppUpdateCard(
                 Text("Open Firebase Console Settings →", fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
+
+        // 7. LIVE SERVER HEALTH MONITOR & 1-TAP BACKUP / RESTORE SHIELD
+        AdminServerHealthAndBackupCard(onFeedback = onFeedback)
     }
 }
 

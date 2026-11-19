@@ -831,6 +831,91 @@ fun PorterRiderDrawerContent(
                 }
             }
 
+            // Pocket & Screen-Off Order Alert Guard (Play-Policy Safe Battery Settings + Test Ringtone)
+            item(key = "drawer_rider_pocket_alert_guard") {
+                var ringTestStatus by remember { mutableStateOf<String?>(null) }
+                Surface(
+                    color = if (isDarkMode) Color(0xFF1E293B) else Color(0xFFF0FDFA),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isDarkMode) QuickDeliveryTeal.copy(alpha = 0.6f) else Color(0xFF99F6E4)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .testTag("rider_pocket_alert_guard_card")
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "🔋 Pocket & Screen-Off Order Alerts",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isDarkMode) Color.White else PorterNavy
+                        )
+                        Text(
+                            text = "Set Battery to 'Unrestricted' so Android never silences incoming orders while phone is in your pocket.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isDarkMode) Color(0xFFCBD5E1) else Color(0xFF475569)
+                        )
+                        Button(
+                            onClick = {
+                                val opened = com.example.security.RiderOnDutyGuardManager.openBatteryOptimizationSettings(context)
+                                ringTestStatus = if (opened) {
+                                    "✅ Select 'Partner Quick Delivery' → Unrestricted."
+                                } else {
+                                    "Open Phone Settings → Apps → Partner Quick Delivery → Battery → Unrestricted."
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = QuickDeliveryTeal),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("rider_battery_unrestricted_btn")
+                        ) {
+                            Text(
+                                text = "⚡ Keep App Active (Battery Settings)",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                ringTestStatus = com.example.security.RiderOnDutyGuardManager.triggerTestOrderRingAlert(context)
+                            },
+                            border = BorderStroke(1.dp, QuickDeliveryOrange),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("rider_test_order_ringtone_btn")
+                        ) {
+                            Text(
+                                text = "🔔 Test Order Ringtone & Vibration",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = QuickDeliveryOrange
+                            )
+                        }
+                        if (!ringTestStatus.isNullOrBlank()) {
+                            Text(
+                                text = ringTestStatus.orEmpty(),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isDarkMode) Color(0xFF5EEAD4) else Color(0xFF0F766E)
+                            )
+                        }
+                    }
+                }
+            }
+
             item {
                 PorterDrawerMenuItem(
                     icon = Icons.Default.Description,
@@ -1918,7 +2003,10 @@ fun PorterDrawerEarningsAndWalletSection(
                             text = "CURRENT BALANCE",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF64748B)
+                            color = Color(0xFF64748B),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
 
                         val badgeText = if (currentBalance <= -200.0) "🚫 ID SUSPENDED"
@@ -1940,6 +2028,8 @@ fun PorterDrawerEarningsAndWalletSection(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = badgeColor,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -1950,7 +2040,7 @@ fun PorterDrawerEarningsAndWalletSection(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = String.format(Locale.US, "₹%.2f", currentBalance),
                                 style = MaterialTheme.typography.titleLarge,
@@ -1958,7 +2048,9 @@ fun PorterDrawerEarningsAndWalletSection(
                                 color = if (currentBalance <= -200.0) PorterRed
                                 else if (currentBalance <= -150.0) PorterAmber
                                 else if (currentBalance < 0) PorterOrange
-                                else PorterNavy
+                                else PorterNavy,
+                                maxLines = 1,
+                                softWrap = false
                             )
                             if (currentBalance < 0) {
                                 Text(
@@ -1982,7 +2074,9 @@ fun PorterDrawerEarningsAndWalletSection(
                                 text = if (currentBalance < 0) "Clear Dues" else "+ Top Up",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = Color.White,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }

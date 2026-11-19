@@ -171,6 +171,7 @@ data class RiderCodSettlementRecord(
     val amountInr: Double,
     val referenceUtr: String,
     val settledAtLabel: String = "",
+    val status: String = "VERIFIED", // "PENDING_ADMIN" (submitted by Rider) or "VERIFIED" (approved by Admin)
     val updatedAtEpochMs: Long = System.currentTimeMillis()
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -181,6 +182,7 @@ data class RiderCodSettlementRecord(
         put("amountInr", amountInr)
         put("referenceUtr", referenceUtr)
         put("settledAtLabel", settledAtLabel)
+        put("status", status)
         put("updatedAtEpochMs", updatedAtEpochMs)
     }
 
@@ -196,10 +198,42 @@ data class RiderCodSettlementRecord(
                 amountInr = obj.optDouble("amountInr", 0.0),
                 referenceUtr = obj.optString("referenceUtr", "CASH_DESK"),
                 settledAtLabel = obj.optString("settledAtLabel", ""),
+                status = obj.optString("status", "VERIFIED").uppercase().ifBlank { "VERIFIED" },
                 updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
             )
         }
     }
+}
+
+/**
+ * Porter-style Rider COD Cash & 20% Company Commission Ledger Snapshot.
+ * When unpaidCommissionDueInr reaches codLimitInr (default ₹200), Rider is LOCKED from taking
+ * new orders until they transfer the due 20% commission to Admin's account & it resets to ₹0 (FREE).
+ */
+data class RiderCodLedgerSnapshot(
+    val riderId: String,
+    val codDeliveredOrdersCount: Int,
+    val totalCodCashCollectedInr: Double,
+    val rider80ShareKeptInr: Double,
+    val grossCompany20CommissionInr: Double,
+    val verifiedPaidToAdminInr: Double,
+    val pendingTransferClaimInr: Double,
+    val pendingClaimRecord: RiderCodSettlementRecord?,
+    val unpaidCommissionDueInr: Double,
+    val codLimitInr: Double,
+    val commissionPercent: Int
+) {
+    val isLockedAtLimit: Boolean
+        get() = unpaidCommissionDueInr >= codLimitInr && codLimitInr > 0.0
+
+    val isFreeZeroDue: Boolean
+        get() = unpaidCommissionDueInr < 0.5
+
+    val progressFraction: Float
+        get() = if (codLimitInr <= 0.0) 0f else (unpaidCommissionDueInr / codLimitInr).toFloat().coerceIn(0f, 1f)
+
+    val remainingBeforeLockInr: Double
+        get() = (codLimitInr - unpaidCommissionDueInr).coerceAtLeast(0.0)
 }
 
 enum class DisputeStatus {
@@ -1123,6 +1157,50 @@ object QuickDeliveryOperationsManager {
             amountInr = amountInr,
             referenceUtr = referenceUtr.trim().ifBlank { "CASH_DESK_${now % 10000}" },
             settledAtLabel = label,
+            status = "VERIFIED",
+            updatedAtEpochMs = now
+        )
+        synchronized(lock) {
+            // Also resolve any pending claims for this rider so nothing stays stuck
+            val updated = _codSettlements.value.map { existing ->
+                if (existing.riderId == riderId && existing.status == "PENDING_ADMIN") {
+                    existing.copy(status = "SUPERSEDED", updatedAtEpochMs = now)
+                } else {
+                    existing
+                }
+            }
+            _codSettlements.value = listOf(rec) + updated
+            persist(context)
+        }
+        MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        return rec
+    }
+
+    /**
+     * Rider submits a 20% COD commission transfer claim (UPI UTR or Cash handover) to Admin.
+     * Remains PENDING_ADMIN until Admin verifies & resets the rider's ledger to ₹0 (FREE).
+     */
+    fun submitRiderCodTransferClaim(
+        context: Context,
+        riderId: String,
+        riderName: String,
+        riderPhone: String,
+        amountInr: Double,
+        referenceUtr: String
+    ): RiderCodSettlementRecord? {
+        ensureLoaded(context)
+        if (riderId.isBlank() || amountInr <= 0.0) return null
+        val now = System.currentTimeMillis()
+        val label = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(now))
+        val rec = RiderCodSettlementRecord(
+            settlementId = "TRF-${(now % 100000).toString().padStart(5, '0')}",
+            riderId = riderId,
+            riderName = riderName.ifBlank { "Rider Partner" },
+            riderPhone = riderPhone,
+            amountInr = amountInr,
+            referenceUtr = referenceUtr.trim().ifBlank { "UPI_TRF_${now % 10000}" },
+            settledAtLabel = label,
+            status = "PENDING_ADMIN",
             updatedAtEpochMs = now
         )
         synchronized(lock) {
@@ -1133,8 +1211,120 @@ object QuickDeliveryOperationsManager {
         return rec
     }
 
+    /**
+     * Admin verifies a pending Rider COD transfer claim, crediting the verified settlement and
+     * freeing the Rider to accept orders again once due reaches ₹0.
+     */
+    fun verifyRiderCodTransferClaimByAdmin(
+        context: Context,
+        settlementId: String
+    ): RiderCodSettlementRecord? {
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        var verifiedRec: RiderCodSettlementRecord? = null
+        synchronized(lock) {
+            _codSettlements.value = _codSettlements.value.map { rec ->
+                if (rec.settlementId == settlementId) {
+                    rec.copy(status = "VERIFIED", updatedAtEpochMs = now).also { verifiedRec = it }
+                } else {
+                    rec
+                }
+            }
+            persist(context)
+        }
+        if (verifiedRec != null) {
+            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        }
+        return verifiedRec
+    }
+
     fun settledCodAmountForRider(riderId: String): Double {
-        return _codSettlements.value.filter { it.riderId == riderId }.sumOf { it.amountInr }
+        return _codSettlements.value
+            .filter { it.riderId == riderId && it.status == "VERIFIED" }
+            .sumOf { it.amountInr }
+    }
+
+    /**
+     * Computes live Porter-style COD Cash & 20% Company Commission Ledger for a Rider.
+     */
+    fun computeRiderCodLedgerSnapshot(
+        riderId: String,
+        riderCommissionDebtInr: Double,
+        orders: List<CustomerOrder>,
+        settlements: List<RiderCodSettlementRecord> = _codSettlements.value,
+        flags: AdminRemoteFeatureFlags = _remoteFeatureFlags.value
+    ): RiderCodLedgerSnapshot {
+        val commissionPct = flags.platformCommissionPercent.coerceIn(0, 40)
+        val codLimit = flags.riderCodCommissionLimitInr.coerceIn(50, 5000).toDouble()
+        val riderCodOrders = orders.filter { o ->
+            o.orderStatus == com.example.data.model.OrderStatus.DELIVERED &&
+                o.paymentMethod == com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY &&
+                (riderId.isBlank() || o.assignedRiderId == riderId)
+        }
+        var totalCodCash = 0.0
+        var grossCompanyComm = 0.0
+        riderCodOrders.forEach { o ->
+            val fare = o.totalAmount.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+            val explicitComm = o.platformCommission.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+            val comm = if (explicitComm > 0.0) explicitComm else (fare * commissionPct / 100.0)
+            totalCodCash += fare
+            grossCompanyComm += comm
+        }
+        val rider80Kept = (totalCodCash - grossCompanyComm).coerceAtLeast(0.0)
+        val verifiedPaid = settlements
+            .filter { it.riderId == riderId && it.status == "VERIFIED" }
+            .sumOf { it.amountInr }
+        val pendingClaims = settlements.filter { it.riderId == riderId && it.status == "PENDING_ADMIN" }
+        val pendingTotal = pendingClaims.sumOf { it.amountInr }
+        val effectiveDue = (maxOf(grossCompanyComm, riderCommissionDebtInr.coerceAtLeast(0.0)) - verifiedPaid)
+            .coerceAtLeast(0.0)
+
+        return RiderCodLedgerSnapshot(
+            riderId = riderId,
+            codDeliveredOrdersCount = riderCodOrders.size,
+            totalCodCashCollectedInr = totalCodCash,
+            rider80ShareKeptInr = rider80Kept,
+            grossCompany20CommissionInr = grossCompanyComm,
+            verifiedPaidToAdminInr = verifiedPaid,
+            pendingTransferClaimInr = pendingTotal,
+            pendingClaimRecord = pendingClaims.firstOrNull(),
+            unpaidCommissionDueInr = effectiveDue,
+            codLimitInr = codLimit,
+            commissionPercent = commissionPct
+        )
+    }
+
+    /**
+     * Generates a formatted End-of-Day Rider Shift Summary Slip ready to share on WhatsApp.
+     */
+    fun buildRiderShiftSummarySlipText(
+        riderName: String,
+        riderId: String,
+        todayTripsCount: Int,
+        todayNetEarningInr: Int,
+        ledger: RiderCodLedgerSnapshot
+    ): String {
+        val dateStr = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
+        val statusText = when {
+            ledger.isLockedAtLimit -> "🔴 LOCKED (₹${ledger.unpaidCommissionDueInr.toInt()}/₹${ledger.codLimitInr.toInt()} Due)"
+            ledger.isFreeZeroDue -> "🟢 FREE (₹0 Due)"
+            else -> "🟡 Active (₹${ledger.unpaidCommissionDueInr.toInt()}/₹${ledger.codLimitInr.toInt()} Due)"
+        }
+        return buildString {
+            appendLine("🧾 *PARTNER QUICK DELIVERY — DAILY SHIFT SLIP*")
+            appendLine("━━━━━━━━━━━━━━━━━━━━━━")
+            appendLine("🙋 Partner: *$riderName* ($riderId)")
+            appendLine("📅 Time: $dateStr")
+            appendLine("━━━━━━━━━━━━━━━━━━━━━━")
+            appendLine("📦 Today's Completed Trips: *$todayTripsCount*")
+            appendLine("💵 COD Cash Collected: *₹${ledger.totalCodCashCollectedInr.toInt()}*")
+            appendLine("💰 Your ${100 - ledger.commissionPercent}% Net Earning: *₹$todayNetEarningInr*")
+            appendLine("🏦 Company ${ledger.commissionPercent}% Commission Paid: ₹${ledger.verifiedPaidToAdminInr.toInt()}")
+            appendLine("📒 Current Ledger Due: *₹${ledger.unpaidCommissionDueInr.toInt()} / ₹${ledger.codLimitInr.toInt()}*")
+            appendLine("📌 Account Status: $statusText")
+            appendLine("━━━━━━━━━━━━━━━━━━━━━━")
+            append("Quick Delivery Partner Operations")
+        }
     }
 
     // ---------------- ADMIN DISPUTE & INSTANT WALLET REFUND DESK ----------------

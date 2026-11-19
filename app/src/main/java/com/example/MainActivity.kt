@@ -63,7 +63,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.repository.SharedOrderRepository
 import com.example.security.AppPermissionManager
+import com.example.security.LiveNetworkStatusMonitor
 import com.example.security.OrderAlertSoundManager
+import com.example.security.QuickDeliveryCrashShield
 import com.example.security.RiderBatteryPowerMonitorCard
 import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.LocalizedContextProvider
@@ -80,7 +82,9 @@ import com.example.ui.components.AdminMutualRatingsAndSuggestionsPanel
 import com.example.ui.components.AdminProfessionalLiveMirrorScreen
 import com.example.ui.components.AdminSosSupportLiveBanner
 import com.example.ui.components.AdminWebExecutiveLiveRibbon
+import com.example.ui.components.CrashRecoveryDialogOverlay
 import com.example.ui.components.FcmOrderNotificationManager
+import com.example.ui.components.LiveNetworkStatusBanner
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 
@@ -93,6 +97,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppPermissionManager.installCrashPreventionGuard()
+        QuickDeliveryCrashShield.install(this, BuildConfig.APP_ROLE, BuildConfig.VERSION_NAME)
+        LiveNetworkStatusMonitor.startMonitoring(this)
         OrderAlertSoundManager.ensureChannels(this)
         AppPermissionManager.inspectPermissions(this)
         com.example.data.cloud.MultiPhoneLiveSyncManager.resolveLockedPhoneRole(this, BuildConfig.APP_ROLE)
@@ -106,27 +112,33 @@ class MainActivity : ComponentActivity() {
                     val activeRole by com.example.data.cloud.MultiPhoneLiveSyncManager.lockedPhoneRole.collectAsState()
                     val effectiveRole = if (BuildConfig.APP_ROLE != "UNIFIED") BuildConfig.APP_ROLE else activeRole
 
+                    CrashRecoveryDialogOverlay(appRole = effectiveRole)
+
                     when (effectiveRole) {
                         "CUSTOMER" -> {
                             QuickDeliveryCloudSyncBar(showCardUi = false)
-                            Box(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .windowInsetsPadding(WindowInsets.statusBars)
                                     .windowInsetsPadding(WindowInsets.navigationBars)
                             ) {
-                                CustomerAppScreen()
+                                LiveNetworkStatusBanner()
+                                Box(modifier = Modifier.weight(1f)) {
+                                    CustomerAppScreen()
+                                }
                             }
                         }
                         "RIDER" -> {
                             QuickDeliveryCloudSyncBar(showCardUi = false)
-                            Box(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .windowInsetsPadding(WindowInsets.statusBars)
                                     .windowInsetsPadding(WindowInsets.navigationBars)
                             ) {
-                                RiderPartnerCompactScreen(modifier = Modifier.fillMaxSize())
+                                LiveNetworkStatusBanner()
+                                RiderPartnerCompactScreen(modifier = Modifier.weight(1f))
                             }
                         }
                         "ADMIN" -> {

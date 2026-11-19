@@ -26,12 +26,20 @@ import androidx.compose.ui.unit.dp
 import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.QuickDeliveryFirebaseInitializer
 import com.example.data.cloud.QuickDeliveryOperationsManager
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import com.example.security.AppPermissionManager
+import com.example.security.LiveNetworkStatusMonitor
 import com.example.security.OrderAlertSoundManager
+import com.example.security.QuickDeliveryCrashShield
 import com.example.ui.auth.QuickDeliveryCloudSyncBar
 import com.example.ui.auth.QuickDeliveryTopOptionsDialog
 import com.example.ui.components.AppRemoteUpdateGateOverlay
+import com.example.ui.components.CrashRecoveryDialogOverlay
 import com.example.ui.components.FcmOrderNotificationManager
+import com.example.ui.components.LiveNetworkStatusBanner
 import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.LocalizedContextProvider
 import com.example.ui.screens.CustomerAppScreen
@@ -49,6 +57,8 @@ class CustomerMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppPermissionManager.installCrashPreventionGuard()
+        QuickDeliveryCrashShield.install(this, "CUSTOMER", BuildConfig.VERSION_NAME)
+        LiveNetworkStatusMonitor.startMonitoring(this)
         QuickDeliveryFirebaseInitializer.ensureInitialized(this)
         QuickDeliveryOperationsManager.ensureLoaded(this)
         OrderAlertSoundManager.ensureChannels(this)
@@ -63,12 +73,20 @@ class CustomerMainActivity : ComponentActivity() {
                 LocalizedContextProvider {
                     QuickDeliveryCloudSyncBar(showCardUi = false)
                     Box(modifier = Modifier.fillMaxSize()) {
-                        CustomerAppScreen()
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            LiveNetworkStatusBanner(
+                                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
+                            )
+                            Box(modifier = Modifier.weight(1f)) {
+                                CustomerAppScreen()
+                            }
+                        }
                         AppRemoteUpdateGateOverlay(
                             appRole = "CUSTOMER",
                             currentVersionName = BuildConfig.VERSION_NAME,
                             currentVersionCode = BuildConfig.VERSION_CODE
                         )
+                        CrashRecoveryDialogOverlay(appRole = "CUSTOMER")
                     }
                 }
             }

@@ -210,6 +210,20 @@ fun AdminRemoteFeatureSwitchesCard(
                 testTag = "admin_switch_multi_drop"
             )
 
+            // 2B. Pickup & Drop OTP Verification System (Default OFF)
+            FeatureToggleRow(
+                title = "🔐 Pickup & Drop OTP System",
+                subtitle = "Default OFF (Direct Handover) • Turn ON anytime to require 4-digit Pickup & Drop OTPs",
+                checked = flags.pickupDropOtpEnabled,
+                onCheckedChange = { enabled ->
+                    pushUpdate(
+                        { it.copy(pickupDropOtpEnabled = enabled) },
+                        if (enabled) "🔐 Pickup & Drop OTP System ACTIVATED live!" else "Pickup & Drop OTP System turned OFF"
+                    )
+                },
+                testTag = "admin_switch_pickup_drop_otp"
+            )
+
             // 3. Dynamic Surge Pricing
             FeatureToggleRow(
                 title = "Peak / Rain Surge Pricing (${String.format(Locale.US, "%.2fx", flags.surgeMultiplier)})",

@@ -86,11 +86,15 @@ import com.example.data.delivery.AutomatedFairRiderAssignmentEngine
 import com.example.data.repository.SharedOrderRepository
 import com.example.security.AdminCredentialsManager
 import com.example.security.AppPermissionManager
+import com.example.security.LiveNetworkStatusMonitor
 import com.example.security.OrderAlertSoundManager
+import com.example.security.QuickDeliveryCrashShield
 import com.example.ui.auth.GoogleSignInButton
 import com.example.ui.auth.QuickDeliveryCloudSyncBar
 import com.example.ui.components.AdminEnterpriseControlCenter
+import com.example.ui.components.CrashRecoveryDialogOverlay
 import com.example.ui.components.FcmOrderNotificationManager
+import com.example.ui.components.LiveNetworkStatusBanner
 import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.LocalizedContextProvider
 import com.example.ui.theme.QuickDeliveryTheme
@@ -110,6 +114,8 @@ class AdminMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppPermissionManager.installCrashPreventionGuard()
+        QuickDeliveryCrashShield.install(this, "ADMIN", BuildConfig.VERSION_NAME)
+        LiveNetworkStatusMonitor.startMonitoring(this)
         QuickDeliveryFirebaseInitializer.ensureInitialized(this)
         QuickDeliveryOperationsManager.ensureLoaded(this)
         AdminCredentialsManager.ensureLoaded(this)
@@ -133,6 +139,7 @@ class AdminMainActivity : ComponentActivity() {
                         unlockedAdminPin != remoteFlags.adminSecurityPin
 
                     QuickDeliveryCloudSyncBar(showCardUi = false)
+                    CrashRecoveryDialogOverlay(appRole = "ADMIN")
 
                     if (!isAdminAuthorized) {
                         AdminCredentialsAuthScreen(
@@ -183,6 +190,7 @@ class AdminMainActivity : ComponentActivity() {
                                 .windowInsetsPadding(WindowInsets.statusBars)
                                 .windowInsetsPadding(WindowInsets.navigationBars)
                         ) {
+                            LiveNetworkStatusBanner()
                             if (!hasAdminPerms) {
                                 AdminLivePermissionsAndTrackingBar()
                             }

@@ -2905,7 +2905,9 @@ fun CustomerAppScreen(
                                                         Text(
                                                             text = if (savedMatch != null) "📍 $displayTagLabel ✓" else "📍 $displayTagLabel",
                                                             style = MaterialTheme.typography.labelSmall,
-                                                            fontWeight = FontWeight.Bold
+                                                            fontWeight = FontWeight.Bold,
+                                                            maxLines = 1,
+                                                            softWrap = false
                                                         )
                                                     },
                                                     colors = FilterChipDefaults.filterChipColors(
@@ -2928,7 +2930,9 @@ fun CustomerAppScreen(
                                                     text = "+ Custom",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = PrimaryTeal
+                                                    color = PrimaryTeal,
+                                                    maxLines = 1,
+                                                    softWrap = false
                                                 )
                                             }
                                             if (pickupAddressText.isNotBlank()) {
@@ -2953,10 +2957,12 @@ fun CustomerAppScreen(
                                                     modifier = Modifier.testTag("customer_save_pickup_address_btn")
                                                 ) {
                                                     Text(
-                                                        text = "💾 ${uiStrings.saveBtn}",
+                                                        text = "💾 ${uiStrings.saveBtn} $selectedPickupSavedTag",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = PrimaryTeal
+                                                        color = PrimaryTeal,
+                                                        maxLines = 1,
+                                                        softWrap = false
                                                     )
                                                 }
                                             }
@@ -3254,7 +3260,9 @@ fun CustomerAppScreen(
                                                         Text(
                                                             text = if (savedMatch != null) "🏁 $displayDropTagLabel ✓" else "🏁 $displayDropTagLabel",
                                                             style = MaterialTheme.typography.labelSmall,
-                                                            fontWeight = FontWeight.Bold
+                                                            fontWeight = FontWeight.Bold,
+                                                            maxLines = 1,
+                                                            softWrap = false
                                                         )
                                                     },
                                                     colors = FilterChipDefaults.filterChipColors(
@@ -3277,7 +3285,9 @@ fun CustomerAppScreen(
                                                     text = "+ Custom",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = BrandOrange
+                                                    color = BrandOrange,
+                                                    maxLines = 1,
+                                                    softWrap = false
                                                 )
                                             }
                                             if (dropAddressText.isNotBlank()) {
@@ -3302,10 +3312,12 @@ fun CustomerAppScreen(
                                                     modifier = Modifier.testTag("customer_save_drop_address_btn")
                                                 ) {
                                                     Text(
-                                                        text = "💾 ${uiStrings.saveBtn}",
+                                                        text = "💾 ${uiStrings.saveBtn} $selectedDropSavedTag",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = BrandOrange
+                                                        color = BrandOrange,
+                                                        maxLines = 1,
+                                                        softWrap = false
                                                     )
                                                 }
                                             }
@@ -5056,9 +5068,54 @@ fun CustomerAppScreen(
                                 }
                             )
 
-                            CustomerProximityOtpAlertBanner(order = activeOrder)
+                            if (activeOrder.orderStatus == OrderStatus.SEARCHING_RIDER) {
+                                com.example.ui.components.CustomerSearchingCountdownCard(
+                                    order = activeOrder,
+                                    onRetrySearch = {
+                                        AutomatedFairRiderAssignmentEngine.retryAllSearchingOrdersFairly(repository)
+                                        com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                        isErrorBanner = false
+                                        statusBanner = "📡 Re-pinging nearby Riders & Admin dispatch queue..."
+                                    },
+                                    onCancelFree = {
+                                        orderPendingCancellation = activeOrder
+                                    }
+                                )
+                            }
+
+                            CustomerProximityOtpAlertBanner(
+                                order = activeOrder,
+                                otpEnabled = remoteFlags.pickupDropOtpEnabled
+                            )
 
                             if (activeOrder.orderStatus == OrderStatus.DELIVERED) {
+                                Button(
+                                    onClick = {
+                                        val shared = com.example.security.DigitalReceiptShareHelper.shareDigitalReceiptOnWhatsApp(
+                                            context = context,
+                                            order = activeOrder
+                                        )
+                                        isErrorBanner = !shared
+                                        statusBanner = if (shared) {
+                                            "🧾 Digital Delivery Bill ready to share on WhatsApp!"
+                                        } else {
+                                            "Could not open share sheet on this device."
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("customer_share_whatsapp_receipt_btn_${activeOrder.orderId}")
+                                ) {
+                                    Text(
+                                        text = "🧾 Share Digital Bill on WhatsApp (Free)",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White
+                                    )
+                                }
+
                                 com.example.ui.components.PostDeliveryRiderFeedbackSection(
                                     orderId = activeOrder.orderId,
                                     riderId = activeOrder.assignedRiderId ?: "",
@@ -5102,7 +5159,11 @@ fun CustomerAppScreen(
                                                 color = Color.White
                                             )
                                             Text(
-                                                text = "Pickup OTP: ${activeOrder.pickupOtp} • Drop OTP: ${activeOrder.deliveryOtp}",
+                                                text = if (remoteFlags.pickupDropOtpEnabled) {
+                                                    "Pickup OTP: ${activeOrder.pickupOtp} • Drop OTP: ${activeOrder.deliveryOtp}"
+                                                } else {
+                                                    "Direct Pickup & Drop Active • Fast Handover (No OTP Needed)"
+                                                },
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = BrightTeal
                                             )
@@ -5124,7 +5185,10 @@ fun CustomerAppScreen(
 
                                     CustomerShareLiveTrackingButton(order = activeOrder)
 
-                                    CustomerSendReceiverOtpCard(order = activeOrder)
+                                    CustomerSendReceiverOtpCard(
+                                        order = activeOrder,
+                                        otpEnabled = remoteFlags.pickupDropOtpEnabled
+                                    )
 
                                     CustomerOrderDisputeCard(
                                         order = activeOrder,

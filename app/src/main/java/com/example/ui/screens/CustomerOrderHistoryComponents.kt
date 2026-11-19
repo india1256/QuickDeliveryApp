@@ -668,7 +668,7 @@ private fun CustomerOrderHistoryItemCard(
             if (order.orderStatus == OrderStatus.DELIVERED) {
                 PostDeliveryRiderFeedbackSection(
                     orderId = order.orderId,
-                    riderId = order.assignedRiderId ?: "RIDER-101",
+                    riderId = order.assignedRiderId ?: "",
                     riderName = order.assignedRiderName ?: "Rider Partner",
                     customerName = order.customerName
                 )
@@ -709,6 +709,29 @@ private fun CustomerOrderHistoryItemCard(
             }
 
             if (order.orderStatus == OrderStatus.DELIVERED) {
+                Button(
+                    onClick = {
+                        com.example.security.DigitalReceiptShareHelper.shareDigitalReceiptOnWhatsApp(
+                            context = historyContext,
+                            order = order,
+                            tipAmountInr = tipAmountInr
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("customer_history_whatsapp_bill_btn_${order.orderId}")
+                ) {
+                    Text(
+                        text = "🧾 Share Digital Bill on WhatsApp",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
+                }
+
                 OutlinedButton(
                     onClick = {
                         com.example.security.QuickDeliveryPdfGenerator.generateAndShareCustomerReceiptPdf(

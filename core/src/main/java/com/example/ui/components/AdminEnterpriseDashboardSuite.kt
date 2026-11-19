@@ -480,15 +480,18 @@ fun QuickDeliveryEnterpriseAdminSuite(
 
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.clickable { currentPage = AdminDedicatedPage.DASHBOARD }
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { currentPage = AdminDedicatedPage.DASHBOARD }
                                 ) {
                                     QuickDeliveryCuteBunnyLogo(
                                         size = 32.dp,
                                         borderColor = Color(0xFF34D399)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Row(
+                                            modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
@@ -498,7 +501,8 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = Color.White,
                                                 maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
                                             )
                                             Surface(
                                                 color = if (liveSyncStatus.isConnected) DashEmerald.copy(alpha = 0.2f) else DashGold.copy(alpha = 0.25f),
@@ -525,7 +529,9 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                                         text = if (liveSyncStatus.isConnected) "Live" else "Syncing",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = if (liveSyncStatus.isConnected) Color(0xFF6EE7B7) else Color(0xFFFDE68A)
+                                                        color = if (liveSyncStatus.isConnected) Color(0xFF6EE7B7) else Color(0xFFFDE68A),
+                                                        maxLines = 1,
+                                                        softWrap = false
                                                     )
                                                 }
                                             }
@@ -1597,6 +1603,28 @@ private fun EnterpriseDashboardOverviewPage(
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        val waitingUnassignedOrders = orders.filter { it.orderStatus == OrderStatus.SEARCHING_RIDER }
+        if (waitingUnassignedOrders.isNotEmpty()) {
+            item(key = "enterprise_overview_unassigned_red_alert") {
+                AdminUnassignedOrdersAlertBanner(
+                    searchingOrders = waitingUnassignedOrders,
+                    onOpenOrdersTab = { onNavigateToPage(AdminDedicatedPage.ORDERS) }
+                )
+            }
+        }
+
+        item(key = "enterprise_overview_cod_pending_alert") {
+            val overviewCodSettlements by QuickDeliveryOperationsManager.codSettlements.collectAsState()
+            val overviewFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+            AdminCodPendingAlertBanner(
+                riders = riders,
+                orders = orders,
+                settlements = overviewCodSettlements,
+                flags = overviewFlags,
+                onOpenPaymentsPage = { onNavigateToPage(AdminDedicatedPage.PAYMENTS_SETTLEMENTS) }
+            )
+        }
+
         item(key = "enterprise_overview_pending_rider_approvals") {
             RiderRegistrationApprovalManager.ensureLoaded(context)
             com.example.ui.rider.AdminPendingRiderApprovalsSection()
@@ -2110,8 +2138,12 @@ private fun DashboardRevenueAndOrdersChartsCard(
                         text = "Order Status Funnel (${orders.size} Total)",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = palette.textPrimary
+                        color = palette.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Surface(
                         color = Color(0xFFECFDF5),
                         shape = RoundedCornerShape(8.dp),
@@ -2122,6 +2154,8 @@ private fun DashboardRevenueAndOrdersChartsCard(
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = SidebarActiveTeal,
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         )
                     }
@@ -3545,6 +3579,8 @@ private fun EnterpriseLiveTrackingPage(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = DashEmerald,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
@@ -4570,6 +4606,44 @@ private fun EnterprisePaymentsSettlementsPage(
                     )
                 }
             }
+        }
+
+        item(key = "payments_porter_cod_cash_handover_ledger") {
+            val liveCodSettlements by QuickDeliveryOperationsManager.codSettlements.collectAsState()
+            val liveCodFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+            AdminCodCashHandoverLedgerCard(
+                riders = riders,
+                orders = orders,
+                settlements = liveCodSettlements,
+                flags = liveCodFlags,
+                onVerifyClaim = { claim ->
+                    QuickDeliveryOperationsManager.verifyRiderCodTransferClaimByAdmin(context, claim.settlementId)
+                    repository.setRiderCommissionDebt(claim.riderId, 0.0)
+                    val unlockedFleet = repository.riders.value.map { r ->
+                        if (r.riderId == claim.riderId) r.copy(accountStatus = "ACTIVE", commissionDebtInr = 0.0) else r
+                    }
+                    AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, unlockedFleet)
+                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                    settlementNotice = "✅ Verified ₹${claim.amountInr.toInt()} transfer from ${claim.riderName} (Ref: ${claim.referenceUtr}). Ledger reset to ₹0 (FREE) & Rider unlocked!"
+                },
+                onMarkFullPaidResetZero = { rider, ledger ->
+                    QuickDeliveryOperationsManager.markCodSettledByAdmin(
+                        context = context,
+                        riderId = rider.riderId,
+                        riderName = rider.name,
+                        riderPhone = rider.mobile,
+                        amountInr = ledger.unpaidCommissionDueInr,
+                        referenceUtr = "ADMIN_CLEARED_ZERO"
+                    )
+                    repository.setRiderCommissionDebt(rider.riderId, 0.0)
+                    val unlockedFleet = repository.riders.value.map { r ->
+                        if (r.riderId == rider.riderId) r.copy(accountStatus = "ACTIVE", commissionDebtInr = 0.0) else r
+                    }
+                    AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, unlockedFleet)
+                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                    settlementNotice = "✅ Marked ₹${ledger.unpaidCommissionDueInr.toInt()} COD commission PAID for ${rider.name}. Balance is now ₹0 (🟢 FREE)!"
+                }
+            )
         }
 
         item(key = "payments_cod_settlement_ledger") {

@@ -13,7 +13,7 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
-const APP_SUITE_VERSION = '6.3.9';
+const APP_SUITE_VERSION = '6.5.0';
 const ADMIN_ALLOWLIST_EMAILS = new Set([
   'ravindergupta141@gmail.com',
   'admin@quickdelivery.co.in',
@@ -166,6 +166,16 @@ function loadSyncState() {
           loadedFlags.referralWalletEnabled = false;
           loadedFlags.flagsSchemaVersion = 5;
         }
+        if (loadedFlags && Number(loadedFlags.flagsSchemaVersion || 5) < 6) {
+          loadedFlags.pickupDropOtpEnabled = false;
+          loadedFlags.flagsSchemaVersion = 6;
+        }
+        if (loadedFlags && Number(loadedFlags.flagsSchemaVersion || 6) < 7) {
+          loadedFlags.riderCodCommissionLimitInr = Number(loadedFlags.riderCodCommissionLimitInr || 200);
+          loadedFlags.adminUpiSettlementId = String(loadedFlags.adminUpiSettlementId || '');
+          loadedFlags.adminSettlementAccountLabel = String(loadedFlags.adminSettlementAccountLabel || '');
+          loadedFlags.flagsSchemaVersion = 7;
+        }
         return {
           resetEpochMs: Number(parsed.resetEpochMs || 0),
           ordersById: cleanOrders,
@@ -237,6 +247,11 @@ function loadSyncState() {
 
 let syncState = loadSyncState();
 let lastDailyBackupWriteMs = 0;
+let lastPermanentCloudSaveMs = 0;
+let permanentCloudSaveTimer = null;
+let lastEmailBackupEpochMs = 0;
+let lastEmailBackupIso = '';
+let permanentCloudHydrated = false;
 
 // ============================================================================
 // SERVER-SIDE ANTI-FAKE-ORDER & ANTI-LOAD SECURITY SHIELD
@@ -463,38 +478,301 @@ function writeDailyBackupSnapshot(force = false) {
   } catch {}
 }
 
-function syncWithMongoDataApiIfConfigured() {
-  const dataApiUrl = process.env.MONGODB_DATA_API_URL || '';
-  const dataApiKey = process.env.MONGODB_DATA_API_KEY || '';
-  if (!dataApiUrl || !dataApiKey) return;
+function detectPermanentCloudProvider() {
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) return 'SUPABASE_REST';
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) return 'UPSTASH_REDIS';
+  if (process.env.FIREBASE_RTDB_URL) return 'FIREBASE_RTDB';
+  if (process.env.MONGODB_DATA_API_URL && process.env.MONGODB_DATA_API_KEY) return 'MONGODB_DATA_API';
+  return 'RENDER_LOCAL_PLUS_GMAIL_BACKUP';
+}
+
+function makeHttpsJsonRequest(urlString, { method = 'GET', headers = {}, body = null, timeoutMs = 12000 } = {}) {
+  return new Promise((resolve, reject) => {
+    try {
+      const u = new URL(urlString);
+      const transport = u.protocol === 'http:' ? http : https;
+      const bodyStr = body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body));
+      const reqHeaders = { ...headers };
+      if (bodyStr != null && !reqHeaders['Content-Length']) {
+        reqHeaders['Content-Length'] = Buffer.byteLength(bodyStr);
+      }
+      const req = transport.request(
+        {
+          hostname: u.hostname,
+          port: u.port || (u.protocol === 'http:' ? 80 : 443),
+          path: u.pathname + (u.search || ''),
+          method,
+          headers: reqHeaders,
+          timeout: timeoutMs,
+        },
+        res => {
+          let data = '';
+          res.on('data', chunk => {
+            data += chunk;
+            if (data.length > 8 * 1024 * 1024) res.destroy();
+          });
+          res.on('end', () => {
+            resolve({ statusCode: res.statusCode || 0, body: data });
+          });
+        }
+      );
+      req.on('timeout', () => {
+        req.destroy(new Error('Cloud DB request timed out'));
+      });
+      req.on('error', err => reject(err));
+      if (bodyStr != null) req.write(bodyStr);
+      req.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function buildSanitizedCloudSnapshotObject() {
+  const copy = { ...syncState };
+  delete copy.emailOtpsByEmail;
+  return copy;
+}
+
+function applyHydratedCloudState(remoteState) {
+  if (!remoteState || typeof remoteState !== 'object') return false;
+  const mergeObj = key => {
+    const src = remoteState[key];
+    if (!src || typeof src !== 'object' || Array.isArray(src)) return;
+    if (!syncState[key] || typeof syncState[key] !== 'object') syncState[key] = {};
+    for (const [k, v] of Object.entries(src)) {
+      if (key === 'ordersById' && DEMO_ORDER_IDS.has(k)) continue;
+      if (!syncState[key][k] && v && typeof v === 'object') {
+        syncState[key][k] = v;
+      }
+    }
+  };
+  [
+    'ordersById',
+    'riderRegistrationsByKey',
+    'promoCouponsByCode',
+    'withdrawalRequestsById',
+    'supportTicketsById',
+    'chatMessagesById',
+    'codSettlementsById',
+    'disputeRecordsById',
+    'riderDocExpiriesById',
+    'paymentsByOrder',
+    'orderRatingsByOrder',
+    'orderTimelineEventsById',
+    'unreachableByOrder',
+    'b2bAccountsById',
+    'verifiedEmails',
+  ].forEach(mergeObj);
+  if (remoteState.waitTimerStartByOrder && typeof remoteState.waitTimerStartByOrder === 'object') {
+    syncState.waitTimerStartByOrder = {
+      ...remoteState.waitTimerStartByOrder,
+      ...(syncState.waitTimerStartByOrder || {}),
+    };
+  }
+  if (!syncState.adminCredentials && remoteState.adminCredentials) {
+    syncState.adminCredentials = remoteState.adminCredentials;
+  }
+  if (remoteState.remoteFeatureFlags && typeof remoteState.remoteFeatureFlags === 'object') {
+    const localTs = Number((syncState.remoteFeatureFlags && syncState.remoteFeatureFlags.updatedAtEpochMs) || 0);
+    const remoteTs = Number(remoteState.remoteFeatureFlags.updatedAtEpochMs || 0);
+    if (!syncState.remoteFeatureFlags || remoteTs >= localTs) {
+      syncState.remoteFeatureFlags = {
+        ...(syncState.remoteFeatureFlags || {}),
+        ...remoteState.remoteFeatureFlags,
+      };
+    }
+  }
+  return true;
+}
+
+async function hydrateSyncStateFromPermanentCloud() {
+  const provider = detectPermanentCloudProvider();
+  if (provider === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP') return;
   try {
-    const u = new URL(dataApiUrl);
-    const payload = JSON.stringify({
-      collection: 'quickdelivery_snapshots',
-      database: process.env.MONGODB_DB_NAME || 'quickdelivery',
-      dataSource: process.env.MONGODB_CLUSTER || 'Cluster0',
-      filter: { _id: 'live_state_v1' },
-      update: { $set: { state: syncState, updatedAt: new Date().toISOString() } },
-      upsert: true,
-    });
-    const req = https.request(
-      {
-        hostname: u.hostname,
-        port: u.port || 443,
-        path: u.pathname + (u.search || ''),
+    let remoteState = null;
+    if (provider === 'SUPABASE_REST') {
+      const base = process.env.SUPABASE_URL.replace(/\/+$/, '');
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const table = process.env.SUPABASE_STATE_TABLE || 'quickdelivery_state';
+      const resp = await makeHttpsJsonRequest(`${base}/rest/v1/${table}?id=eq.live_state_v1&select=payload`, {
+        method: 'GET',
+        headers: { apikey: key, Authorization: `Bearer ${key}`, Accept: 'application/json' },
+      });
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        const rows = JSON.parse(resp.body || '[]');
+        if (Array.isArray(rows) && rows[0] && rows[0].payload) {
+          remoteState = typeof rows[0].payload === 'string' ? JSON.parse(rows[0].payload) : rows[0].payload;
+        }
+      }
+    } else if (provider === 'UPSTASH_REDIS') {
+      const base = process.env.UPSTASH_REDIS_REST_URL.replace(/\/+$/, '');
+      const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+      const resp = await makeHttpsJsonRequest(`${base}/get/qd_live_state_v1`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        const parsed = JSON.parse(resp.body || '{}');
+        if (parsed && typeof parsed.result === 'string' && parsed.result.startsWith('{')) {
+          remoteState = JSON.parse(parsed.result);
+        }
+      }
+    } else if (provider === 'FIREBASE_RTDB') {
+      const base = process.env.FIREBASE_RTDB_URL.replace(/\/+$/, '');
+      const authParam = process.env.FIREBASE_RTDB_AUTH ? `?auth=${encodeURIComponent(process.env.FIREBASE_RTDB_AUTH)}` : '';
+      const resp = await makeHttpsJsonRequest(`${base}/quickdelivery_live_state_v1.json${authParam}`, {
+        method: 'GET',
+      });
+      if (resp.statusCode >= 200 && resp.statusCode < 300 && resp.body && resp.body !== 'null') {
+        const parsed = JSON.parse(resp.body);
+        remoteState = parsed && parsed.state ? parsed.state : parsed;
+      }
+    } else if (provider === 'MONGODB_DATA_API') {
+      const findUrl = process.env.MONGODB_DATA_API_URL.replace(/\/action\/[a-zA-Z]+$/, '/action/findOne');
+      const resp = await makeHttpsJsonRequest(findUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': process.env.MONGODB_DATA_API_KEY },
+        body: {
+          collection: 'quickdelivery_snapshots',
+          database: process.env.MONGODB_DB_NAME || 'quickdelivery',
+          dataSource: process.env.MONGODB_CLUSTER || 'Cluster0',
+          filter: { _id: 'live_state_v1' },
+        },
+      });
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        const parsed = JSON.parse(resp.body || '{}');
+        if (parsed && parsed.document && parsed.document.state) {
+          remoteState = parsed.document.state;
+        }
+      }
+    }
+    if (remoteState && applyHydratedCloudState(remoteState)) {
+      permanentCloudHydrated = true;
+      try {
+        fs.writeFileSync(SYNC_STATE_FILE, JSON.stringify(syncState), 'utf-8');
+      } catch {}
+      console.log(`[CloudDB] Hydrated Quick Delivery live state from ${provider} (${Object.keys(syncState.ordersById || {}).length} orders)`);
+    }
+  } catch (err) {
+    console.warn(`[CloudDB] Startup hydrate warning (${provider}): ${formatNodeError(err)}`);
+  }
+}
+
+async function pushSyncStateToPermanentCloudNow() {
+  const provider = detectPermanentCloudProvider();
+  if (provider === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP') return;
+  const snapshot = buildSanitizedCloudSnapshotObject();
+  const updatedAt = new Date().toISOString();
+  try {
+    if (provider === 'SUPABASE_REST') {
+      const base = process.env.SUPABASE_URL.replace(/\/+$/, '');
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const table = process.env.SUPABASE_STATE_TABLE || 'quickdelivery_state';
+      await makeHttpsJsonRequest(`${base}/rest/v1/${table}`, {
         method: 'POST',
         headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
           'Content-Type': 'application/json',
-          'api-key': dataApiKey,
-          'Content-Length': Buffer.byteLength(payload),
+          Prefer: 'resolution=merge-duplicates',
         },
-      },
-      res => res.resume()
-    );
-    req.on('error', () => {});
-    req.write(payload);
-    req.end();
+        body: { id: 'live_state_v1', payload: snapshot, updated_at: updatedAt },
+      });
+    } else if (provider === 'UPSTASH_REDIS') {
+      const base = process.env.UPSTASH_REDIS_REST_URL.replace(/\/+$/, '');
+      const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+      await makeHttpsJsonRequest(`${base}/set/qd_live_state_v1`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot),
+      });
+    } else if (provider === 'FIREBASE_RTDB') {
+      const base = process.env.FIREBASE_RTDB_URL.replace(/\/+$/, '');
+      const authParam = process.env.FIREBASE_RTDB_AUTH ? `?auth=${encodeURIComponent(process.env.FIREBASE_RTDB_AUTH)}` : '';
+      await makeHttpsJsonRequest(`${base}/quickdelivery_live_state_v1.json${authParam}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: { state: snapshot, updatedAt },
+      });
+    } else if (provider === 'MONGODB_DATA_API') {
+      await makeHttpsJsonRequest(process.env.MONGODB_DATA_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': process.env.MONGODB_DATA_API_KEY },
+        body: {
+          collection: 'quickdelivery_snapshots',
+          database: process.env.MONGODB_DB_NAME || 'quickdelivery',
+          dataSource: process.env.MONGODB_CLUSTER || 'Cluster0',
+          filter: { _id: 'live_state_v1' },
+          update: { $set: { state: snapshot, updatedAt } },
+          upsert: true,
+        },
+      });
+    }
+    lastPermanentCloudSaveMs = Date.now();
   } catch {}
+}
+
+function schedulePermanentCloudSync() {
+  if (detectPermanentCloudProvider() === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP') return;
+  const now = Date.now();
+  if (now - lastPermanentCloudSaveMs >= 4000) {
+    lastPermanentCloudSaveMs = now;
+    pushSyncStateToPermanentCloudNow().catch(() => {});
+    return;
+  }
+  if (!permanentCloudSaveTimer) {
+    permanentCloudSaveTimer = setTimeout(() => {
+      permanentCloudSaveTimer = null;
+      pushSyncStateToPermanentCloudNow().catch(() => {});
+    }, 4000);
+  }
+}
+
+async function sendBackupSnapshotEmailToAdmin(force = false) {
+  const now = Date.now();
+  const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+  if (!force && now - lastEmailBackupEpochMs < TWENTY_FOUR_HOURS_MS) {
+    return { skipped: true, reason: 'Already backed up within 24h' };
+  }
+  const targetEmail = (process.env.ADMIN_BACKUP_EMAIL || 'ravindergupta141@gmail.com').trim();
+  const sanitized = buildSanitizedCloudSnapshotObject();
+  const ordersArr = Object.values(sanitized.ordersById || {});
+  const ridersArr = Object.values(sanitized.riderRegistrationsByKey || {});
+  const settlementsArr = Object.values(sanitized.codSettlementsById || {});
+  const dayStr = new Date(now).toISOString().slice(0, 10);
+  const fullSnapshotStr = JSON.stringify(
+    { exportedAtIso: new Date(now).toISOString(), version: APP_SUITE_VERSION, ...sanitized },
+    null,
+    2
+  );
+  // Keep email body safely below SMTP/API size limits (~180KB max)
+  const truncatedNote = fullSnapshotStr.length > 160000
+    ? '\n\n[Snapshot trimmed for email size; download full JSON from Admin App → Save Backup]'
+    : '';
+  const bodyJsonPart = fullSnapshotStr.slice(0, 160000) + truncatedNote;
+  const textBody = [
+    `Quick Delivery Cloud Backup Snapshot (${dayStr})`,
+    `App Suite Version: v${APP_SUITE_VERSION}`,
+    `Permanent Cloud Storage: ${detectPermanentCloudProvider()}`,
+    `Orders: ${ordersArr.length} | Registered Riders: ${ridersArr.length} | COD Settlements: ${settlementsArr.length}`,
+    '',
+    'To restore after a server restart, open Quick Delivery Admin → Settings → Cloud Server Health & Backup Shield.',
+    '',
+    '--- JSON SNAPSHOT ---',
+    bodyJsonPart,
+  ].join('\n');
+
+  const deliveryInfo = await sendQuickDeliveryEmail({
+    toEmail: targetEmail,
+    subject: `[Quick Delivery Backup] ${dayStr} — ${ordersArr.length} Orders, ${ridersArr.length} Riders`,
+    textBody,
+    type: 'ADMIN_CLOUD_BACKUP',
+    extra: { ordersCount: ordersArr.length, ridersCount: ridersArr.length },
+  });
+  lastEmailBackupEpochMs = now;
+  lastEmailBackupIso = new Date(now).toISOString();
+  return { ok: true, toEmail: targetEmail, channel: deliveryInfo.channel, backedUpAtIso: lastEmailBackupIso };
 }
 
 function sendFcmPushNotifications({ tokens, title, body, data = {} }) {
@@ -958,7 +1236,7 @@ function saveSyncState() {
   try {
     fs.writeFileSync(SYNC_STATE_FILE, JSON.stringify(syncState), 'utf-8');
     writeDailyBackupSnapshot(false);
-    syncWithMongoDataApiIfConfigured();
+    schedulePermanentCloudSync();
   } catch {}
 }
 
@@ -1561,6 +1839,23 @@ function configureNginxDirectApkServing() {
             proxy_pass http://localhost:3000/api/backup-export;
             proxy_set_header Host localhost:3000;
             add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Allow-Headers "Content-Type, Accept, Authorization, X-QD-App-Client, X-QD-Device-Id, X-QD-App-Role, X-QD-Sync-Ts, X-QD-Sync-Sig";
+        }
+
+        location = /api/backup-restore {
+            proxy_pass http://localhost:3000/api/backup-restore;
+            proxy_set_header Host localhost:3000;
+            add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Allow-Methods "POST, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Accept, Authorization, X-QD-App-Client, X-QD-Device-Id, X-QD-App-Role, X-QD-Sync-Ts, X-QD-Sync-Sig";
+        }
+
+        location = /api/backup-email {
+            proxy_pass http://localhost:3000/api/backup-email;
+            proxy_set_header Host localhost:3000;
+            add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Allow-Methods "POST, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Accept, Authorization, X-QD-App-Client, X-QD-Device-Id, X-QD-App-Role, X-QD-Sync-Ts, X-QD-Sync-Sig";
         }
 
         location /api/payments/ {
@@ -1907,6 +2202,16 @@ const server = http.createServer((req, res) => {
               incomingFlags.promoCodeEnabled = false;
               incomingFlags.referralWalletEnabled = false;
               incomingFlags.flagsSchemaVersion = 5;
+            }
+            if (Number(incomingFlags.flagsSchemaVersion || 5) < 6) {
+              incomingFlags.pickupDropOtpEnabled = false;
+              incomingFlags.flagsSchemaVersion = 6;
+            }
+            if (Number(incomingFlags.flagsSchemaVersion || 6) < 7) {
+              incomingFlags.riderCodCommissionLimitInr = Number(incomingFlags.riderCodCommissionLimitInr || 200);
+              incomingFlags.adminUpiSettlementId = String(incomingFlags.adminUpiSettlementId || '');
+              incomingFlags.adminSettlementAccountLabel = String(incomingFlags.adminSettlementAccountLabel || '');
+              incomingFlags.flagsSchemaVersion = 7;
             }
             const prevFlags = syncState.remoteFeatureFlags;
             const inTs = Number(incomingFlags.updatedAtEpochMs || 0);
@@ -2287,6 +2592,154 @@ const server = http.createServer((req, res) => {
       return;
     }
     res.end(buf);
+    return;
+  }
+
+  if (pathname === '/api/backup-restore' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many restore requests. Please wait shortly.' }));
+      return;
+    }
+    let rawBody = '';
+    req.on('data', chunk => {
+      rawBody += chunk;
+      if (rawBody.length > 4 * 1024 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const parsedBody = JSON.parse(rawBody || '{}');
+        const qDeviceId = String(parsedBody.deviceId || req.headers['x-qd-device-id'] || '').trim();
+        const qTs = String(req.headers['x-qd-sync-ts'] || '').trim();
+        const qSig = String(req.headers['x-qd-sync-sig'] || '').trim();
+        const adminBackupKey = String(process.env.ADMIN_BACKUP_KEY || '').trim();
+        const authHeader = String(req.headers.authorization || '').trim();
+        const bearerKey = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+
+        let isAuthorized = false;
+        if (adminBackupKey && bearerKey) {
+          const a = Buffer.from(bearerKey, 'utf-8');
+          const b = Buffer.from(adminBackupKey, 'utf-8');
+          if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+            isAuthorized = true;
+          }
+        }
+        if (!isAuthorized && qDeviceId && qTs && qSig) {
+          const fakeReq = { headers: { 'x-qd-sync-ts': qTs, 'x-qd-sync-sig': qSig } };
+          const sigCheck = verifySyncHmacHeaders(fakeReq, qDeviceId, 'ADMIN');
+          if (sigCheck.ok) isAuthorized = true;
+        }
+        if (!isAuthorized) {
+          recordSecurityBlock('INVALID_SIG', getClientIp(req), 'Unauthorized /api/backup-restore attempt blocked');
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ ok: false, error: 'Admin HMAC authentication required to restore backups.' }));
+          return;
+        }
+
+        const snapshot = parsedBody.snapshot && typeof parsedBody.snapshot === 'object' ? parsedBody.snapshot : parsedBody;
+        if (!snapshot || typeof snapshot !== 'object') {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, error: 'Missing valid backup snapshot object.' }));
+          return;
+        }
+
+        const mergeMap = (targetKey) => {
+          const src = snapshot[targetKey];
+          if (!src || typeof src !== 'object' || Array.isArray(src)) return 0;
+          if (!syncState[targetKey] || typeof syncState[targetKey] !== 'object') syncState[targetKey] = {};
+          let count = 0;
+          for (const [k, v] of Object.entries(src)) {
+            if (targetKey === 'ordersById' && DEMO_ORDER_IDS.has(k)) continue;
+            if (v && typeof v === 'object') {
+              syncState[targetKey][k] = v;
+              count += 1;
+            }
+          }
+          return count;
+        };
+
+        const restoredOrders = mergeMap('ordersById');
+        const restoredRiders = mergeMap('riderRegistrationsByKey');
+        mergeMap('promoCouponsByCode');
+        mergeMap('withdrawalRequestsById');
+        mergeMap('supportTicketsById');
+        mergeMap('chatMessagesById');
+        mergeMap('codSettlementsById');
+        mergeMap('disputeRecordsById');
+        mergeMap('orderRatingsByOrder');
+        mergeMap('b2bAccountsById');
+        mergeMap('riderDocExpiriesById');
+        if (snapshot.waitTimerStartByOrder && typeof snapshot.waitTimerStartByOrder === 'object') {
+          syncState.waitTimerStartByOrder = {
+            ...(syncState.waitTimerStartByOrder || {}),
+            ...snapshot.waitTimerStartByOrder,
+          };
+        }
+        if (snapshot.remoteFeatureFlags && typeof snapshot.remoteFeatureFlags === 'object') {
+          syncState.remoteFeatureFlags = {
+            ...(syncState.remoteFeatureFlags || {}),
+            ...snapshot.remoteFeatureFlags,
+            updatedAtEpochMs: Date.now(),
+          };
+        }
+        saveSyncState();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({
+          ok: true,
+          version: APP_SUITE_VERSION,
+          restoredOrders,
+          restoredRiders,
+          restoredAtIso: new Date().toISOString(),
+        }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: false, error: err && err.message ? err.message : 'Invalid backup JSON payload' }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/backup-email' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many backup email requests. Please wait shortly.' }));
+      return;
+    }
+    let rawBody = '';
+    req.on('data', chunk => {
+      rawBody += chunk;
+      if (rawBody.length > 64 * 1024) req.destroy();
+    });
+    req.on('end', async () => {
+      try {
+        const parsedBody = JSON.parse(rawBody || '{}');
+        const qDeviceId = String(parsedBody.deviceId || req.headers['x-qd-device-id'] || '').trim();
+        const qTs = String(req.headers['x-qd-sync-ts'] || '').trim();
+        const qSig = String(req.headers['x-qd-sync-sig'] || '').trim();
+        const sigCheck = qDeviceId && qTs && qSig
+          ? verifySyncHmacHeaders({ headers: { 'x-qd-sync-ts': qTs, 'x-qd-sync-sig': qSig } }, qDeviceId, 'ADMIN')
+          : { ok: false };
+        if (!sigCheck.ok) {
+          recordSecurityBlock('INVALID_SIG', getClientIp(req), 'Unauthorized /api/backup-email attempt blocked');
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ ok: false, error: 'Admin HMAC authentication required to email backup.' }));
+          return;
+        }
+        const info = await sendBackupSnapshotEmailToAdmin(true);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({
+          ok: true,
+          message: `Backup emailed to ${info.toEmail} via ${info.channel}`,
+          toEmail: info.toEmail,
+          backedUpAtIso: info.backedUpAtIso,
+        }));
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ ok: false, error: formatNodeError(err) }));
+      }
+    });
     return;
   }
 
@@ -2792,6 +3245,9 @@ const server = http.createServer((req, res) => {
         activeSearchingOrders,
         registeredRiders: syncPayload.riderRegistrations.length,
         withdrawalRequestsCount: syncPayload.withdrawalRequests.length,
+        permanentCloudProvider: detectPermanentCloudProvider(),
+        permanentCloudHydrated,
+        lastEmailBackupIso,
         securityStats: {
           blockedFakeOrders: Number(secStats.blockedFakeOrders || 0),
           rateLimitedRequests: Number(secStats.rateLimitedRequests || 0),
@@ -2952,5 +3408,13 @@ server.on('error', () => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Quick Delivery Mobile APK & Live Sync Server listening on http://0.0.0.0:${PORT}`);
+  console.log(`Quick Delivery Mobile APK & Live Sync Server listening on http://0.0.0.0:${PORT} (Cloud: ${detectPermanentCloudProvider()})`);
+  hydrateSyncStateFromPermanentCloud().catch(() => {});
+  // Schedule automatic 24-hour backup email to Admin Gmail (safe no-op if email provider env is unset)
+  const DAILY_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  setInterval(() => {
+    if (Object.keys(syncState.ordersById || {}).length > 0 || Object.keys(syncState.riderRegistrationsByKey || {}).length > 0) {
+      sendBackupSnapshotEmailToAdmin(false).catch(() => {});
+    }
+  }, DAILY_BACKUP_INTERVAL_MS).unref();
 });

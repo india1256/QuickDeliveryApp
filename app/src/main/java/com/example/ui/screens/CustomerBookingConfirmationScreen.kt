@@ -47,6 +47,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -314,6 +316,7 @@ fun CustomerBookingConfirmationScreen(
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
+                            val bookingRemoteFlags by com.example.data.cloud.QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
                             Text(
                                 text = "Ready to Dispatch!",
                                 style = MaterialTheme.typography.titleSmall,
@@ -321,7 +324,11 @@ fun CustomerBookingConfirmationScreen(
                                 color = DeepTeal
                             )
                             Text(
-                                text = "Pickup OTP & Delivery OTP will be generated upon confirming.",
+                                text = if (bookingRemoteFlags.pickupDropOtpEnabled) {
+                                    "Pickup OTP & Delivery OTP will be generated upon confirming."
+                                } else {
+                                    "Direct Pickup & Drop Confirmation active — ready for fast dispatch."
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SlateMuted
                             )
@@ -578,12 +585,18 @@ fun CustomerBookingConfirmationScreen(
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
                                     text = vehicleName,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = DeepNavy
+                                    color = DeepNavy,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Surface(
@@ -595,6 +608,8 @@ fun CustomerBookingConfirmationScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = PrimaryTeal,
+                                        maxLines = 1,
+                                        softWrap = false,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }

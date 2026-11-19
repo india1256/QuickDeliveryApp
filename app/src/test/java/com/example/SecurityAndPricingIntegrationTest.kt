@@ -486,13 +486,16 @@ class SecurityAndPricingIntegrationTest {
     }
 
     @Test
-    fun testSchemaV5DefaultsAndAdminFutureSwitches() {
-        // 1. Fresh Schema v5 defaults hide Auto, Promo Codes, and Refer & Earn until Admin enables them
+    fun testSchemaV7DefaultsAndAdminFutureSwitches() {
+        // 1. Fresh Schema v7 defaults hide Auto, Promo Codes, Refer & Earn, and Pickup/Drop OTP + enforce ₹200 COD limit
         val defaults = com.example.data.cloud.AdminRemoteFeatureFlags()
-        assertEquals(5, defaults.flagsSchemaVersion)
+        assertEquals(7, defaults.flagsSchemaVersion)
+        assertEquals(200, defaults.riderCodCommissionLimitInr)
+        assertEquals("", defaults.adminUpiSettlementId)
         assertFalse(defaults.autoEnabled)
         assertFalse(defaults.promoCodeEnabled)
         assertFalse(defaults.referralWalletEnabled)
+        assertFalse(defaults.pickupDropOtpEnabled)
         assertTrue(defaults.bikeEnabled)
         assertTrue(defaults.scooterEnabled)
 
@@ -501,23 +504,49 @@ class SecurityAndPricingIntegrationTest {
         assertTrue(defaultPolicy.bikeEnabled)
         assertTrue(defaultPolicy.scooterEnabled)
 
-        // 2. Legacy v4 JSON automatically migrates Auto, Promo Code, and Refer & Earn to OFF
+        // 2. Legacy v6 JSON migrates cleanly to Schema v7 with ₹200 COD commission limit
+        val legacyV6Json = org.json.JSONObject().apply {
+            put("flagsSchemaVersion", 6)
+            put("pickupDropOtpEnabled", false)
+        }
+        val migratedFromV6 = com.example.data.cloud.AdminRemoteFeatureFlags.fromJson(legacyV6Json)
+        assertEquals(7, migratedFromV6.flagsSchemaVersion)
+        assertEquals(200, migratedFromV6.riderCodCommissionLimitInr)
+        assertFalse(migratedFromV6.pickupDropOtpEnabled)
+
+        // Legacy v5 JSON automatically migrates Pickup/Drop OTP to OFF + Schema v7
+        val legacyV5Json = org.json.JSONObject().apply {
+            put("flagsSchemaVersion", 5)
+            put("pickupDropOtpEnabled", true)
+        }
+        val migratedFromV5 = com.example.data.cloud.AdminRemoteFeatureFlags.fromJson(legacyV5Json)
+        assertEquals(7, migratedFromV5.flagsSchemaVersion)
+        assertFalse(migratedFromV5.pickupDropOtpEnabled)
+        assertEquals(200, migratedFromV5.riderCodCommissionLimitInr)
+
+        // Legacy v4 JSON also migrates Auto, Promo Code, Refer & Earn, and Pickup/Drop OTP to OFF
         val legacyV4Json = org.json.JSONObject().apply {
             put("flagsSchemaVersion", 4)
             put("autoEnabled", true)
             put("referralWalletEnabled", true)
+            put("pickupDropOtpEnabled", true)
         }
         val migrated = com.example.data.cloud.AdminRemoteFeatureFlags.fromJson(legacyV4Json)
-        assertEquals(5, migrated.flagsSchemaVersion)
+        assertEquals(7, migrated.flagsSchemaVersion)
         assertFalse(migrated.autoEnabled)
         assertFalse(migrated.promoCodeEnabled)
         assertFalse(migrated.referralWalletEnabled)
+        assertFalse(migrated.pickupDropOtpEnabled)
 
-        // 3. Admin turning Auto, Promo Code, and Refer & Earn ON in Schema v5 round-trips & propagates cleanly
+        // 3. Admin turning switches ON + custom COD limit & Admin UPI in Schema v7 round-trips cleanly
         val adminEnabled = defaults.copy(
             autoEnabled = true,
             promoCodeEnabled = true,
             referralWalletEnabled = true,
+            pickupDropOtpEnabled = true,
+            riderCodCommissionLimitInr = 350,
+            adminUpiSettlementId = "owner@upi",
+            adminSettlementAccountLabel = "Quick Delivery Ops",
             remoteRateCardOverrideEnabled = true,
             bikeBaseFareInr = 45.0,
             scooterBaseFareInr = 55.0,
@@ -527,6 +556,10 @@ class SecurityAndPricingIntegrationTest {
         assertTrue(roundTrip.autoEnabled)
         assertTrue(roundTrip.promoCodeEnabled)
         assertTrue(roundTrip.referralWalletEnabled)
+        assertTrue(roundTrip.pickupDropOtpEnabled)
+        assertEquals(350, roundTrip.riderCodCommissionLimitInr)
+        assertEquals("owner@upi", roundTrip.adminUpiSettlementId)
+        assertEquals("Quick Delivery Ops", roundTrip.adminSettlementAccountLabel)
 
         com.example.data.cloud.QuickDeliveryOperationsManager.applyPricingOverridesFromFlags(roundTrip, sharedRepo)
         assertTrue(com.example.data.delivery.AutomatedFairRiderAssignmentEngine.vehicleAndWeightPolicy.value.autoEnabled)
@@ -536,6 +569,209 @@ class SecurityAndPricingIntegrationTest {
 
         // Restore defaults cleanly
         com.example.data.delivery.AutomatedFairRiderAssignmentEngine.resetPricingAndWeightPolicyToDefaults(sharedRepo)
+    }
+
+    @Test
+    fun testResilienceShieldAndWhatsAppDigitalBill() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Crash Shield record -> persist -> reload -> build summary -> clear
+        com.example.security.QuickDeliveryCrashShield.clearPendingCrashReport(context)
+        assertEquals(null, com.example.security.QuickDeliveryCrashShield.loadPendingReport(context))
+
+        val saved = com.example.security.QuickDeliveryCrashShield.recordCrashForTesting(
+            context = context,
+            appRole = "CUSTOMER",
+            exceptionSummary = "IllegalStateException: Sample test exception",
+            stackTracePreview = "at com.example.Sample.run(Sample.kt:12)",
+            appVersion = "6.4.0"
+        )
+        val reloaded = com.example.security.QuickDeliveryCrashShield.loadPendingReport(context)
+        assertEquals(saved.crashId, reloaded?.crashId)
+        assertEquals("CUSTOMER", reloaded?.appRole)
+        val shareText = com.example.security.QuickDeliveryCrashShield.buildShareableCrashSummary(saved)
+        assertTrue(shareText.contains(saved.crashId))
+        assertTrue(shareText.contains("v6.4.0"))
+
+        com.example.security.QuickDeliveryCrashShield.clearPendingCrashReport(context)
+        assertEquals(null, com.example.security.QuickDeliveryCrashShield.pendingCrashReport.value)
+
+        // 2. Digital WhatsApp Delivery Bill formatting (₹0 free)
+        val sampleOrder = com.example.data.model.CustomerOrder(
+            orderId = "QD-9901",
+            customerId = "CUST-1",
+            customerName = "Rahul Verma",
+            customerPhone = "9876543210",
+            pickupAddress = com.example.data.model.AddressDetails(
+                fullAddress = "MG Road, Bengaluru",
+                landmark = "Metro",
+                contactName = "Rahul Verma",
+                contactPhone = "9876543210"
+            ),
+            dropAddress = com.example.data.model.AddressDetails(
+                fullAddress = "Indiranagar 100ft Rd, Bengaluru",
+                landmark = "CMH",
+                contactName = "Neha Kapoor",
+                contactPhone = "9123456789"
+            ),
+            packageDetails = com.example.data.model.PackageDetails(
+                packageType = com.example.data.model.PackageType.DOCUMENTS,
+                weightKg = "1.0",
+                description = "Office File"
+            ),
+            vehicleType = com.example.data.model.VehicleType.SCOOTER,
+            orderStatus = com.example.data.model.OrderStatus.DELIVERED,
+            totalAmount = "₹95",
+            platformCommission = "₹19",
+            riderEarning = "₹76",
+            distanceKm = 4.2,
+            pickupOtp = "1234",
+            deliveryOtp = "5678",
+            assignedRiderId = "RIDER-9",
+            assignedRiderName = "Vikas Kumar",
+            paymentMethod = com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY,
+            paymentStatus = com.example.data.model.PaymentVerificationStatus.UNPAID_CASH_DUE,
+            createdAt = "19 Nov 2026, 02:15 PM"
+        )
+        val receipt = com.example.security.DigitalReceiptShareHelper.buildFormattedDigitalReceiptText(
+            order = sampleOrder,
+            tipAmountInr = 20
+        )
+        assertTrue(receipt.contains("QD-9901"))
+        assertTrue(receipt.contains("MG Road, Bengaluru"))
+        assertTrue(receipt.contains("Indiranagar 100ft Rd, Bengaluru"))
+        assertTrue(receipt.contains("Neha Kapoor"))
+        assertTrue(receipt.contains("Vikas Kumar"))
+        assertTrue(receipt.contains("₹115"))
+        assertTrue(receipt.contains("Cash on Delivery"))
+    }
+
+    @Test
+    fun testPorterStyle200CodLimitLockAndAdminResetToZero() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val riderId = "RIDER-COD-LOCK-200"
+        val flags = com.example.data.cloud.AdminRemoteFeatureFlags(
+            platformCommissionPercent = 20,
+            riderCodCommissionLimitInr = 200
+        )
+
+        fun makeDeliveredCodOrder(idx: Int): com.example.data.model.CustomerOrder =
+            com.example.data.model.CustomerOrder(
+                orderId = "QD-COD-$idx",
+                customerId = "CUST-$idx",
+                customerName = "Customer $idx",
+                customerPhone = "9876543210",
+                pickupAddress = com.example.data.model.AddressDetails(
+                    fullAddress = "Pickup $idx",
+                    landmark = "",
+                    contactName = "Sender",
+                    contactPhone = "9876543210"
+                ),
+                dropAddress = com.example.data.model.AddressDetails(
+                    fullAddress = "Drop $idx",
+                    landmark = "",
+                    contactName = "Receiver",
+                    contactPhone = "9876543211"
+                ),
+                packageDetails = com.example.data.model.PackageDetails(
+                    packageType = com.example.data.model.PackageType.DOCUMENTS,
+                    weightKg = "1.0",
+                    description = "Box"
+                ),
+                vehicleType = com.example.data.model.VehicleType.SCOOTER,
+                orderStatus = com.example.data.model.OrderStatus.DELIVERED,
+                totalAmount = "₹100",
+                platformCommission = "₹20",
+                riderEarning = "₹80",
+                distanceKm = 3.0,
+                pickupOtp = "",
+                deliveryOtp = "",
+                assignedRiderId = riderId,
+                assignedRiderName = "Ravi Partner",
+                paymentMethod = com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY,
+                paymentStatus = com.example.data.model.PaymentVerificationStatus.UNPAID_CASH_DUE,
+                createdAt = "Today"
+            )
+
+        // 1. After 9 COD orders of ₹100 (₹900 cash, ₹720 kept by Rider, ₹180 due < ₹200): NOT locked yet
+        val nineOrders = (1..9).map { makeDeliveredCodOrder(it) }
+        val snapBeforeLock = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 180.0,
+            orders = nineOrders,
+            settlements = emptyList(),
+            flags = flags
+        )
+        assertEquals(900.0, snapBeforeLock.totalCodCashCollectedInr, 0.01)
+        assertEquals(720.0, snapBeforeLock.rider80ShareKeptInr, 0.01)
+        assertEquals(180.0, snapBeforeLock.unpaidCommissionDueInr, 0.01)
+        assertEquals(20.0, snapBeforeLock.remainingBeforeLockInr, 0.01)
+        assertFalse(snapBeforeLock.isLockedAtLimit)
+        assertFalse(snapBeforeLock.isFreeZeroDue)
+
+        // 2. After 10th COD order of ₹100 (₹1000 cash, ₹800 Rider 80%, ₹200 Company 20% due): LOCKED!
+        val tenOrders = (1..10).map { makeDeliveredCodOrder(it) }
+        val snapLocked = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 200.0,
+            orders = tenOrders,
+            settlements = emptyList(),
+            flags = flags
+        )
+        assertEquals(1000.0, snapLocked.totalCodCashCollectedInr, 0.01)
+        assertEquals(800.0, snapLocked.rider80ShareKeptInr, 0.01)
+        assertEquals(200.0, snapLocked.unpaidCommissionDueInr, 0.01)
+        assertTrue("Rider must be LOCKED once unpaid 20% COD commission reaches ₹200", snapLocked.isLockedAtLimit)
+
+        // 3. Rider submits ₹200 transfer claim (PENDING_ADMIN): Rider stays LOCKED until Admin verifies!
+        val claim = com.example.data.cloud.QuickDeliveryOperationsManager.submitRiderCodTransferClaim(
+            context = context,
+            riderId = riderId,
+            riderName = "Ravi Partner",
+            riderPhone = "9876543210",
+            amountInr = 200.0,
+            referenceUtr = "UTR9988776655"
+        )!!
+        assertEquals("PENDING_ADMIN", claim.status)
+        val snapPending = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 200.0,
+            orders = tenOrders,
+            settlements = listOf(claim),
+            flags = flags
+        )
+        assertTrue("Pending claim must NOT unlock Rider before Admin verification", snapPending.isLockedAtLimit)
+        assertEquals(200.0, snapPending.pendingTransferClaimInr, 0.01)
+
+        // 4. Admin verifies claim -> resets due to ₹0 (🟢 FREE) & unlocks Rider even before local debt resets!
+        val verified = com.example.data.cloud.QuickDeliveryOperationsManager.verifyRiderCodTransferClaimByAdmin(
+            context = context,
+            settlementId = claim.settlementId
+        )!!
+        assertEquals("VERIFIED", verified.status)
+        val snapUnlocked = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 200.0,
+            orders = tenOrders,
+            settlements = listOf(verified),
+            flags = flags
+        )
+        assertEquals(0.0, snapUnlocked.unpaidCommissionDueInr, 0.01)
+        assertTrue("Rider must be FREE (₹0 Due) after Admin verifies ₹200 transfer", snapUnlocked.isFreeZeroDue)
+        assertFalse("Rider must be UNLOCKED after Admin verifies ₹200 transfer", snapUnlocked.isLockedAtLimit)
+
+        // 5. End-of-Day WhatsApp Shift Slip renders clean breakdown
+        val slip = com.example.data.cloud.QuickDeliveryOperationsManager.buildRiderShiftSummarySlipText(
+            riderName = "Ravi Partner",
+            riderId = riderId,
+            todayTripsCount = 10,
+            todayNetEarningInr = 800,
+            ledger = snapUnlocked
+        )
+        assertTrue(slip.contains("Ravi Partner"))
+        assertTrue(slip.contains("₹1000"))
+        assertTrue(slip.contains("₹800"))
+        assertTrue(slip.contains("FREE (₹0 Due)"))
     }
 }
 

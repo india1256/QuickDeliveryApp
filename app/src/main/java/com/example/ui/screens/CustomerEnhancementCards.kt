@@ -598,6 +598,7 @@ fun CustomerHelperAddonCard(
 @Composable
 fun CustomerSendReceiverOtpCard(
     order: CustomerOrder,
+    otpEnabled: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -611,10 +612,12 @@ fun CustomerSendReceiverOtpCard(
                 val riderPhonePart = order.assignedRiderPhone?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
                 appendLine("Rider Partner: ${order.assignedRiderName}$riderPhonePart")
             }
-            if (order.paymentMethod != com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY) {
+            if (otpEnabled && order.paymentMethod != com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY) {
                 appendLine("DROP OTP (Share with Rider at Delivery): ${order.deliveryOtp}")
-            } else {
+            } else if (order.paymentMethod == com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY) {
                 appendLine("Payment Mode: Cash on Delivery (${order.totalAmount})")
+            } else {
+                appendLine("Payment Mode: Paid Online (${order.totalAmount}) — Direct Handover")
             }
             append("Track / Download Quick Delivery: ${com.example.data.cloud.QuickDeliveryBrandLinks.CUSTOMER_APK_URL}")
         }
@@ -664,12 +667,18 @@ fun CustomerSendReceiverOtpCard(
                 if (!openedWhatsApp) {
                     val fallbackIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
-                        putExtra(Intent.EXTRA_SUBJECT, "Quick Delivery Order #${order.orderId} & Drop OTP")
+                        putExtra(
+                            Intent.EXTRA_SUBJECT,
+                            if (otpEnabled) "Quick Delivery Order #${order.orderId} & Drop OTP" else "Quick Delivery Order #${order.orderId}"
+                        )
                         putExtra(Intent.EXTRA_TEXT, summary)
                     }
                     runCatching {
                         context.startActivity(
-                            Intent.createChooser(fallbackIntent, "Share Order & OTP on WhatsApp").apply {
+                            Intent.createChooser(
+                                fallbackIntent,
+                                if (otpEnabled) "Share Order & OTP on WhatsApp" else "Share Order Details on WhatsApp"
+                            ).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
                         )
@@ -686,7 +695,7 @@ fun CustomerSendReceiverOtpCard(
             Icon(Icons.Default.Share, contentDescription = "Share on WhatsApp", tint = Color.White, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = "💬 Share Order & OTP on WhatsApp",
+                text = if (otpEnabled) "💬 Share Order & OTP on WhatsApp" else "💬 Share Live Order on WhatsApp",
                 fontWeight = FontWeight.ExtraBold,
                 color = Color.White,
                 maxLines = 1,
@@ -699,11 +708,19 @@ fun CustomerSendReceiverOtpCard(
                 val summary = buildShareMessage()
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, "Quick Delivery Drop OTP (${order.deliveryOtp}) - #${order.orderId}")
+                    putExtra(
+                        Intent.EXTRA_SUBJECT,
+                        if (otpEnabled) "Quick Delivery Drop OTP (${order.deliveryOtp}) - #${order.orderId}" else "Quick Delivery Tracking - #${order.orderId}"
+                    )
                     putExtra(Intent.EXTRA_TEXT, summary)
                 }
                 runCatching {
-                    context.startActivity(Intent.createChooser(shareIntent, "Send Tracking & Drop OTP to Receiver"))
+                    context.startActivity(
+                        Intent.createChooser(
+                            shareIntent,
+                            if (otpEnabled) "Send Tracking & Drop OTP to Receiver" else "Send Live Tracking to Receiver"
+                        )
+                    )
                 }
             },
             colors = ButtonDefaults.buttonColors(containerColor = EnhOrange),
@@ -713,10 +730,14 @@ fun CustomerSendReceiverOtpCard(
                 .height(48.dp)
                 .testTag("customer_send_receiver_otp_btn")
         ) {
-            Icon(Icons.Default.Share, contentDescription = "Send Receiver OTP", tint = Color.White, modifier = Modifier.size(16.dp))
+            Icon(Icons.Default.Share, contentDescription = "Send Receiver Details", tint = Color.White, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = "Send Tracking & Drop OTP (${order.deliveryOtp}) to $receiverName",
+                text = if (otpEnabled) {
+                    "Send Tracking & Drop OTP (${order.deliveryOtp}) to $receiverName"
+                } else {
+                    "Send Live Tracking to $receiverName"
+                },
                 fontWeight = FontWeight.ExtraBold,
                 color = Color.White,
                 maxLines = 1,
@@ -865,7 +886,8 @@ fun CustomerOrderDisputeCard(
 
 @Composable
 fun CustomerProximityOtpAlertBanner(
-    order: CustomerOrder
+    order: CustomerOrder,
+    otpEnabled: Boolean = false
 ) {
     val riderCoordsMap by QuickDeliveryOperationsManager.riderLiveCoordsByOrder.collectAsState()
     val unreachableMap by QuickDeliveryOperationsManager.unreachableByOrder.collectAsState()
@@ -899,10 +921,11 @@ fun CustomerProximityOtpAlertBanner(
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
-                        text = if (distMeters != null) {
-                            "🏍️ Rider only ${distMeters}m away — Keep $otpLabel Ready!"
-                        } else {
-                            "🏍️ Rider Reached Gate — Keep $otpLabel Ready!"
+                        text = when {
+                            otpEnabled && distMeters != null -> "🏍️ Rider only ${distMeters}m away — Keep $otpLabel Ready!"
+                            otpEnabled -> "🏍️ Rider Reached Gate — Keep $otpLabel Ready!"
+                            distMeters != null -> "🏍️ Rider only ${distMeters}m away — Please Be Ready!"
+                            else -> "🏍️ Rider Reached Gate — Ready for Direct Handover!"
                         },
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.ExtraBold,
@@ -914,17 +937,19 @@ fun CustomerProximityOtpAlertBanner(
                         color = Color(0xFF047857)
                     )
                 }
-                Surface(
-                    color = EnhGreen,
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text(
-                        text = activeOtp,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
+                if (otpEnabled) {
+                    Surface(
+                        color = EnhGreen,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = activeOtp,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
                 }
             }
         }

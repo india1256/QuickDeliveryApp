@@ -84,9 +84,13 @@ data class AdminRemoteFeatureFlags(
     val autoBaseFareInr: Double = 85.0,
     val autoRatePerKmInr: Double = 18.0,
     val smsOtpGatewayEnabled: Boolean = false,
+    val pickupDropOtpEnabled: Boolean = false,
+    val riderCodCommissionLimitInr: Int = 200,
+    val adminUpiSettlementId: String = "",
+    val adminSettlementAccountLabel: String = "",
     val blockedCustomerPhonesCsv: String = "",
     val masterSyncRevision: Int = 1,
-    val flagsSchemaVersion: Int = 5,
+    val flagsSchemaVersion: Int = 7,
     val updatedAtEpochMs: Long = 0L
 ) {
     val riderSharePercent: Int
@@ -257,6 +261,10 @@ data class AdminRemoteFeatureFlags(
         put("autoBaseFareInr", autoBaseFareInr)
         put("autoRatePerKmInr", autoRatePerKmInr)
         put("smsOtpGatewayEnabled", smsOtpGatewayEnabled)
+        put("pickupDropOtpEnabled", pickupDropOtpEnabled)
+        put("riderCodCommissionLimitInr", riderCodCommissionLimitInr)
+        put("adminUpiSettlementId", adminUpiSettlementId)
+        put("adminSettlementAccountLabel", adminSettlementAccountLabel)
         put("blockedCustomerPhonesCsv", blockedCustomerPhonesCsv)
         put("masterSyncRevision", masterSyncRevision)
         put("flagsSchemaVersion", flagsSchemaVersion)
@@ -264,7 +272,7 @@ data class AdminRemoteFeatureFlags(
     }
 
     companion object {
-        const val CURRENT_FLAGS_SCHEMA_VERSION = 5
+        const val CURRENT_FLAGS_SCHEMA_VERSION = 7
 
         fun compareSemver(a: String, b: String): Int {
             val pa = a.split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
@@ -283,6 +291,8 @@ data class AdminRemoteFeatureFlags(
             val isLegacyV1Schema = schemaVer < 2
             val isLegacyV2Schema = schemaVer < 3
             val isLegacyV4Schema = schemaVer < 5
+            val isLegacyV5Schema = schemaVer < 6
+            val isLegacyV6Schema = schemaVer < 7
             val bikeOn = obj.optBoolean("bikeEnabled", true)
             val scooterOn = obj.optBoolean("scooterEnabled", true)
             val autoOn = if (isLegacyV4Schema) false else obj.optBoolean("autoEnabled", false)
@@ -359,6 +369,10 @@ data class AdminRemoteFeatureFlags(
                 autoBaseFareInr = obj.optDouble("autoBaseFareInr", 85.0).coerceIn(15.0, 3000.0),
                 autoRatePerKmInr = obj.optDouble("autoRatePerKmInr", 18.0).coerceIn(3.0, 600.0),
                 smsOtpGatewayEnabled = obj.optBoolean("smsOtpGatewayEnabled", false),
+                pickupDropOtpEnabled = if (isLegacyV5Schema) false else obj.optBoolean("pickupDropOtpEnabled", false),
+                riderCodCommissionLimitInr = if (isLegacyV6Schema) 200 else obj.optInt("riderCodCommissionLimitInr", 200).coerceIn(50, 5000),
+                adminUpiSettlementId = obj.optString("adminUpiSettlementId", "").trim().take(80),
+                adminSettlementAccountLabel = obj.optString("adminSettlementAccountLabel", "").trim().take(120),
                 blockedCustomerPhonesCsv = obj.optString("blockedCustomerPhonesCsv", "").trim(),
                 masterSyncRevision = obj.optInt("masterSyncRevision", 1).coerceAtLeast(1),
                 flagsSchemaVersion = CURRENT_FLAGS_SCHEMA_VERSION,

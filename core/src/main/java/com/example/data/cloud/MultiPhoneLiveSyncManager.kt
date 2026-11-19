@@ -386,7 +386,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.3.6")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
                     setRequestProperty("X-QD-App-Role", activeRole)
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
                     setRequestProperty("X-QD-Sync-Sig", syncSig)
@@ -965,7 +965,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.3.9")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
                     setRequestProperty("X-QD-App-Role", cleanRole)
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
                     setRequestProperty("X-QD-Sync-Sig", syncSig)
@@ -997,4 +997,263 @@ object MultiPhoneLiveSyncManager {
         }
         return Result.failure(IllegalStateException(lastErrorMsg))
     }
+
+    /**
+     * Pings GET /api/health to detect Online / Render Waking Up / Offline status with live counts.
+     */
+    fun pingServerHealth(context: Context): ServerHealthSnapshot {
+        val orderedEndpoints = buildList {
+            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/health")) }
+            LIVE_SYNC_ENDPOINTS.forEach { ep ->
+                val target = ep.replace("/api/live-sync", "/api/health")
+                if (target !in this) add(target)
+            }
+        }
+        var lastErr = "Server unreachable"
+        var sawColdStart = false
+        for (endpoint in orderedEndpoints) {
+            val isPrimary = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
+                endpoint.contains("onrender.com", ignoreCase = true)
+            val startMs = System.currentTimeMillis()
+            val attempt = runCatching {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = if (isPrimary) 12_000 else 3_000
+                    readTimeout = if (isPrimary) 18_000 else 3_500
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                }
+                val code = conn.responseCode
+                val latency = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+                if (code in 200..299) {
+                    val raw = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                    conn.disconnect()
+                    val json = JSONObject(raw)
+                    if (json.optBoolean("ok", false)) {
+                        lastWorkingEndpoint = endpoint.replace("/api/health", "/api/live-sync")
+                        return ServerHealthSnapshot(
+                            isOnline = true,
+                            isWakingUp = false,
+                            latencyMs = latency,
+                            serverVersion = json.optString("version", "6.5.0"),
+                            totalOrders = json.optInt("totalOrders", 0),
+                            searchingOrders = json.optInt("activeSearchingOrders", 0),
+                            registeredRiders = json.optInt("registeredRiders", 0),
+                            connectedDevices = json.optInt("connectedDevicesCount", 0),
+                            errorMessage = "",
+                            permanentCloudProvider = json.optString("permanentCloudProvider", ""),
+                            lastEmailBackupIso = json.optString("lastEmailBackupIso", "")
+                        )
+                    }
+                } else {
+                    conn.disconnect()
+                    if (code in listOf(502, 503, 504)) sawColdStart = true
+                    lastErr = "HTTP $code"
+                }
+            }.onFailure { err ->
+                if (err is java.net.SocketTimeoutException) sawColdStart = true
+                lastErr = err.message?.take(70) ?: lastErr
+            }
+            if (attempt.isSuccess) break
+        }
+        return ServerHealthSnapshot(
+            isOnline = false,
+            isWakingUp = sawColdStart,
+            latencyMs = 0L,
+            serverVersion = "",
+            totalOrders = 0,
+            searchingOrders = 0,
+            registeredRiders = 0,
+            connectedDevices = 0,
+            errorMessage = lastErr
+        )
+    }
+
+    /**
+     * Downloads a full HMAC-authenticated JSON backup snapshot from GET /api/backup-export.
+     */
+    fun exportServerBackupSnapshot(context: Context): Result<String> {
+        val deviceId = getOrInitDeviceId(context)
+        val syncTs = System.currentTimeMillis()
+        val syncSig = com.example.security.QuickDeliverySecurityGuard.computeSyncIntegritySignature(
+            deviceId = deviceId,
+            role = "ADMIN",
+            timestampEpochMs = syncTs
+        )
+        val orderedEndpoints = buildList {
+            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/backup-export")) }
+            LIVE_SYNC_ENDPOINTS.forEach { ep ->
+                val target = ep.replace("/api/live-sync", "/api/backup-export")
+                if (target !in this) add(target)
+            }
+        }
+        var lastError = "Unable to download cloud backup."
+        for (endpoint in orderedEndpoints) {
+            val isPrimary = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
+                endpoint.contains("onrender.com", ignoreCase = true)
+            runCatching {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = if (isPrimary) 12_000 else 3_000
+                    readTimeout = if (isPrimary) 25_000 else 5_000
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-Device-Id", deviceId)
+                    setRequestProperty("X-QD-App-Role", "ADMIN")
+                    setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
+                    setRequestProperty("X-QD-Sync-Sig", syncSig)
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+                val body = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+                conn.disconnect()
+                if (code in 200..299 && body.trim().startsWith("{")) {
+                    return Result.success(body)
+                } else {
+                    lastError = runCatching { JSONObject(body).optString("error") }
+                        .getOrNull()?.takeIf { it.isNotBlank() } ?: "HTTP $code"
+                }
+            }.onFailure { err ->
+                lastError = err.message ?: lastError
+            }
+        }
+        return Result.failure(IllegalStateException(lastError))
+    }
+
+    /**
+     * Uploads a saved Admin JSON backup snapshot to POST /api/backup-restore using Admin HMAC auth.
+     */
+    fun restoreServerBackupSnapshot(context: Context, backupJsonString: String): Result<String> {
+        val parsed = runCatching { JSONObject(backupJsonString) }.getOrNull()
+            ?: return Result.failure(IllegalArgumentException("Saved backup JSON is invalid."))
+        val deviceId = getOrInitDeviceId(context)
+        val syncTs = System.currentTimeMillis()
+        val syncSig = com.example.security.QuickDeliverySecurityGuard.computeSyncIntegritySignature(
+            deviceId = deviceId,
+            role = "ADMIN",
+            timestampEpochMs = syncTs
+        )
+        val orderedEndpoints = buildList {
+            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/backup-restore")) }
+            LIVE_SYNC_ENDPOINTS.forEach { ep ->
+                val target = ep.replace("/api/live-sync", "/api/backup-restore")
+                if (target !in this) add(target)
+            }
+        }
+        val payload = JSONObject().apply {
+            put("deviceId", deviceId)
+            put("snapshot", parsed)
+        }
+        var lastError = "Unable to restore backup to server."
+        for (endpoint in orderedEndpoints) {
+            val isPrimary = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
+                endpoint.contains("onrender.com", ignoreCase = true)
+            runCatching {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = if (isPrimary) 12_000 else 3_000
+                    readTimeout = if (isPrimary) 25_000 else 5_000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-Device-Id", deviceId)
+                    setRequestProperty("X-QD-App-Role", "ADMIN")
+                    setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
+                    setRequestProperty("X-QD-Sync-Sig", syncSig)
+                }
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write(payload.toString())
+                    writer.flush()
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+                val raw = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+                conn.disconnect()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (code in 200..299 && json?.optBoolean("ok", false) == true) {
+                    val restoredOrders = json.optInt("restoredOrders", 0)
+                    val restoredRiders = json.optInt("restoredRiders", 0)
+                    return Result.success("Restored $restoredOrders order(s) & $restoredRiders rider(s) to cloud!")
+                } else {
+                    lastError = json?.optString("error")?.takeIf { it.isNotBlank() } ?: "HTTP $code"
+                }
+            }.onFailure { err ->
+                lastError = err.message ?: lastError
+            }
+        }
+        return Result.failure(IllegalStateException(lastError))
+    }
+
+    /**
+     * Triggers an immediate cloud backup email to the Admin's Gmail via POST /api/backup-email.
+     */
+    fun triggerAdminEmailBackup(context: Context): Result<String> {
+        val deviceId = getOrInitDeviceId(context)
+        val syncTs = System.currentTimeMillis()
+        val syncSig = com.example.security.QuickDeliverySecurityGuard.computeSyncIntegritySignature(
+            deviceId = deviceId,
+            role = "ADMIN",
+            timestampEpochMs = syncTs
+        )
+        val orderedEndpoints = buildList {
+            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/backup-email")) }
+            LIVE_SYNC_ENDPOINTS.forEach { ep ->
+                val target = ep.replace("/api/live-sync", "/api/backup-email")
+                if (target !in this) add(target)
+            }
+        }
+        val payload = JSONObject().apply { put("deviceId", deviceId) }
+        var lastError = "Unable to trigger backup email right now."
+        for (endpoint in orderedEndpoints) {
+            val isPrimary = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
+                endpoint.contains("onrender.com", ignoreCase = true)
+            runCatching {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = if (isPrimary) 12_000 else 3_000
+                    readTimeout = if (isPrimary) 25_000 else 5_000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-Device-Id", deviceId)
+                    setRequestProperty("X-QD-App-Role", "ADMIN")
+                    setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
+                    setRequestProperty("X-QD-Sync-Sig", syncSig)
+                }
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write(payload.toString())
+                    writer.flush()
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+                val raw = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+                conn.disconnect()
+                val json = runCatching { JSONObject(raw) }.getOrNull()
+                if (code in 200..299 && json?.optBoolean("ok", false) == true) {
+                    return Result.success(json.optString("message", "Backup emailed to Admin Gmail!"))
+                } else {
+                    lastError = json?.optString("error")?.takeIf { it.isNotBlank() } ?: "HTTP $code"
+                }
+            }.onFailure { err ->
+                lastError = err.message ?: lastError
+            }
+        }
+        return Result.failure(IllegalStateException(lastError))
+    }
 }
+
+data class ServerHealthSnapshot(
+    val isOnline: Boolean,
+    val isWakingUp: Boolean,
+    val latencyMs: Long,
+    val serverVersion: String,
+    val totalOrders: Int,
+    val searchingOrders: Int,
+    val registeredRiders: Int,
+    val connectedDevices: Int,
+    val errorMessage: String,
+    val permanentCloudProvider: String = "",
+    val lastEmailBackupIso: String = ""
+)
