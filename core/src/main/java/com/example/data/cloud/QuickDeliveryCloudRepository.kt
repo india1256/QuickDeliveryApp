@@ -275,14 +275,14 @@ data class CloudDeliveryOrder(
 data class CloudRiderWallet(
     @DocumentId val id: String = "",
     val userId: String = "",
-    val riderId: String = "RIDER-101",
-    val riderName: String = "Vikram Singh",
-    val balancePaise: Long = 148000L,
-    val commissionDebtPaise: Long = 9000L,
+    val riderId: String = "",
+    val riderName: String = "",
+    val balancePaise: Long = 0L,
+    val commissionDebtPaise: Long = 0L,
     val maxCommissionDebtPaise: Long = 15000L,
     val workMode: String = "FULL_TIME",
-    val shiftStatus: String = "ONLINE_ACTIVE",
-    val batteryPercent: Long = 85L,
+    val shiftStatus: String = "ENDED_AT_HOME",
+    val batteryPercent: Long = 100L,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {

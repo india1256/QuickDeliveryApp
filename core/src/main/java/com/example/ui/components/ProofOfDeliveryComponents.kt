@@ -536,8 +536,8 @@ fun ProofOfPickupDialog(
                         scope.launch {
                             val result = riderRepository.completePickupWithProof(
                                 orderId = order.orderId,
-                                riderId = order.assignedRiderId ?: "RIDER-101",
-                                riderName = order.assignedRiderName ?: "Vikram Singh",
+                                riderId = order.assignedRiderId.orEmpty(),
+                                riderName = order.assignedRiderName ?: "Delivery Partner",
                                 enteredOtp = verifiedOtp,
                                 packagePhotoUrl = packagePhotoUrl,
                                 packagePhotoSummary = packagePhotoSummary.ifBlank { "Live Camera Package Photo Verified" },
@@ -816,8 +816,8 @@ fun ProofOfDeliveryDialog(
                                         .toDoubleOrNull() ?: 0.0
                                     val result = riderRepository.completeDeliveryWithProof(
                                         orderId = order.orderId,
-                                        riderId = order.assignedRiderId ?: "RIDER-101",
-                                        riderName = order.assignedRiderName ?: "Vikram Singh",
+                                        riderId = order.assignedRiderId.orEmpty(),
+                                        riderName = order.assignedRiderName ?: "Delivery Partner",
                                         enteredOtp = verifiedOtp,
                                         deliveryPhotoUrl = deliveryPhotoUrl,
                                         deliveryPhotoSummary = deliveryPhotoSummary.ifBlank { "Live Camera Drop Photo Verified" },
@@ -917,8 +917,8 @@ fun ProofOfDeliveryDialog(
                                         .toDoubleOrNull() ?: 0.0
                                     val result = riderRepository.completeDeliveryWithProof(
                                         orderId = order.orderId,
-                                        riderId = order.assignedRiderId ?: "RIDER-101",
-                                        riderName = order.assignedRiderName ?: "Vikram Singh",
+                                        riderId = order.assignedRiderId.orEmpty(),
+                                        riderName = order.assignedRiderName ?: "Delivery Partner",
                                         enteredOtp = verifiedOtp,
                                         deliveryPhotoUrl = deliveryPhotoUrl,
                                         deliveryPhotoSummary = deliveryPhotoSummary.ifBlank { "Live Camera Drop Photo Verified" },

@@ -449,6 +449,13 @@ class AllThreeAppsLiveEndToEndTest {
         )
         assertTrue("Expected backend order creation to block parcel > 20 kg", blockedOverWeightOrder.isFailure)
 
+        // v6.3.9: Auto starts disabled by default until Admin activates it from Control Center
+        assertFalse(AutomatedFairRiderAssignmentEngine.vehicleAndWeightPolicy.value.autoEnabled)
+        AutomatedFairRiderAssignmentEngine.updateLivePricingAndWeightPolicyFromAdmin(
+            repository = repository,
+            autoEnabled = true
+        )
+
         val valid20KgOrder = AutomatedFairRiderAssignmentEngine.createCustomerOrderWithBackendValidation(
             repository = repository,
             customerId = "CUST-1020",
@@ -462,7 +469,7 @@ class AllThreeAppsLiveEndToEndTest {
             idempotencyKey = "VALID-20KG-ORDER-TEST"
         )
         assertTrue(
-            "Expected 20 kg parcel to be accepted, error=${valid20KgOrder.exceptionOrNull()?.message}",
+            "Expected 20 kg parcel to be accepted after Admin enables Auto, error=${valid20KgOrder.exceptionOrNull()?.message}",
             valid20KgOrder.isSuccess
         )
 

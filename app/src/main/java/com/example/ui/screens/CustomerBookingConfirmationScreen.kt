@@ -88,6 +88,8 @@ private val SoftOrangeSurface = Color(0xFFFFF4EE)
 fun CustomerBookingConfirmationScreen(
     customerName: String,
     customerPhone: String,
+    receiverName: String = "",
+    receiverPhone: String = "",
     pickupHouseFlat: String,
     pickupBuilding: String,
     pickupArea: String,
@@ -499,8 +501,17 @@ fun CustomerBookingConfirmationScreen(
                                         color = BrandOrange
                                     )
                                 }
+                                val cleanRecPhone = receiverPhone.removePrefix("+91").trim()
                                 Text(
-                                    text = "Contact: Receiver (+91 98450 11223)",
+                                    text = buildString {
+                                        append("Contact: ")
+                                        append(receiverName.trim().ifBlank { "Receiver" })
+                                        if (cleanRecPhone.isNotBlank()) {
+                                            append(" (+91 ")
+                                            append(cleanRecPhone)
+                                            append(")")
+                                        }
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = SlateMuted
                                 )
@@ -514,13 +525,13 @@ fun CustomerBookingConfirmationScreen(
             item(key = "confirmation_vehicle_card") {
                 val vehicleIcon: ImageVector = when (selectedVehicle) {
                     VehicleType.BIKE -> Icons.Default.TwoWheeler
-                    VehicleType.SCOOTER -> Icons.Default.ElectricScooter
+                    VehicleType.SCOOTER -> Icons.Default.TwoWheeler
                     VehicleType.AUTO -> Icons.Default.DirectionsCar
                     else -> Icons.Default.LocalShipping
                 }
                 val vehicleName = when (selectedVehicle) {
                     VehicleType.BIKE -> "Quick Delivery Bike"
-                    VehicleType.SCOOTER -> "City Scooter"
+                    VehicleType.SCOOTER -> "Scooter (Front Space • Food/Box)"
                     VehicleType.AUTO -> "Cargo Auto"
                     else -> selectedVehicle.title
                 }
@@ -550,12 +561,19 @@ fun CustomerBookingConfirmationScreen(
                             modifier = Modifier.size(50.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = vehicleIcon,
-                                    contentDescription = vehicleName,
-                                    tint = PrimaryTeal,
-                                    modifier = Modifier.size(30.dp)
-                                )
+                                if (selectedVehicle == VehicleType.SCOOTER) {
+                                    Text(
+                                        text = "🛵",
+                                        style = MaterialTheme.typography.headlineSmall
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = vehicleIcon,
+                                        contentDescription = vehicleName,
+                                        tint = PrimaryTeal,
+                                        modifier = Modifier.size(30.dp)
+                                    )
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.width(14.dp))

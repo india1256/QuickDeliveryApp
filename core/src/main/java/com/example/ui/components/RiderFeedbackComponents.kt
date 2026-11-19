@@ -188,8 +188,8 @@ object RiderFeedbackManager {
                         val tipInr = obj.optInt("tipAmountInr", _tipsByOrder.value[orderId] ?: 0)
                         parsed[orderId] = RiderDeliveryFeedback(
                             orderId = orderId,
-                            riderId = obj.optString("riderId", "RIDER-101"),
-                            riderName = obj.optString("riderName", "Vikram Singh"),
+                            riderId = obj.optString("riderId", ""),
+                            riderName = obj.optString("riderName", "Delivery Partner"),
                             customerName = obj.optString("customerName", "Customer"),
                             starRating = obj.optInt("starRating", 5).coerceIn(1, 5),
                             complimentTags = tags,
@@ -219,8 +219,8 @@ object RiderFeedbackManager {
                         }
                         parsed[orderId] = CustomerRatingByRider(
                             orderId = orderId,
-                            riderId = obj.optString("riderId", "RIDER-101"),
-                            riderName = obj.optString("riderName", "Vikram Singh"),
+                            riderId = obj.optString("riderId", ""),
+                            riderName = obj.optString("riderName", "Delivery Partner"),
                             customerName = obj.optString("customerName", "Customer"),
                             starRating = obj.optInt("starRating", 5).coerceIn(1, 5),
                             behaviorTags = tags,
@@ -1363,7 +1363,7 @@ fun AdminMutualRatingsAndSuggestionsPanel(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "Default Audit Status: Rider Vikram Singh (★ 4.9/5.0) — Working Properly. New customer ratings will appear exclusively here for Admin review.",
+                            text = "No customer ratings yet. Real ratings from completed deliveries will appear exclusively here for Admin review.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF334155),
                             modifier = Modifier.padding(10.dp)

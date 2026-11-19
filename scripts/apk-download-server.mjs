@@ -13,7 +13,7 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
-const APP_SUITE_VERSION = '6.3.8';
+const APP_SUITE_VERSION = '6.3.9';
 const ADMIN_ALLOWLIST_EMAILS = new Set([
   'ravindergupta141@gmail.com',
   'admin@quickdelivery.co.in',
@@ -148,7 +148,6 @@ function loadSyncState() {
           loadedFlags.scheduledDeliveryEnabled = true;
           loadedFlags.multiDropEnabled = true;
           loadedFlags.parcelInsuranceEnabled = true;
-          loadedFlags.referralWalletEnabled = true;
           loadedFlags.waitTimeAndCancelRuleEnabled = true;
           loadedFlags.peakAutoSurgeEnabled = true;
           loadedFlags.flagsSchemaVersion = 2;
@@ -160,6 +159,12 @@ function loadSyncState() {
           loadedFlags.razorpayRouteSplitEnabled = Boolean(loadedFlags.razorpayRouteSplitEnabled || false);
           loadedFlags.autoKycApiEnabled = Boolean(loadedFlags.autoKycApiEnabled || false);
           loadedFlags.flagsSchemaVersion = 3;
+        }
+        if (loadedFlags && Number(loadedFlags.flagsSchemaVersion || 3) < 5) {
+          loadedFlags.autoEnabled = false;
+          loadedFlags.promoCodeEnabled = false;
+          loadedFlags.referralWalletEnabled = false;
+          loadedFlags.flagsSchemaVersion = 5;
         }
         return {
           resetEpochMs: Number(parsed.resetEpochMs || 0),
@@ -1885,7 +1890,6 @@ const server = http.createServer((req, res) => {
               incomingFlags.scheduledDeliveryEnabled = true;
               incomingFlags.multiDropEnabled = true;
               incomingFlags.parcelInsuranceEnabled = true;
-              incomingFlags.referralWalletEnabled = true;
               incomingFlags.waitTimeAndCancelRuleEnabled = true;
               incomingFlags.peakAutoSurgeEnabled = true;
               incomingFlags.flagsSchemaVersion = 2;
@@ -1897,6 +1901,12 @@ const server = http.createServer((req, res) => {
               incomingFlags.razorpayRouteSplitEnabled = Boolean(incomingFlags.razorpayRouteSplitEnabled || false);
               incomingFlags.autoKycApiEnabled = Boolean(incomingFlags.autoKycApiEnabled || false);
               incomingFlags.flagsSchemaVersion = 3;
+            }
+            if (Number(incomingFlags.flagsSchemaVersion || 3) < 5) {
+              incomingFlags.autoEnabled = false;
+              incomingFlags.promoCodeEnabled = false;
+              incomingFlags.referralWalletEnabled = false;
+              incomingFlags.flagsSchemaVersion = 5;
             }
             const prevFlags = syncState.remoteFeatureFlags;
             const inTs = Number(incomingFlags.updatedAtEpochMs || 0);

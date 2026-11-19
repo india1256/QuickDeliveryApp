@@ -118,6 +118,9 @@ import com.example.data.model.OrderStatus
 import com.example.data.model.PickupProof
 import com.example.data.model.RiderProfile
 import com.example.data.model.RiderShiftStatus
+import com.example.data.model.RiderVerificationStatus
+import com.example.data.model.RiderWorkMode
+import com.example.data.model.VehicleType
 import com.example.data.repository.RiderRepository
 import com.example.data.repository.SharedOrderRepository
 import com.example.security.RiderOverspeedSafetyCard
@@ -693,13 +696,64 @@ fun RiderPartnerCompactScreen(
     LaunchedEffect(
         riderRegRecord?.riderKey,
         riderRegRecord?.approvalStatus,
-        riderRegRecord?.reLoggedInAfterApproval
+        riderRegRecord?.reLoggedInAfterApproval,
+        isRiderLoggedIn,
+        currentRider?.riderId,
+        riderDisplayName,
+        riderPhone,
+        riderEmail
     ) {
         if (riderRegRecord != null &&
             riderRegRecord.approvalStatus == RiderApprovalWorkflowStatus.APPROVED &&
             riderRegRecord.reLoggedInAfterApproval
         ) {
             RiderRegistrationApprovalManager.ensureRiderProfileInRepository(repository, riderRegRecord)
+        } else if (isRiderLoggedIn && currentRider == null) {
+            val cleanPhone = riderPhone.filter(Char::isDigit).takeLast(10)
+            val generatedId = riderRegRecord?.riderId?.takeIf { it.isNotBlank() }
+                ?: if (cleanPhone.length >= 4) "QD-RDR-${cleanPhone.takeLast(4)}" else "QD-RDR-${System.currentTimeMillis() % 10000}"
+            val cleanName = riderDisplayName.trim().ifBlank { riderRegRecord?.name?.takeIf { it.isNotBlank() } ?: "Delivery Partner" }
+            val vehicleType = runCatching {
+                VehicleType.valueOf(riderRegRecord?.vehicleType ?: VehicleType.BIKE.name)
+            }.getOrDefault(VehicleType.BIKE)
+            val realProfile = RiderProfile(
+                riderId = generatedId,
+                name = cleanName,
+                mobile = cleanPhone,
+                email = riderEmail.trim(),
+                aadhaarNumber = riderRegRecord?.aadhaarNumber.orEmpty(),
+                panNumber = riderRegRecord?.panNumber.orEmpty(),
+                vehicleType = vehicleType,
+                vehicleNumber = riderRegRecord?.vehicleNumber.orEmpty(),
+                verifiedUpiId = riderRegRecord?.bankUpiId.orEmpty(),
+                verificationStatus = if (riderRegRecord?.approvalStatus == RiderApprovalWorkflowStatus.APPROVED) {
+                    RiderVerificationStatus.VERIFIED
+                } else {
+                    RiderVerificationStatus.PENDING
+                },
+                accountStatus = "ACTIVE",
+                isOnline = false,
+                walletBalanceInr = 0.0,
+                commissionDebtInr = 0.0,
+                totalDeliveries = 0,
+                adminApprovalNote = if (riderRegRecord?.approvalStatus == RiderApprovalWorkflowStatus.APPROVED) {
+                    "Admin Approved KYC Verified"
+                } else {
+                    "Registered Partner"
+                },
+                workMode = RiderWorkMode.FULL_TIME,
+                shiftStatus = RiderShiftStatus.ENDED_AT_HOME,
+                currentLat = 0.0,
+                currentLng = 0.0
+            )
+            val existingFleet = repository.riders.value
+            if (existingFleet.none { it.riderId == realProfile.riderId }) {
+                AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(
+                    repository,
+                    listOf(realProfile) + existingFleet
+                )
+            }
+            AutomatedFairRiderAssignmentEngine.selectActiveRiderForPartnerApp(realProfile.riderId)
         }
     }
 
@@ -1296,7 +1350,7 @@ fun RiderPartnerCompactScreen(
                         }
                         val req = com.example.data.cloud.QuickDeliveryOperationsManager.submitRiderWithdrawalRequest(
                             context = context,
-                            riderId = currentRider?.riderId ?: riderRegRecord?.riderId ?: "RIDER-101",
+                            riderId = currentRider?.riderId ?: riderRegRecord?.riderId.orEmpty(),
                             riderName = riderDisplayName.ifBlank { currentRider?.name ?: "Rider Partner" },
                             riderPhone = riderPhone.ifBlank { currentRider?.mobile.orEmpty() },
                             amountInr = amount,

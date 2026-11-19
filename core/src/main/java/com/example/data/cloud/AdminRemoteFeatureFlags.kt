@@ -23,8 +23,9 @@ data class AdminRemoteFeatureFlags(
     val surgeMultiplier: Double = 1.25,
     val parcelInsuranceEnabled: Boolean = true,
     val insuranceFeeInr: Int = 15,
-    val referralWalletEnabled: Boolean = true,
+    val referralWalletEnabled: Boolean = false,
     val referralBonusInr: Int = 50,
+    val promoCodeEnabled: Boolean = false,
     val codEnabled: Boolean = true,
     val maxCodLimitInr: Int = 2000,
     val platformCommissionPercent: Int = 20,
@@ -75,7 +76,7 @@ data class AdminRemoteFeatureFlags(
     val remoteRateCardOverrideEnabled: Boolean = false,
     val bikeEnabled: Boolean = true,
     val scooterEnabled: Boolean = true,
-    val autoEnabled: Boolean = true,
+    val autoEnabled: Boolean = false,
     val bikeBaseFareInr: Double = 35.0,
     val bikeRatePerKmInr: Double = 10.0,
     val scooterBaseFareInr: Double = 45.0,
@@ -85,7 +86,7 @@ data class AdminRemoteFeatureFlags(
     val smsOtpGatewayEnabled: Boolean = false,
     val blockedCustomerPhonesCsv: String = "",
     val masterSyncRevision: Int = 1,
-    val flagsSchemaVersion: Int = 4,
+    val flagsSchemaVersion: Int = 5,
     val updatedAtEpochMs: Long = 0L
 ) {
     val riderSharePercent: Int
@@ -198,6 +199,7 @@ data class AdminRemoteFeatureFlags(
         put("insuranceFeeInr", insuranceFeeInr)
         put("referralWalletEnabled", referralWalletEnabled)
         put("referralBonusInr", referralBonusInr)
+        put("promoCodeEnabled", promoCodeEnabled)
         put("codEnabled", codEnabled)
         put("maxCodLimitInr", maxCodLimitInr)
         put("platformCommissionPercent", platformCommissionPercent)
@@ -262,7 +264,7 @@ data class AdminRemoteFeatureFlags(
     }
 
     companion object {
-        const val CURRENT_FLAGS_SCHEMA_VERSION = 4
+        const val CURRENT_FLAGS_SCHEMA_VERSION = 5
 
         fun compareSemver(a: String, b: String): Int {
             val pa = a.split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
@@ -280,9 +282,10 @@ data class AdminRemoteFeatureFlags(
             val schemaVer = obj.optInt("flagsSchemaVersion", 1)
             val isLegacyV1Schema = schemaVer < 2
             val isLegacyV2Schema = schemaVer < 3
+            val isLegacyV4Schema = schemaVer < 5
             val bikeOn = obj.optBoolean("bikeEnabled", true)
             val scooterOn = obj.optBoolean("scooterEnabled", true)
-            val autoOn = obj.optBoolean("autoEnabled", true)
+            val autoOn = if (isLegacyV4Schema) false else obj.optBoolean("autoEnabled", false)
             val safeBikeOn = if (!bikeOn && !scooterOn && !autoOn) true else bikeOn
             return AdminRemoteFeatureFlags(
                 scheduledDeliveryEnabled = if (isLegacyV1Schema) true else obj.optBoolean("scheduledDeliveryEnabled", true),
@@ -291,8 +294,9 @@ data class AdminRemoteFeatureFlags(
                 surgeMultiplier = obj.optDouble("surgeMultiplier", 1.25).coerceIn(1.0, 3.0),
                 parcelInsuranceEnabled = if (isLegacyV1Schema) true else obj.optBoolean("parcelInsuranceEnabled", true),
                 insuranceFeeInr = obj.optInt("insuranceFeeInr", 15).coerceIn(5, 200),
-                referralWalletEnabled = if (isLegacyV1Schema) true else obj.optBoolean("referralWalletEnabled", true),
+                referralWalletEnabled = if (isLegacyV4Schema) false else obj.optBoolean("referralWalletEnabled", false),
                 referralBonusInr = obj.optInt("referralBonusInr", 50).coerceIn(10, 500),
+                promoCodeEnabled = if (isLegacyV4Schema) false else obj.optBoolean("promoCodeEnabled", false),
                 codEnabled = obj.optBoolean("codEnabled", true),
                 maxCodLimitInr = obj.optInt("maxCodLimitInr", 2000).coerceIn(100, 50000),
                 platformCommissionPercent = obj.optInt("platformCommissionPercent", 20).coerceIn(0, 40),

@@ -371,8 +371,8 @@ class ParcelDeliveryStateManager {
     fun advanceToNextStage(
         orderId: String,
         actorRole: DeliveryActorRole = DeliveryActorRole.RIDER,
-        actorId: String = "RIDER-101",
-        riderName: String? = "Vikram Singh",
+        actorId: String = "",
+        riderName: String? = null,
         proofNote: String? = null,
         latitude: Double? = null,
         longitude: Double? = null

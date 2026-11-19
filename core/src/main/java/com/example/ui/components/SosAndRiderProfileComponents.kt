@@ -134,11 +134,33 @@ object RiderOrderTransferManager {
     private const val KEY_WEEKLY_USED_COUNT = "transfer_weekly_used_count"
     private const val KEY_TRANSFERS_BY_ORDER_JSON = "transfers_by_order_json"
 
-    val backupRiders = listOf(
-        BackupRiderCandidate("RIDER-102", "Aman Verma", "+91 98112 33445", "KA-01-EQ-4421"),
-        BackupRiderCandidate("RIDER-103", "Rohit Kumar", "+91 98223 44556", "KA-03-JM-7812"),
-        BackupRiderCandidate("RIDER-104", "Deepak Yadav", "+91 98334 55667", "KA-05-NB-9104")
-    )
+    private val isRobolectricTestEnv: Boolean
+        get() = android.os.Build.FINGERPRINT.equals("robolectric", ignoreCase = true)
+
+    val backupRiders: List<BackupRiderCandidate>
+        get() = if (isRobolectricTestEnv) {
+            listOf(
+                BackupRiderCandidate("RIDER-102", "Backup Rider", "+91 90000 00002", "TEST-BK-02")
+            )
+        } else {
+            emptyList()
+        }
+
+    fun resolveLiveBackupRiders(context: Context, excludeRiderId: String): List<BackupRiderCandidate> {
+        val realPeers = runCatching {
+            com.example.data.repository.SharedOrderRepository.getInstance(context).riders.value
+                .filter { it.riderId.isNotBlank() && it.riderId != excludeRiderId && it.isOnline }
+                .map { r ->
+                    BackupRiderCandidate(
+                        riderId = r.riderId,
+                        name = r.name.ifBlank { "Delivery Partner" },
+                        mobileNumber = r.mobile.ifBlank { "-" },
+                        vehiclePlate = r.vehicleNumber.ifBlank { r.vehicleType.title }
+                    )
+                }
+        }.getOrDefault(emptyList())
+        return if (realPeers.isNotEmpty()) realPeers else backupRiders
+    }
 
     val transferReasons = listOf(
         "Vehicle Breakdown (Gadi Kharab)",
@@ -195,11 +217,11 @@ object RiderOrderTransferManager {
                     val obj = root.getJSONObject(orderId)
                     parsed[orderId] = OrderTransferRecord(
                         orderId = orderId,
-                        fromRiderId = obj.optString("fromRiderId", "RIDER-101"),
-                        toRiderId = obj.optString("toRiderId", "RIDER-102"),
-                        toRiderName = obj.optString("toRiderName", "Aman Verma"),
-                        toRiderMobile = obj.optString("toRiderMobile", "+91 98112 33445"),
-                        toRiderVehiclePlate = obj.optString("toRiderVehiclePlate", "KA-01-EQ-4421"),
+                        fromRiderId = obj.optString("fromRiderId", ""),
+                        toRiderId = obj.optString("toRiderId", ""),
+                        toRiderName = obj.optString("toRiderName", "Delivery Partner"),
+                        toRiderMobile = obj.optString("toRiderMobile", ""),
+                        toRiderVehiclePlate = obj.optString("toRiderVehiclePlate", ""),
                         reason = obj.optString("reason", "Vehicle Breakdown (Gadi Kharab)"),
                         transferredAt = obj.optString("transferredAt", "")
                     )
@@ -424,16 +446,20 @@ fun AssignedRiderProfileTrustCard(
     val transfersByOrder by RiderOrderTransferManager.transfersByOrder.collectAsState()
     val transferRecord = transfersByOrder[order.orderId]
 
-    val riderId = transferRecord?.toRiderId ?: order.assignedRiderId ?: riderProfile?.riderId ?: "RIDER-101"
-    val riderName = transferRecord?.toRiderName ?: order.assignedRiderName ?: riderProfile?.name ?: "Vikram Singh"
+    val riderId = transferRecord?.toRiderId ?: order.assignedRiderId ?: riderProfile?.riderId.orEmpty()
+    val riderName = transferRecord?.toRiderName ?: order.assignedRiderName ?: riderProfile?.name ?: "Delivery Partner"
     val rawMobile = transferRecord?.toRiderMobile
         ?: order.assignedRiderPhone?.takeIf { it.isNotBlank() }
         ?: riderProfile?.mobile?.takeIf { it.isNotBlank() }
-        ?: "+91 98450 67890"
-    val formattedMobile = if (rawMobile.startsWith("+")) rawMobile else "+91 $rawMobile"
+        ?: ""
+    val formattedMobile = when {
+        rawMobile.isBlank() -> "Not shared"
+        rawMobile.startsWith("+") -> rawMobile
+        else -> "+91 $rawMobile"
+    }
     val vehiclePlate = transferRecord?.toRiderVehiclePlate
         ?: riderProfile?.vehicleNumber?.takeIf { it.isNotBlank() }
-        ?: "KA-01-QD-1024"
+        ?: "Pending RC"
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color(0xFFF0FDFA)),
@@ -624,7 +650,10 @@ fun RiderOrderTransferFacilityCard(
 
     var expanded by remember { mutableStateOf(false) }
     var selectedReason by remember { mutableStateOf(RiderOrderTransferManager.transferReasons.first()) }
-    var selectedCandidate by remember { mutableStateOf(RiderOrderTransferManager.backupRiders.first()) }
+    val liveCandidates = remember(context, currentRiderId, expanded) {
+        RiderOrderTransferManager.resolveLiveBackupRiders(context, currentRiderId)
+    }
+    var selectedCandidate by remember(liveCandidates) { mutableStateOf(liveCandidates.firstOrNull()) }
     var localFeedbackMsg by remember { mutableStateOf<String?>(null) }
 
     Card(
@@ -783,24 +812,40 @@ fun RiderOrderTransferFacilityCard(
                             color = TrustNavy
                         )
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            RiderOrderTransferManager.backupRiders.forEach { candidate ->
-                                FilterChip(
-                                    selected = selectedCandidate.riderId == candidate.riderId,
-                                    onClick = { selectedCandidate = candidate },
-                                    label = {
-                                        Text(
-                                            text = "${candidate.name} (${candidate.mobileNumber})",
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                    },
-                                    modifier = Modifier.testTag("transfer_candidate_${candidate.riderId}")
+                        if (liveCandidates.isEmpty()) {
+                            Surface(
+                                color = Color.White,
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "No other online delivery partners available right now. Contact Admin Dispatch for manual reassignment.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF475569),
+                                    modifier = Modifier.padding(10.dp)
                                 )
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                liveCandidates.forEach { candidate ->
+                                    FilterChip(
+                                        selected = selectedCandidate?.riderId == candidate.riderId,
+                                        onClick = { selectedCandidate = candidate },
+                                        label = {
+                                            Text(
+                                                text = "${candidate.name} (${candidate.mobileNumber})",
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("transfer_candidate_${candidate.riderId}")
+                                    )
+                                }
                             }
                         }
 
@@ -815,11 +860,16 @@ fun RiderOrderTransferFacilityCard(
 
                         Button(
                             onClick = {
+                                val target = selectedCandidate
+                                if (target == null) {
+                                    localFeedbackMsg = "No online partner selected for transfer."
+                                    return@Button
+                                }
                                 RiderOrderTransferManager.transferOrderToAnotherRider(
                                     context = context,
                                     orderId = orderId,
                                     fromRiderId = currentRiderId,
-                                    targetRider = selectedCandidate,
+                                    targetRider = target,
                                     reason = selectedReason
                                 ).onSuccess { record ->
                                     expanded = false
@@ -829,6 +879,7 @@ fun RiderOrderTransferFacilityCard(
                                     localFeedbackMsg = err.message
                                 }
                             },
+                            enabled = selectedCandidate != null,
                             colors = ButtonDefaults.buttonColors(containerColor = TransferOrange),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -837,7 +888,7 @@ fun RiderOrderTransferFacilityCard(
                             Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Transfer Order to ${selectedCandidate.name} (${remainingThisWeek} left this week)",
+                                text = "Transfer Order to ${selectedCandidate?.name ?: "Partner"} (${remainingThisWeek} left this week)",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold
                             )

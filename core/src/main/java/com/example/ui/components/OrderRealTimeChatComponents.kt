@@ -177,7 +177,7 @@ object OrderLiveChatManager {
         if (!current.isNullOrEmpty()) return
         if (order.orderStatus == OrderStatus.SEARCHING_RIDER || order.orderStatus == OrderStatus.CANCELLED) return
 
-        val riderName = order.assignedRiderName ?: "Vikram Singh"
+        val riderName = order.assignedRiderName?.takeIf { it.isNotBlank() } ?: "Delivery Partner"
         val now = System.currentTimeMillis()
         val timeFmt = SimpleDateFormat("hh:mm a", Locale.US)
         val starter = listOf(
@@ -342,7 +342,7 @@ object OrderLiveChatManager {
             senderUid = currentUser?.uid ?: "${senderRole.lowercase()}_local",
             senderRole = senderRole,
             senderName = senderName.trim().ifBlank {
-                if (senderRole == "RIDER") (order.assignedRiderName ?: "Vikram Singh") else order.customerName
+                if (senderRole == "RIDER") (order.assignedRiderName?.takeIf { it.isNotBlank() } ?: "Delivery Partner") else order.customerName
             },
             messageText = trimmed,
             deliveryStage = order.orderStatus.displayTitle,
@@ -540,8 +540,8 @@ fun OrderRealTimeChatSection(
     val transfersByOrder by RiderOrderTransferManager.transfersByOrder.collectAsState()
 
     val transferRecord = transfersByOrder[order.orderId]
-    val activeRiderName = transferRecord?.toRiderName ?: order.assignedRiderName ?: "Vikram Singh"
-    val activeRiderPhone = transferRecord?.toRiderMobile ?: order.assignedRiderPhone ?: "+91 98450 67890"
+    val activeRiderName = transferRecord?.toRiderName ?: order.assignedRiderName?.takeIf { it.isNotBlank() } ?: "Delivery Partner"
+    val activeRiderPhone = transferRecord?.toRiderMobile ?: order.assignedRiderPhone.orEmpty()
 
     val messages = messagesByOrder[order.orderId].orEmpty()
     val syncStatusText = syncStatusMap[order.orderId]

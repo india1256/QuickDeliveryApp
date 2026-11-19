@@ -598,8 +598,9 @@ fun AdminProfessionalLiveMirrorScreen(
                                     fontWeight = FontWeight.ExtraBold,
                                     color = WebNavy
                                 )
+                                val primaryPhonePart = primaryRider?.mobile?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
                                 Text(
-                                    text = "Pickup Rider: ${primaryRider?.name ?: MotivationAndPromoManager.cachedRiderName} (+91 98450 67890) • ${primaryRider?.vehicleType?.title ?: "2-Wheeler"}",
+                                    text = "Pickup Rider: ${primaryRider?.name ?: MotivationAndPromoManager.cachedRiderName.ifBlank { "No Active Rider" }}$primaryPhonePart • ${primaryRider?.vehicleType?.title ?: "2-Wheeler"}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color(0xFF475569)
                                 )
@@ -629,12 +630,13 @@ fun AdminProfessionalLiveMirrorScreen(
                     HorizontalDivider()
 
                     // Row 1: Rider Storage Login, Wallet + Tips, and Confidential Work Quality Status
-                    val avgRiderRating = if (riderRatings.isEmpty()) {
-                        4.9
-                    } else {
+                    val hasRatings = riderRatings.isNotEmpty()
+                    val avgRiderRating = if (hasRatings) {
                         riderRatings.values.map { it.starRating }.average()
+                    } else {
+                        0.0
                     }
-                    val isWorkingProperly = avgRiderRating >= 4.0
+                    val isWorkingProperly = !hasRatings || avgRiderRating >= 4.0
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -642,7 +644,7 @@ fun AdminProfessionalLiveMirrorScreen(
                     ) {
                         InfoPillBox(
                             label = "Rider Login & Storage",
-                            value = "${primaryRider?.name ?: "Vikram Singh"}\n${if (riderStorageSaved) "💾 Storage Saved" else "📲 Active Session"}",
+                            value = "${primaryRider?.name ?: "No Rider Online"}\n${if (riderStorageSaved) "💾 Storage Saved" else "📲 Waiting for Rider"}",
                             modifier = Modifier.weight(1f)
                         )
                         InfoPillBox(
@@ -657,12 +659,16 @@ fun AdminProfessionalLiveMirrorScreen(
                         )
                         InfoPillBox(
                             label = "Admin Work Audit",
-                            value = String.format(
-                                Locale.US,
-                                "★ %.1f/5.0\n%s",
-                                avgRiderRating,
-                                if (isWorkingProperly) "✓ Working Properly" else "⚠ Needs Review"
-                            ),
+                            value = if (hasRatings) {
+                                String.format(
+                                    Locale.US,
+                                    "★ %.1f/5.0\n%s",
+                                    avgRiderRating,
+                                    if (isWorkingProperly) "✓ Working Properly" else "⚠ Needs Review"
+                                )
+                            } else {
+                                "No ratings yet\nReady for live orders"
+                            },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -940,8 +946,8 @@ private fun AdminLiveOrderMirrorCard(
 ) {
     val isPrepaid = order.paymentMethod != CustomerPaymentMethod.CASH_ON_DELIVERY
     val isDelivered = order.orderStatus == OrderStatus.DELIVERED
-    val riderName = transferRecord?.toRiderName ?: order.assignedRiderName ?: primaryRider?.name ?: "Vikram Singh"
-    val riderMobile = transferRecord?.toRiderMobile ?: order.assignedRiderPhone ?: "+91 98450 67890"
+    val riderName = transferRecord?.toRiderName ?: order.assignedRiderName ?: primaryRider?.name ?: "Unassigned"
+    val riderMobile = transferRecord?.toRiderMobile ?: order.assignedRiderPhone ?: primaryRider?.mobile ?: ""
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -2098,7 +2104,7 @@ private fun AdminOverviewPage(
                         OutlinedTextField(
                             value = quickRiderLookupQuery,
                             onValueChange = { quickRiderLookupQuery = it },
-                            placeholder = { Text("Type Rider Name (e.g. Rajesh, Vikram, Imtiaz) to view full details & docs...") },
+                            placeholder = { Text("Search registered rider by name, mobile, or Rider ID...") },
                             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = WebTeal) },
                             singleLine = true,
                             modifier = Modifier
@@ -2704,133 +2710,15 @@ private fun AdminNextLevelAutoPilotAndRadarCard(
                 }
             }
 
-            // Live Animated Multi-Rider & Active-Order City Radar Map Canvas
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(145.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF040B18))
-                    .testTag("admin_live_fleet_radar_canvas")
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val w = size.width
-                    val h = size.height
-
-                    // City Grid Lines
-                    val vStep = w / 8f
-                    val hStep = h / 5f
-                    for (i in 1..7) {
-                        drawLine(
-                            color = Color(0xFF1E293B),
-                            start = Offset(i * vStep, 0f),
-                            end = Offset(i * vStep, h),
-                            strokeWidth = 1f
-                        )
-                    }
-                    for (j in 1..4) {
-                        drawLine(
-                            color = Color(0xFF1E293B),
-                            start = Offset(0f, j * hStep),
-                            end = Offset(w, j * hStep),
-                            strokeWidth = 1f
-                        )
-                    }
-
-                    // Radar Concentric Rings
-                    val center = Offset(w * 0.5f, h * 0.5f)
-                    drawCircle(
-                        color = WebTeal.copy(alpha = 0.18f),
-                        radius = h * 0.42f,
-                        center = center,
-                        style = Stroke(width = 1.5f)
-                    )
-                    drawCircle(
-                        color = WebTeal.copy(alpha = 0.12f),
-                        radius = h * 0.25f,
-                        center = center,
-                        style = Stroke(width = 1.2f)
-                    )
-
-                    // Active Delivery Route Corridors & Moving Vehicles
-                    val routeCount = maxOf(activeOrders.size, 2)
-                    for (idx in 0 until routeCount.coerceAtMost(4)) {
-                        val startX = w * (0.12f + idx * 0.18f)
-                        val startY = h * (0.76f - (idx % 2) * 0.45f)
-                        val endX = w * (0.86f - idx * 0.14f)
-                        val endY = h * (0.24f + (idx % 2) * 0.48f)
-
-                        drawLine(
-                            color = WebTeal.copy(alpha = 0.4f),
-                            start = Offset(startX, startY),
-                            end = Offset(endX, endY),
-                            strokeWidth = 3f,
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
-                        )
-
-                        // Pickup Pin
-                        drawCircle(color = WebTeal, radius = 6f, center = Offset(startX, startY))
-                        // Drop Pin
-                        drawCircle(color = WebOrange, radius = 6f, center = Offset(endX, endY))
-
-                        // Live Moving Rider Position along Corridor
-                        val riderProg = ((radarSweepProgress + idx * 0.27f) % 1f)
-                        val rx = startX + (endX - startX) * riderProg
-                        val ry = startY + (endY - startY) * riderProg
-
-                        drawCircle(
-                            color = WebEmerald.copy(alpha = 0.3f),
-                            radius = 14f,
-                            center = Offset(rx, ry)
-                        )
-                        drawCircle(
-                            color = Color.White,
-                            radius = 7f,
-                            center = Offset(rx, ry)
-                        )
-                        drawCircle(
-                            color = WebEmerald,
-                            radius = 4.5f,
-                            center = Offset(rx, ry)
-                        )
-                    }
-                }
-
-                // Top-Left Overlay Badge
-                Surface(
-                    color = Color(0xFF0F172A).copy(alpha = 0.86f),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, WebTeal.copy(alpha = 0.5f)),
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp)
-                ) {
-                    Text(
-                        text = "📡 LIVE CITY FLEET RADAR • ${onlineRiders.size} Online Riders • ${activeOrders.size} Active Routes",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF5EEAD4),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-
-                // Bottom-Right Live Telemetry Status
-                Surface(
-                    color = Color(0xFF0F172A).copy(alpha = 0.88f),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                ) {
-                    Text(
-                        text = "🟢 Customer Live Map & ETA Synced",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = WebEmerald,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-            }
+            // Rich Vector City Cartography & Live Multi-Rider GPS Radar Canvas (Zero dummy routes)
+            AdminLiveVectorCityMapCanvas(
+                activeOrders = activeOrders,
+                onlineRidersCount = onlineRiders.size,
+                sweepProgress = radarSweepProgress,
+                topStartLabel = "📡 LIVE CITY FLEET RADAR • ${onlineRiders.size} Online Riders • ${activeOrders.size} Active Routes",
+                bottomEndLabel = "🟢 Customer Live Map & ETA Synced",
+                mapHeight = 190.dp
+            )
 
             // Live Autonomous Action Log Strip
             Surface(
@@ -3085,7 +2973,7 @@ private fun AdminRidersCompleteDataPage(
                             searchQuery = it
                             onSearchQueryChanged(it)
                         },
-                        placeholder = { Text("Search Rider Name (e.g. Rajesh Kumar, Vikram Singh, Imtiaz Ali)...") },
+                        placeholder = { Text("Search registered rider by name, mobile, ID, or vehicle plate...") },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = WebTeal) },
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {

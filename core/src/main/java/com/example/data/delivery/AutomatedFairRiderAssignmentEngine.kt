@@ -35,7 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 data class AdminVehicleAndWeightPolicy(
     val bikeEnabled: Boolean = true,
     val scooterEnabled: Boolean = true,
-    val autoEnabled: Boolean = true,
+    val autoEnabled: Boolean = false,
     val maxAllowedParcelWeightKg: Double = AutomatedFairRiderAssignmentEngine.MAX_PARCEL_WEIGHT_KG,
     val bikeMaxWeightKg: Double = AutomatedFairRiderAssignmentEngine.MAX_PARCEL_WEIGHT_KG,
     val scooterMaxWeightKg: Double = AutomatedFairRiderAssignmentEngine.MAX_PARCEL_WEIGHT_KG,
@@ -418,6 +418,8 @@ object AutomatedFairRiderAssignmentEngine {
                     autoFlow.value = autoFlow.value.copy(serviceRadiusKm = 25.0)
                 }
             }
+            // Never seed dummy demo riders on real user phones; only populate synthetic fleet in JVM tests.
+            if (!isRobolectricTestEnv) return
             val currentRiders = repository.riders.value
             val nowMs = System.currentTimeMillis()
             val existingById = currentRiders.associateBy { it.riderId }
@@ -634,6 +636,29 @@ object AutomatedFairRiderAssignmentEngine {
                     ordersFlow.value = ordersFlow.value.filterNot { it.orderId in demoIds }
                 }
             }
+            val dummyRiderIds = setOf("RIDER-101", "RIDER-102", "RIDER-103", "RIDER-104", "RIDER-105")
+            val dummyRiderNames = setOf(
+                "vikram rathore",
+                "vikram singh",
+                "aman verma",
+                "priya nair",
+                "rohit kumar",
+                "deepak yadav",
+                "mohd irfan",
+                "rajesh kumar"
+            )
+            // Always strip pre-seeded dummy riders on real devices
+            if (!isRobolectricTestEnv) {
+                runCatching {
+                    val liveRiders = repository.riders.value
+                    val filtered = liveRiders.filterNot { r ->
+                        r.riderId in dummyRiderIds || r.name.trim().lowercase() in dummyRiderNames
+                    }
+                    if (filtered.size != liveRiders.size) {
+                        updateRepositoryRidersList(repository, filtered)
+                    }
+                }
+            }
             if (hasClearedPreSeededDemoOrdersForUiSession) return
             hasClearedPreSeededDemoOrdersForUiSession = true
 
@@ -668,13 +693,19 @@ object AutomatedFairRiderAssignmentEngine {
                 }
             }
             runCatching {
-                val cleanedRiders = repository.riders.value.map { r ->
-                    r.copy(
-                        walletBalanceInr = 0.0,
-                        commissionDebtInr = 0.0,
-                        totalDeliveries = 0,
-                        completedOrdersToday = 0
-                    )
+                val cleanedRiders = if (!isRobolectricTestEnv) {
+                    repository.riders.value.filterNot { r ->
+                        r.riderId in dummyRiderIds || r.name.trim().lowercase() in dummyRiderNames
+                    }
+                } else {
+                    repository.riders.value.map { r ->
+                        r.copy(
+                            walletBalanceInr = 0.0,
+                            commissionDebtInr = 0.0,
+                            totalDeliveries = 0,
+                            completedOrdersToday = 0
+                        )
+                    }
                 }
                 updateRepositoryRidersList(repository, cleanedRiders)
             }

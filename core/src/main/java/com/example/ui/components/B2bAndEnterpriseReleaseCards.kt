@@ -650,7 +650,7 @@ fun CustomerB2bDukaanStep1Card(
                             context = context,
                             shopName = shopNameInput,
                             ownerName = customerName.ifBlank { "Store Owner" },
-                            ownerPhone = customerPhone.ifBlank { "9876543210" },
+                            ownerPhone = customerPhone.trim(),
                             gstin = gstinInput,
                             pickupAddress = hubAddressInput.ifBlank { pickupAddress.ifBlank { "Shop Hub" } }
                         )

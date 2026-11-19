@@ -177,18 +177,18 @@ object CrossPlatformDeliveryEngine {
     <div class="card">
       <h3>Book Instant Parcel Delivery (iOS Customer)</h3>
       <div class="sub">Bundle ID: com.aistudio.quickdelivery.customer.ios • 20% Platform Commission / 80% Rider Earning</div>
-      <input id="pickupInput" class="field" value="Indiranagar 100ft Road, Bengaluru" placeholder="Pickup Address" />
-      <input id="dropInput" class="field" value="Koramangala 4th Block, Bengaluru" placeholder="Dropoff Address" />
+      <input id="pickupInput" class="field" value="" placeholder="Enter Pickup Address" />
+      <input id="dropInput" class="field" value="" placeholder="Enter Dropoff Address" />
       <div class="row" style="margin-bottom:8px;">
         <select id="vehicleSelect" class="field" style="margin-bottom:0;" onchange="recalcFare()">
           <option value="BIKE">2-Wheeler Bike (₹40 + ₹12/km)</option>
           <option value="EV">3-Wheeler EV Cargo (₹60 + ₹16/km)</option>
           <option value="MINI_TRUCK">Mini Truck (₹150 + ₹28/km)</option>
         </select>
-        <input id="distanceInput" type="number" class="field" style="width:95px;margin-bottom:0;" value="6.5" min="1" max="100" step="0.5" onchange="recalcFare()" />
+        <input id="distanceInput" type="number" class="field" style="width:95px;margin-bottom:0;" value="5.0" min="1" max="100" step="0.5" onchange="recalcFare()" />
       </div>
       <div id="fareSummary" class="sub" style="font-weight:700;color:var(--navy);">
-        Total Fare: ₹118.00 • Rider (80%): ₹94.40 • Company (20%): ₹23.60
+        Enter route to calculate instant fare
       </div>
       <button class="btn" onclick="createOrderFromIos()">Book Parcel &amp; Sync</button>
     </div>
@@ -199,8 +199,8 @@ object CrossPlatformDeliveryEngine {
       <div class="sub">Bundle ID: com.aistudio.quickdelivery.rider.ios • Max Commission Debt Cap: ₹150.00</div>
       <div class="row" style="margin-bottom:10px;">
         <div>
-          <div style="font-size:13px;font-weight:700;">Wallet Balance: ₹1,480.00</div>
-          <div id="debtLabel" style="font-size:12px;color:#475569;">Commission Debt: ₹90.00 / ₹150.00 Cap</div>
+          <div style="font-size:13px;font-weight:700;">Wallet Balance: ₹0.00</div>
+          <div id="debtLabel" style="font-size:12px;color:#475569;">Commission Debt: ₹0.00 / ₹150.00 Cap</div>
         </div>
         <span class="badge" style="background:var(--emerald);">ONLINE_ACTIVE</span>
       </div>

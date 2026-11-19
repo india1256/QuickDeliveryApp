@@ -207,53 +207,7 @@ object RiderLiveSelfieCallAndExcelManager {
     @Volatile
     private var isLoaded = false
 
-    private fun defaultInitialSelfieRecords(): List<RiderLiveSelfieCheckInRecord> {
-        val nowStr = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
-        return listOf(
-            RiderLiveSelfieCheckInRecord(
-                checkInId = "SELFIE-LIVE-901",
-                riderId = "RIDER-101",
-                riderName = "Vikram Rathore",
-                riderMobile = "+91 98450 67890",
-                vehicleType = "2-Wheeler Bike",
-                vehiclePlate = "KA-01-JD-2048",
-                capturedAt = nowStr,
-                gpsCoordinates = "12.97160, 77.59460",
-                helmetAndGearVerified = true,
-                livePhotoSummary = "Live Camera Selfie Verified (Helmet + ID Badge • 1080p Online)",
-                cloudSyncId = "CLOUD-IMG-R101-ONLINE",
-                selfieBitmap = generateLiveRiderSelfieBitmap("Vikram Rathore", "RIDER-101")
-            ),
-            RiderLiveSelfieCheckInRecord(
-                checkInId = "SELFIE-LIVE-902",
-                riderId = "RIDER-102",
-                riderName = "Suresh Gowda",
-                riderMobile = "+91 98451 11223",
-                vehicleType = "Scooter",
-                vehiclePlate = "KA-05-MN-8821",
-                capturedAt = nowStr,
-                gpsCoordinates = "12.93520, 77.62450",
-                helmetAndGearVerified = true,
-                livePhotoSummary = "Live Camera Selfie Verified (Helmet + Uniform • 1080p Online)",
-                cloudSyncId = "CLOUD-IMG-R102-ONLINE",
-                selfieBitmap = generateLiveRiderSelfieBitmap("Suresh Gowda", "RIDER-102")
-            ),
-            RiderLiveSelfieCheckInRecord(
-                checkInId = "SELFIE-LIVE-903",
-                riderId = "RIDER-103",
-                riderName = "Imran Khan",
-                riderMobile = "+91 98802 33445",
-                vehicleType = "3-Wheeler Auto",
-                vehiclePlate = "KA-03-AA-4509",
-                capturedAt = nowStr,
-                gpsCoordinates = "12.97840, 77.64080",
-                helmetAndGearVerified = true,
-                livePhotoSummary = "Live Camera Selfie Verified (Uniform + Badge • 1080p Online)",
-                cloudSyncId = "CLOUD-IMG-R103-ONLINE",
-                selfieBitmap = generateLiveRiderSelfieBitmap("Imran Khan", "RIDER-103")
-            )
-        )
-    }
+    private fun defaultInitialSelfieRecords(): List<RiderLiveSelfieCheckInRecord> = emptyList()
 
     private fun defaultInitialCallLogs(): List<DirectCallLogEntry> = emptyList()
 
@@ -269,18 +223,18 @@ object RiderLiveSelfieCallAndExcelManager {
                 val parsed = mutableListOf<RiderLiveSelfieCheckInRecord>()
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
-                    val rName = obj.optString("riderName", "Vikram Rathore")
-                    val rId = obj.optString("riderId", "RIDER-101")
+                    val rName = obj.optString("riderName", "Delivery Partner")
+                    val rId = obj.optString("riderId", "")
                     parsed.add(
                         RiderLiveSelfieCheckInRecord(
                             checkInId = obj.optString("checkInId", "SELFIE-LIVE-$i"),
                             riderId = rId,
                             riderName = rName,
-                            riderMobile = obj.optString("riderMobile", "+91 98450 67890"),
+                            riderMobile = obj.optString("riderMobile", ""),
                             vehicleType = obj.optString("vehicleType", "2-Wheeler Bike"),
-                            vehiclePlate = obj.optString("vehiclePlate", "KA-01-JD-2048"),
+                            vehiclePlate = obj.optString("vehiclePlate", ""),
                             capturedAt = obj.optString("capturedAt", ""),
-                            gpsCoordinates = obj.optString("gpsCoordinates", "12.97160, 77.59460"),
+                            gpsCoordinates = obj.optString("gpsCoordinates", "0.0, 0.0"),
                             helmetAndGearVerified = obj.optBoolean("helmetAndGearVerified", true),
                             livePhotoSummary = obj.optString("livePhotoSummary", "Live Selfie Verified Online"),
                             cloudSyncId = obj.optString("cloudSyncId", "CLOUD-ONLINE-$rId"),
@@ -361,7 +315,7 @@ object RiderLiveSelfieCallAndExcelManager {
     ): String {
         ensureLoaded(context)
         val cleanDigits = rawPhoneNumber.filter { it.isDigit() || it == '+' }
-            .ifBlank { "+919845067890" }
+        if (cleanDigits.isBlank()) return "Number not available"
         val formattedDisplay = if (rawPhoneNumber.startsWith("+")) rawPhoneNumber else "+91 ${rawPhoneNumber.trim()}"
         val timestamp = SimpleDateFormat("dd MMM yyyy, hh:mm:ss a", Locale.US).format(Date())
 
@@ -432,25 +386,25 @@ object RiderLiveSelfieCallAndExcelManager {
             checkInId = "SELFIE-LIVE-${riderId.takeLast(3)}",
             riderId = riderId,
             riderName = riderName,
-            riderMobile = "+91 98450 67890",
+            riderMobile = "",
             vehicleType = "2-Wheeler",
-            vehiclePlate = "KA-01-QD-1024",
-            capturedAt = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date()),
-            gpsCoordinates = "12.97160, 77.59460",
-            helmetAndGearVerified = true,
-            livePhotoSummary = "Live Camera Selfie Verified Online",
+            vehiclePlate = "",
+            capturedAt = "Pending Live Selfie",
+            gpsCoordinates = "Not Captured Yet",
+            helmetAndGearVerified = false,
+            livePhotoSummary = "Awaiting Live Camera Selfie Check-In",
             cloudSyncId = "CLOUD-SELFIE-$riderId",
             selfieBitmap = generateLiveRiderSelfieBitmap(riderName, riderId)
         )
     }
 
     fun getCompleteDocumentVaultForRider(rider: RiderProfile): RiderCompleteDocumentVault {
-        val suffix = rider.riderId.filter { it.isDigit() }.ifBlank { "101" }
+        val suffix = rider.riderId.filter { it.isDigit() }.ifBlank { "000" }
         val regRecord = com.example.data.cloud.RiderRegistrationApprovalManager
             .getRecordForRiderProfile(rider.riderId, rider.mobile)
         val aadhaar = regRecord?.aadhaarNumber?.ifBlank { rider.aadhaarNumber } ?: rider.aadhaarNumber.ifBlank { "Pending KYC" }
         val pan = regRecord?.panNumber?.ifBlank { rider.panNumber } ?: rider.panNumber.ifBlank { "Pending KYC" }
-        val dlNum = regRecord?.drivingLicenseNumber?.ifBlank { "Pending KYC" } ?: "KA-01-20190049$suffix"
+        val dlNum = regRecord?.drivingLicenseNumber?.ifBlank { "Pending KYC" } ?: "Pending KYC"
         val realBankName = regRecord?.bankName?.ifBlank { "Not Added Yet (Waiting Rider Form)" }
             ?: "Not Added Yet (Waiting Rider Form)"
         val realAccountNo = regRecord?.bankAccountNumber?.ifBlank { "Pending Bank Form" }
@@ -1113,7 +1067,7 @@ fun AdminOnlineExcelSpreadsheetPage(
                 )
             }
             val customForSheet = customExcelRows.filter { it.sheetName == "Riders" }.map {
-                listOf(it.rowId, it.col1, it.col2, it.col3, "ONLINE_CUSTOM", it.updatedAt, it.col4, it.col5, "VERIFIED", "VERIFIED", "VERIFIED", "2033", "ACTIVE", "VALID", "HDFC", "HDFC0001024", "₹500", "₹0", "1", "12.9716, 77.5946", "+91 9845000000")
+                listOf(it.rowId, it.col1, it.col2, it.col3, "ONLINE_CUSTOM", it.updatedAt, it.col4, it.col5, "PENDING", "PENDING", "PENDING", "-", "-", "-", "Not Added", "-", "₹0", "₹0", "0", "-", "-")
             }
             allRows = customForSheet + riderRows
         }
@@ -1202,7 +1156,7 @@ fun AdminOnlineExcelSpreadsheetPage(
                     o.customerName,
                     o.customerPhone,
                     o.assignedRiderName ?: "Auto-Assigning Online",
-                    o.assignedRiderPhone ?: "+91 98450 67890",
+                    o.assignedRiderPhone ?: "-",
                     o.vehicleType.title,
                     o.packageDetails.packageType.title,
                     "${o.packageDetails.weightKg} kg",
@@ -1517,10 +1471,10 @@ fun AdminOnlineExcelSpreadsheetPage(
                                         context = context,
                                         sheetName = if (selectedWorksheetIndex == 1) "Customers" else "Riders",
                                         col1 = newCol1.trim(),
-                                        col2 = newCol2.trim().ifBlank { "+91 98450 12345" },
-                                        col3 = newCol3.trim().ifBlank { "online@quickdelivery.in" },
-                                        col4 = newCol4.trim().ifBlank { "2-Wheeler Bike" },
-                                        col5 = newCol5.trim().ifBlank { "KA-01-QD-9090" }
+                                        col2 = newCol2.trim().ifBlank { "-" },
+                                        col3 = newCol3.trim().ifBlank { "-" },
+                                        col4 = newCol4.trim().ifBlank { "-" },
+                                        col5 = newCol5.trim().ifBlank { "-" }
                                     )
                                     newCol1 = ""
                                     newCol2 = ""

@@ -1659,16 +1659,14 @@ object QuickDeliveryOperationsManager {
     ): B2bDukaanAccountRecord {
         ensureLoaded(context)
         val cleanPhone = com.example.security.QuickDeliverySecurityGuard.sanitizePhoneNumber(ownerPhone)
-            .ifBlank { "9876543210" }
         val cleanShop = com.example.security.QuickDeliverySecurityGuard.sanitizeText(shopName, 100)
             .ifBlank { "Local Dukaan Partner" }
         val cleanOwner = com.example.security.QuickDeliverySecurityGuard.sanitizeText(ownerName, 80)
             .ifBlank { "Store Owner" }
         val cleanGstin = gstin.trim().uppercase().replace("[^A-Z0-9\\-]".toRegex(), "").ifBlank { "URD" }.take(20)
         val cleanAddr = com.example.security.QuickDeliverySecurityGuard.sanitizeText(pickupAddress, 300)
-            .ifBlank { "Main Market Road" }
         val now = System.currentTimeMillis()
-        val id = "B2B-${cleanPhone.takeLast(4)}-${(now % 10000).toString().padStart(4, '0')}"
+        val id = "B2B-${cleanPhone.takeLast(4).ifBlank { "0000" }}-${(now % 10000).toString().padStart(4, '0')}"
         val existing = _b2bAccounts.value.firstOrNull { it.ownerPhone == cleanPhone }
         val record = if (existing != null) {
             existing.copy(

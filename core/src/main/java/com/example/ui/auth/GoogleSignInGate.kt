@@ -235,7 +235,19 @@ fun onGoogleSignInClicked(
 
     scope.launch {
         try {
-            val result = credentialManager.getCredential(activity, request)
+            val result = try {
+                credentialManager.getCredential(activity, request)
+            } catch (noCred: NoCredentialException) {
+                Log.w("Auth", "Primary SignInWithGoogle returned NoCredentialException; retrying with GetGoogleIdOption", noCred)
+                val fallbackGoogleOption = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(clientId)
+                    .build()
+                val fallbackRequest = GetCredentialRequest.Builder()
+                    .addCredentialOption(fallbackGoogleOption)
+                    .build()
+                credentialManager.getCredential(activity, fallbackRequest)
+            }
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
@@ -249,7 +261,7 @@ fun onGoogleSignInClicked(
             Log.w("Auth", "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
             onAuthCancelled()
         } catch (e: NoCredentialException) {
-            Log.w("Auth", "No Google credential available: ${e.message}", e)
+            Log.w("Auth", "No Google credential available after fallback: ${e.message}", e)
             onAuthError("No Google account ready on this device. Please sign in with Mobile Number or Email above.")
         } catch (e: GetCredentialException) {
             Log.e("Auth", "Google Credential Manager error: ${e.type} - ${e.message}", e)
@@ -500,7 +512,7 @@ fun QuickDeliveryCloudSyncBar(
         }
         val phoneToUse = com.example.ui.components.MotivationAndPromoManager.cachedCustomerPhone
             .ifBlank { com.example.ui.components.MotivationAndPromoManager.cachedRiderPhone }
-            .ifBlank { "9876543210" }
+            .ifBlank { "" }
         runCatching {
             cloudRepo.upsertUserProfile(
                 name = nameToUse,

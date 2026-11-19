@@ -319,10 +319,8 @@ object MotivationAndPromoManager {
             val cleanName = QuickDeliverySecurityGuard.sanitizeText(name, 80).ifBlank {
                 if (cleanRole == "rider") "Partner User" else "Customer User"
             }
-            val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone).ifBlank {
-                if (cleanRole == "customer" && email.isNotBlank()) "" else "9876543210"
-            }
-            val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email).ifBlank { "$cleanRole@quickdelivery.co.in" }
+            val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone)
+            val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email)
             val signedToken = QuickDeliverySecurityGuard.issueRoleSessionToken(
                 context = context,
                 role = cleanRole,
@@ -1264,7 +1262,7 @@ fun QuickDeliveryUserAuthScreen(
                             )
                         }
                     }
-                    if (prefsKeyPrefix == "customer") {
+                    if (prefsKeyPrefix == "customer" || prefsKeyPrefix == "rider") {
                         LanguageSwitcherPill(accentColor = accentColor)
                     }
                 }
@@ -3430,10 +3428,12 @@ fun LiveRiderContinuousTrackingCard(
                         }
 
                         val isPrepaidOrder = order.paymentMethod != CustomerPaymentMethod.CASH_ON_DELIVERY
-                        val riderMobile = order.assignedRiderPhone?.takeIf { it.isNotBlank() } ?: "+91 98450 67890"
+                        val riderMobile = order.assignedRiderPhone?.takeIf { it.isNotBlank() }
+                        val riderLabel = order.assignedRiderName?.takeIf { it.isNotBlank() } ?: "Assigning Delivery Partner"
+                        val riderContactSuffix = if (!riderMobile.isNullOrBlank()) " ($riderMobile)" else ""
 
                         Text(
-                            text = "Rider: ${order.assignedRiderName ?: "Vikram Singh"} ($riderMobile) • ${order.vehicleType.title}",
+                            text = "Rider: $riderLabel$riderContactSuffix • ${order.vehicleType.title}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -3515,8 +3515,8 @@ fun LiveRiderContinuousTrackingCard(
                 if (isDelivered) {
                     PostDeliveryRiderFeedbackSection(
                         orderId = order.orderId,
-                        riderId = order.assignedRiderId ?: "RIDER-101",
-                        riderName = order.assignedRiderName ?: "Rider Partner",
+                        riderId = order.assignedRiderId ?: "",
+                        riderName = order.assignedRiderName ?: "Delivery Partner",
                         customerName = order.customerName
                     )
                 }

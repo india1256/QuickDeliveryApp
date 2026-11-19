@@ -678,12 +678,13 @@ fun CustomerAppScreen(
     var appliedPromoCode by rememberSaveable { mutableStateOf("") }
     var promoFeedbackMessage by remember { mutableStateOf<String?>(null) }
 
-    val appliedCouponObj = remember(adminPromoCoupons, appliedPromoCode) {
-        if (appliedPromoCode.isBlank()) null
+    val appliedCouponObj = remember(remoteFlags.promoCodeEnabled, adminPromoCoupons, appliedPromoCode) {
+        if (!remoteFlags.promoCodeEnabled || appliedPromoCode.isBlank()) null
         else adminPromoCoupons.firstOrNull { it.code.equals(appliedPromoCode, ignoreCase = true) && it.isActive }
     }
-    val promoDiscountInr = remember(appliedCouponObj, liveDetailedFare.totalFareInr) {
-        appliedCouponObj?.computeDiscountInr(liveDetailedFare.totalFareInr) ?: 0.0
+    val promoDiscountInr = remember(remoteFlags.promoCodeEnabled, appliedCouponObj, liveDetailedFare.totalFareInr) {
+        if (!remoteFlags.promoCodeEnabled) 0.0
+        else appliedCouponObj?.computeDiscountInr(liveDetailedFare.totalFareInr) ?: 0.0
     }
 
     val extraStopAddonInr = if (remoteFlags.multiDropEnabled && isMultiDropEnabled) 40.0 else 0.0
@@ -725,6 +726,10 @@ fun CustomerAppScreen(
         if (!remoteFlags.parcelInsuranceEnabled) isParcelInsured = false
         if (!remoteFlags.helperAddonEnabled) isHelperAdded = false
         if (!remoteFlags.referralWalletEnabled) useWalletBonus = false
+        if (!remoteFlags.promoCodeEnabled) {
+            appliedPromoCode = ""
+            promoFeedbackMessage = null
+        }
         if (!remoteFlags.b2bPostpaidEnabled || approvedB2bAccount == null || approvedB2bAccount.availableCreditInr < totalWithTipInr) {
             useB2bPostpaid = false
         }
@@ -749,7 +754,6 @@ fun CustomerAppScreen(
 
     var showCustomerTopOptionsDialog by remember { mutableStateOf(false) }
     var showCustomerProfileDialog by remember { mutableStateOf(false) }
-    var showCustomerShareThreeDotsMenu by remember { mutableStateOf(false) }
     var attemptedStep1Next by rememberSaveable { mutableStateOf(false) }
     var showCustomerLogoutConfirmDialog by remember { mutableStateOf(false) }
     var showCustomerSupportTicketDialog by remember { mutableStateOf(false) }
@@ -986,9 +990,9 @@ fun CustomerAppScreen(
                     CustomerPaymentMethod.GATEWAY_UPI -> selectedUpiApp.displayName
                     CustomerPaymentMethod.GATEWAY_CREDIT_CARD,
                     CustomerPaymentMethod.GATEWAY_DEBIT_CARD ->
-                        cardOrBankDetails.ifBlank { "Visa Card •••• 4821" }
+                        cardOrBankDetails.ifBlank { "Card Payment" }
                     CustomerPaymentMethod.GATEWAY_NET_BANKING ->
-                        cardOrBankDetails.ifBlank { "HDFC NetBanking" }
+                        cardOrBankDetails.ifBlank { "NetBanking" }
                     else -> "COD"
                 }
                 val initiatedGw = repository.initiateGatewayPaymentOrder(
@@ -1055,12 +1059,12 @@ fun CustomerAppScreen(
                 repository = repository,
                 customerId = myCustomerId,
                 customerName = customerName.ifBlank { "Customer" },
-                customerPhone = normalizedCustomerPhone.ifBlank { "9876543210" },
+                customerPhone = normalizedCustomerPhone,
                 pickupAddress = AddressDetails(
                     fullAddress = resolvedPickupAddress,
                     landmark = pickupLandmark,
                     contactName = customerName.ifBlank { "Customer" },
-                    contactPhone = normalizedCustomerPhone.ifBlank { "9876543210" },
+                    contactPhone = normalizedCustomerPhone,
                     lat = pickupLat,
                     lng = pickupLng
                 ),
@@ -1068,7 +1072,7 @@ fun CustomerAppScreen(
                     fullAddress = resolvedDropAddress,
                     landmark = dropLandmark,
                     contactName = receiverFullName.ifBlank { "Receiver" },
-                    contactPhone = receiverMobilePhone.ifBlank { "+91 98450 11223" },
+                    contactPhone = receiverMobilePhone.trim(),
                     lat = dropLat,
                     lng = dropLng
                 ),
@@ -1089,6 +1093,37 @@ fun CustomerAppScreen(
 
             bookingResult.fold(
                 onSuccess = { newOrder ->
+                    // Auto-save real Pickup & Drop addresses under the chosen Home/Office/Shop label for 1-tap future bookings
+                    if (pickupAddressText.isNotBlank() && pickupPinCode.length == 6) {
+                        runCatching {
+                            QuickDeliveryOperationsManager.saveCustomerAddress(
+                                context = context,
+                                label = selectedPickupSavedTag.ifBlank { "Home" },
+                                houseFlat = pickupHouseFlat,
+                                building = pickupBuilding,
+                                areaStreet = pickupAddressText,
+                                pinCode = pickupPinCode,
+                                landmark = pickupLandmark,
+                                lat = pickupLat,
+                                lng = pickupLng
+                            )
+                        }
+                    }
+                    if (dropAddressText.isNotBlank() && dropPinCode.length == 6) {
+                        runCatching {
+                            QuickDeliveryOperationsManager.saveCustomerAddress(
+                                context = context,
+                                label = selectedDropSavedTag.ifBlank { "Office" },
+                                houseFlat = dropHouseFlat,
+                                building = dropBuilding,
+                                areaStreet = dropAddressText,
+                                pinCode = dropPinCode,
+                                landmark = dropLandmark,
+                                lat = dropLat,
+                                lng = dropLng
+                            )
+                        }
+                    }
                     if (walletDiscountInr > 0.0) {
                         QuickDeliveryOperationsManager.consumeWalletBonus(context, walletDiscountInr.toInt())
                     }
@@ -1153,6 +1188,8 @@ fun CustomerAppScreen(
         CustomerBookingConfirmationScreen(
             customerName = customerName,
             customerPhone = customerPhone,
+            receiverName = receiverFullName,
+            receiverPhone = receiverMobilePhone,
             pickupHouseFlat = pickupHouseFlat,
             pickupBuilding = pickupBuilding,
             pickupArea = pickupAddressText,
@@ -1230,6 +1267,121 @@ fun CustomerAppScreen(
                         .padding(bottom = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // TOP PROFILE & PHOTO (DP) CARD — Placed right at the very top of the 3-lines menu
+                    Text(
+                        text = uiStrings.sectionProfile,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = PrimaryTeal
+                    )
+                    Surface(
+                        onClick = {
+                            showCustomerTopOptionsDialog = false
+                            showCustomerProfileDialog = true
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = SoftTealSurface,
+                        border = BorderStroke(1.5.dp, PrimaryTeal.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_verified_profile_summary_card")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(modifier = Modifier.size(50.dp)) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = PrimaryTeal.copy(alpha = 0.16f),
+                                    border = BorderStroke(2.dp, BrandOrange),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    val dpBmp = customerProfileBitmap
+                                    if (dpBmp != null) {
+                                        Image(
+                                            bitmap = dpBmp.asImageBitmap(),
+                                            contentDescription = "Customer Profile Photo",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(CircleShape)
+                                        )
+                                    } else {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Person,
+                                                contentDescription = "Customer Profile",
+                                                tint = PrimaryTeal,
+                                                modifier = Modifier.size(26.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Surface(
+                                    color = BrandOrange,
+                                    shape = CircleShape,
+                                    border = BorderStroke(1.5.dp, Color.White),
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .align(Alignment.BottomEnd)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.CameraAlt,
+                                            contentDescription = "Add or Change Profile Photo",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = customerName.ifBlank { "My Profile" },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = DeepNavy
+                                )
+                                val cleanContactSummary = listOfNotNull(
+                                    customerPhone.removePrefix("+91").trim().takeIf { it.isNotBlank() }?.let { "+91 $it" },
+                                    customerEmail.trim().takeIf { it.isNotBlank() }
+                                ).joinToString(" • ")
+                                if (cleanContactSummary.isNotBlank()) {
+                                    Text(
+                                        text = cleanContactSummary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = SlateMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Surface(
+                                    color = BrandOrange,
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = if (customerProfileBitmap != null) "📷 Change Photo (DP)" else "📷 Add Profile Photo (DP)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = PrimaryTeal,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
                     // SECTION 1: HOME & BOOKING / ORDERS
                     Text(
                         text = uiStrings.sectionHomeBooking,
@@ -1418,102 +1570,6 @@ fun CustomerAppScreen(
                                 tint = PrimaryTeal,
                                 modifier = Modifier.size(18.dp)
                             )
-                        }
-                    }
-
-                    // SECTION 4: PROFILE
-                    Text(
-                        text = uiStrings.sectionProfile,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = SlateMuted
-                    )
-                    Surface(
-                        onClick = {
-                            showCustomerTopOptionsDialog = false
-                            showCustomerProfileDialog = true
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFFF8FAFC),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("customer_verified_profile_summary_card")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(modifier = Modifier.size(44.dp)) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = PrimaryTeal.copy(alpha = 0.14f),
-                                    border = BorderStroke(1.5.dp, BrandOrange),
-                                    modifier = Modifier.fillMaxSize()
-                                ) {
-                                    val dpBmp = customerProfileBitmap
-                                    if (dpBmp != null) {
-                                        Image(
-                                            bitmap = dpBmp.asImageBitmap(),
-                                            contentDescription = "Customer Profile Photo",
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .clip(CircleShape)
-                                        )
-                                    } else {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.Person,
-                                                contentDescription = "Customer Profile",
-                                                tint = PrimaryTeal,
-                                                modifier = Modifier.size(22.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                                Surface(
-                                    color = BrandOrange,
-                                    shape = CircleShape,
-                                    border = BorderStroke(1.5.dp, Color.White),
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .align(Alignment.BottomEnd)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.CameraAlt,
-                                            contentDescription = "Edit DP",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(9.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = customerName,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = DeepNavy
-                                )
-                                Text(
-                                    text = "+91 ${customerPhone.removePrefix("+91").trim()} • $customerEmail",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = SlateMuted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = if (customerProfileBitmap != null) "Tap to change DP" else "Tap to add Profile DP",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = PrimaryTeal
-                                )
-                            }
                         }
                     }
 
@@ -2369,101 +2425,6 @@ fun CustomerAppScreen(
                     }
                 },
                 actions = {
-                    LanguageSwitcherPill(
-                        accentColor = BrandOrange,
-                        modifier = Modifier.padding(end = 2.dp)
-                    )
-                    IconButton(
-                        onClick = { showCustomerProfileDialog = true },
-                        modifier = Modifier.testTag("customer_top_bar_dp_avatar_btn")
-                    ) {
-                        Box(modifier = Modifier.size(32.dp)) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.White.copy(alpha = 0.2f),
-                                border = BorderStroke(1.5.dp, Color.White),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                val topDp = customerProfileBitmap
-                                if (topDp != null) {
-                                    Image(
-                                        bitmap = topDp.asImageBitmap(),
-                                        contentDescription = "My Profile DP",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .clip(CircleShape)
-                                    )
-                                } else {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Person,
-                                            contentDescription = "Set Profile DP",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Box {
-                        IconButton(
-                            onClick = { showCustomerShareThreeDotsMenu = true },
-                            modifier = Modifier.testTag("customer_top_bar_three_dots_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Share App Link",
-                                tint = Color.White
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showCustomerShareThreeDotsMenu,
-                            onDismissRequest = { showCustomerShareThreeDotsMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = "📤 Share App Link",
-                                        fontWeight = FontWeight.Bold,
-                                        color = DeepNavy
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Share,
-                                        contentDescription = "Share App Link",
-                                        tint = PrimaryTeal
-                                    )
-                                },
-                                onClick = {
-                                    showCustomerShareThreeDotsMenu = false
-                                    val shareLinkUrl = com.example.data.cloud.QuickDeliveryBrandLinks.CUSTOMER_APK_URL
-                                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(
-                                            android.content.Intent.EXTRA_SUBJECT,
-                                            "Download Quick Delivery Customer App"
-                                        )
-                                        putExtra(
-                                            android.content.Intent.EXTRA_TEXT,
-                                            "Book fast door-to-door parcel delivery on Quick Delivery! Download Customer App here: $shareLinkUrl"
-                                        )
-                                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    runCatching {
-                                        context.startActivity(
-                                            android.content.Intent.createChooser(shareIntent, "Share Customer App Link").apply {
-                                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            }
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.testTag("customer_share_app_link_menu_item")
-                            )
-                        }
-                    }
                     IconButton(
                         onClick = { showCustomerTopOptionsDialog = true },
                         modifier = Modifier.testTag("customer_top_bar_three_lines_menu_btn")
@@ -3583,14 +3544,22 @@ fun CustomerAppScreen(
                     }
                 }
 
-                // Vehicle Selection Section (Strict Order: Bike -> Scooter -> Auto)
+                // Vehicle Selection Section (Bike -> Scooter, plus Auto only when enabled by Admin)
                 item(key = "customer_step1_vehicle_card") {
-                    val orderedCustomerVehicles = remember {
-                        listOf(
-                            VehicleType.BIKE,
-                            VehicleType.SCOOTER,
-                            VehicleType.AUTO
-                        )
+                    val isAutoVisible = vehiclePolicy.autoEnabled && remoteFlags.autoEnabled
+                    val orderedCustomerVehicles = remember(isAutoVisible) {
+                        if (isAutoVisible) {
+                            listOf(
+                                VehicleType.BIKE,
+                                VehicleType.SCOOTER,
+                                VehicleType.AUTO
+                            )
+                        } else {
+                            listOf(
+                                VehicleType.BIKE,
+                                VehicleType.SCOOTER
+                            )
+                        }
                     }
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -3616,7 +3585,11 @@ fun CustomerAppScreen(
                                                 color = DeepNavy
                                             )
                                             Text(
-                                                text = uiStrings.selectVehicleSubheading,
+                                                text = if (isAutoVisible) {
+                                                    uiStrings.selectVehicleSubheading
+                                                } else {
+                                                    "Bike & Scooter • Instant Fare"
+                                                },
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = SlateMuted
                                             )
@@ -3764,7 +3737,7 @@ fun CustomerAppScreen(
                                                         }
                                                     }
 
-                                                    // Vehicle Icon Badge
+                                                    // Vehicle Icon Badge (Scooter uses 🛵 instead of ⚡ to highlight front floorboard space)
                                                     Surface(
                                                         color = when {
                                                             !isVehicleEnabled -> Color(0xFFE2E8F0)
@@ -3772,23 +3745,29 @@ fun CustomerAppScreen(
                                                             else -> SoftBg
                                                         },
                                                         shape = CircleShape,
-                                                        modifier = Modifier.size(40.dp)
+                                                        modifier = Modifier.size(42.dp)
                                                     ) {
                                                         Box(contentAlignment = Alignment.Center) {
-                                                            Icon(
-                                                                imageVector = when (vehicle) {
-                                                                    VehicleType.BIKE -> Icons.Default.TwoWheeler
-                                                                    VehicleType.SCOOTER -> Icons.Default.Bolt
-                                                                    else -> Icons.Default.LocalShipping
-                                                                },
-                                                                contentDescription = shortVehicleLabel,
-                                                                tint = when {
-                                                                    !isVehicleEnabled -> SlateMuted
-                                                                    isSelected -> Color.White
-                                                                    else -> DeepNavy
-                                                                },
-                                                                modifier = Modifier.size(21.dp)
-                                                            )
+                                                            if (vehicle == VehicleType.SCOOTER) {
+                                                                Text(
+                                                                    text = "🛵",
+                                                                    style = MaterialTheme.typography.titleMedium
+                                                                )
+                                                            } else {
+                                                                Icon(
+                                                                    imageVector = when (vehicle) {
+                                                                        VehicleType.BIKE -> Icons.Default.TwoWheeler
+                                                                        else -> Icons.Default.LocalShipping
+                                                                    },
+                                                                    contentDescription = shortVehicleLabel,
+                                                                    tint = when {
+                                                                        !isVehicleEnabled -> SlateMuted
+                                                                        isSelected -> Color.White
+                                                                        else -> DeepNavy
+                                                                    },
+                                                                    modifier = Modifier.size(21.dp)
+                                                                )
+                                                            }
                                                         }
                                                     }
 
@@ -3811,18 +3790,20 @@ fun CustomerAppScreen(
                                                         overflow = TextOverflow.Ellipsis
                                                     )
 
-                                                    // Porter-Style Box Capacity Dimensions & ETA
-                                                    val boxDimensions = when (vehicle) {
-                                                        VehicleType.BIKE -> "30×30cm"
-                                                        VehicleType.SCOOTER -> "40×40cm"
-                                                        else -> "90×60cm"
+                                                    // Capacity & Front Floorboard Space Note (Scooter highlights food & larger parcels)
+                                                    val capacityLine = when (vehicle) {
+                                                        VehicleType.BIKE -> "≤${vehicleFareDetails.maxWeightKgForVehicle.toInt()}kg • Small parcels"
+                                                        VehicleType.SCOOTER -> "≤${vehicleFareDetails.maxWeightKgForVehicle.toInt()}kg • Front space (Food/Box)"
+                                                        else -> "≤${vehicleFareDetails.maxWeightKgForVehicle.toInt()}kg • 90×60cm"
                                                     }
                                                     Text(
-                                                        text = "≤${vehicleFareDetails.maxWeightKgForVehicle.toInt()}kg • $boxDimensions",
+                                                        text = capacityLine,
                                                         style = MaterialTheme.typography.labelSmall,
-                                                        color = SlateMuted,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
+                                                        color = if (vehicle == VehicleType.SCOOTER && isSelected) PrimaryTeal else SlateMuted,
+                                                        fontWeight = if (vehicle == VehicleType.SCOOTER) FontWeight.SemiBold else FontWeight.Normal,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                                     )
 
                                                     // Live Price Estimate Pill
@@ -4305,103 +4286,105 @@ fun CustomerAppScreen(
                                             )
                                         }
 
-                                        HorizontalDivider(color = Color.White.copy(alpha = 0.14f))
+                                        // Interactive Promo Code Box (Admin-controlled: hidden by default until enabled in Admin Future Switches)
+                                        if (remoteFlags.promoCodeEnabled) {
+                                            HorizontalDivider(color = Color.White.copy(alpha = 0.14f))
 
-                                        // Interactive Promo Code Box backed by Admin Coupons
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            OutlinedTextField(
-                                                value = promoCodeInput,
-                                                onValueChange = { promoCodeInput = it.uppercase().filter(Char::isLetterOrDigit) },
-                                                placeholder = { Text(uiStrings.promoCodePlaceholder, color = Color.White.copy(alpha = 0.55f)) },
-                                                singleLine = true,
-                                                shape = RoundedCornerShape(10.dp),
-                                                colors = OutlinedTextFieldDefaults.colors(
-                                                    focusedTextColor = Color.White,
-                                                    unfocusedTextColor = Color.White,
-                                                    focusedBorderColor = BrightTeal,
-                                                    unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
-                                                ),
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .testTag("customer_promo_code_input")
-                                            )
-                                            if (appliedPromoCode.isNotBlank()) {
-                                                OutlinedButton(
-                                                    onClick = {
-                                                        appliedPromoCode = ""
-                                                        promoCodeInput = ""
-                                                        promoFeedbackMessage = null
-                                                    },
-                                                    border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
-                                                    shape = RoundedCornerShape(10.dp)
-                                                ) {
-                                                    Text(uiStrings.removeBtn, color = Color(0xFFFECACA), fontWeight = FontWeight.Bold)
-                                                }
-                                            } else {
-                                                Button(
-                                                    onClick = {
-                                                        val match = QuickDeliveryOperationsManager.findActiveCoupon(promoCodeInput)
-                                                        if (match != null) {
-                                                            appliedPromoCode = match.code
-                                                            val est = match.computeDiscountInr(liveDetailedFare.totalFareInr)
-                                                            promoFeedbackMessage = "✅ Applied ${match.code}: Saved ₹${est.toInt()}"
-                                                        } else {
-                                                            promoFeedbackMessage = "Invalid or paused promo code. Check active Admin offers."
-                                                        }
-                                                    },
-                                                    enabled = promoCodeInput.length >= 3,
-                                                    colors = ButtonDefaults.buttonColors(containerColor = BrightTeal),
-                                                    shape = RoundedCornerShape(10.dp),
-                                                    modifier = Modifier.testTag("customer_apply_promo_btn")
-                                                ) {
-                                                    Text(uiStrings.applyBtn, fontWeight = FontWeight.Bold, color = Color.White)
-                                                }
-                                            }
-                                        }
-                                        val activeCoupons = remember(adminPromoCoupons) {
-                                            adminPromoCoupons.filter { it.isActive }
-                                        }
-                                        if (activeCoupons.isNotEmpty() && appliedPromoCode.isBlank()) {
                                             Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .horizontalScroll(rememberScrollState()),
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
-                                                activeCoupons.take(4).forEach { coupon ->
-                                                    Surface(
+                                                OutlinedTextField(
+                                                    value = promoCodeInput,
+                                                    onValueChange = { promoCodeInput = it.uppercase().filter(Char::isLetterOrDigit) },
+                                                    placeholder = { Text(uiStrings.promoCodePlaceholder, color = Color.White.copy(alpha = 0.55f)) },
+                                                    singleLine = true,
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedTextColor = Color.White,
+                                                        unfocusedTextColor = Color.White,
+                                                        focusedBorderColor = BrightTeal,
+                                                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f)
+                                                    ),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .testTag("customer_promo_code_input")
+                                                )
+                                                if (appliedPromoCode.isNotBlank()) {
+                                                    OutlinedButton(
                                                         onClick = {
-                                                            promoCodeInput = coupon.code
-                                                            appliedPromoCode = coupon.code
-                                                            val est = coupon.computeDiscountInr(liveDetailedFare.totalFareInr)
-                                                            promoFeedbackMessage = "✅ Applied ${coupon.code}: Saved ₹${est.toInt()}"
+                                                            appliedPromoCode = ""
+                                                            promoCodeInput = ""
+                                                            promoFeedbackMessage = null
                                                         },
-                                                        color = BrightTeal.copy(alpha = 0.22f),
-                                                        shape = RoundedCornerShape(8.dp),
-                                                        border = BorderStroke(1.dp, BrightTeal.copy(alpha = 0.5f))
+                                                        border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                                                        shape = RoundedCornerShape(10.dp)
                                                     ) {
-                                                        Text(
-                                                            text = "🏷️ ${coupon.code} (${if (coupon.discountPercent > 0) "${coupon.discountPercent}% OFF" else "₹${coupon.flatDiscountInr} OFF"})",
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = Color.White,
-                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                                        )
+                                                        Text(uiStrings.removeBtn, color = Color(0xFFFECACA), fontWeight = FontWeight.Bold)
+                                                    }
+                                                } else {
+                                                    Button(
+                                                        onClick = {
+                                                            val match = QuickDeliveryOperationsManager.findActiveCoupon(promoCodeInput)
+                                                            if (match != null) {
+                                                                appliedPromoCode = match.code
+                                                                val est = match.computeDiscountInr(liveDetailedFare.totalFareInr)
+                                                                promoFeedbackMessage = "✅ Applied ${match.code}: Saved ₹${est.toInt()}"
+                                                            } else {
+                                                                promoFeedbackMessage = "Invalid or paused promo code. Check active Admin offers."
+                                                            }
+                                                        },
+                                                        enabled = promoCodeInput.length >= 3,
+                                                        colors = ButtonDefaults.buttonColors(containerColor = BrightTeal),
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        modifier = Modifier.testTag("customer_apply_promo_btn")
+                                                    ) {
+                                                        Text(uiStrings.applyBtn, fontWeight = FontWeight.Bold, color = Color.White)
                                                     }
                                                 }
                                             }
-                                        }
-                                        promoFeedbackMessage?.let { msg ->
-                                            Text(
-                                                text = msg,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = if (msg.startsWith("✅")) Color(0xFF6EE7B7) else Color(0xFFFCA5A5),
-                                                fontWeight = FontWeight.SemiBold
-                                            )
+                                            val activeCoupons = remember(adminPromoCoupons) {
+                                                adminPromoCoupons.filter { it.isActive }
+                                            }
+                                            if (activeCoupons.isNotEmpty() && appliedPromoCode.isBlank()) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .horizontalScroll(rememberScrollState()),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    activeCoupons.take(4).forEach { coupon ->
+                                                        Surface(
+                                                            onClick = {
+                                                                promoCodeInput = coupon.code
+                                                                appliedPromoCode = coupon.code
+                                                                val est = coupon.computeDiscountInr(liveDetailedFare.totalFareInr)
+                                                                promoFeedbackMessage = "✅ Applied ${coupon.code}: Saved ₹${est.toInt()}"
+                                                            },
+                                                            color = BrightTeal.copy(alpha = 0.22f),
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            border = BorderStroke(1.dp, BrightTeal.copy(alpha = 0.5f))
+                                                        ) {
+                                                            Text(
+                                                                text = "🏷️ ${coupon.code} (${if (coupon.discountPercent > 0) "${coupon.discountPercent}% OFF" else "₹${coupon.flatDiscountInr} OFF"})",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.White,
+                                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            promoFeedbackMessage?.let { msg ->
+                                                Text(
+                                                    text = msg,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (msg.startsWith("✅")) Color(0xFF6EE7B7) else Color(0xFFFCA5A5),
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
                                         }
                                     }
                     }
@@ -4424,12 +4407,12 @@ fun CustomerAppScreen(
                                             repository = repository,
                                             customerId = myCustomerId,
                                             customerName = "$shopName (Bulk ${idx + 1}/${dropList.size})",
-                                            customerPhone = normalizedCustomerPhone.ifBlank { "9876543210" },
+                                            customerPhone = normalizedCustomerPhone,
                                             pickupAddress = AddressDetails(
                                                 fullAddress = basePickup,
                                                 landmark = pickupLandmark,
                                                 contactName = customerName.ifBlank { shopName },
-                                                contactPhone = normalizedCustomerPhone.ifBlank { "9876543210" },
+                                                contactPhone = normalizedCustomerPhone,
                                                 lat = pickupLat,
                                                 lng = pickupLng
                                             ),
@@ -4437,7 +4420,7 @@ fun CustomerAppScreen(
                                                 fullAddress = dropAddr,
                                                 landmark = "",
                                                 contactName = receiverFullName.ifBlank { "Bulk Stop ${idx + 1}" },
-                                                contactPhone = receiverMobilePhone.ifBlank { "9845011223" },
+                                                contactPhone = receiverMobilePhone.ifBlank { normalizedCustomerPhone },
                                                 lat = dropLat,
                                                 lng = dropLng
                                             ),
@@ -5078,8 +5061,8 @@ fun CustomerAppScreen(
                             if (activeOrder.orderStatus == OrderStatus.DELIVERED) {
                                 com.example.ui.components.PostDeliveryRiderFeedbackSection(
                                     orderId = activeOrder.orderId,
-                                    riderId = activeOrder.assignedRiderId ?: "RIDER-101",
-                                    riderName = activeOrder.assignedRiderName ?: "Rider Partner",
+                                    riderId = activeOrder.assignedRiderId ?: "",
+                                    riderName = activeOrder.assignedRiderName ?: "Delivery Partner",
                                     customerName = customerName.ifBlank { activeOrder.customerName },
                                     onFeedbackSubmitted = {
                                         com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
@@ -5110,7 +5093,7 @@ fun CustomerAppScreen(
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = if (!activeOrder.assignedRiderName.isNullOrBlank()) {
-                                                    "Assigned Rider: ${activeOrder.assignedRiderName} • 4.9★"
+                                                    "Assigned Rider: ${activeOrder.assignedRiderName}"
                                                 } else {
                                                     "Waiting for nearby Rider Partner to Accept..."
                                                 },

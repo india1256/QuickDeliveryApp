@@ -602,43 +602,127 @@ fun CustomerSendReceiverOtpCard(
 ) {
     val context = LocalContext.current
     val receiverName = order.dropAddress.contactName.ifBlank { "Receiver" }
-    Button(
-        onClick = {
-            val summary = buildString {
-                appendLine("Hi $receiverName! Your parcel (#${order.orderId}) is on the way via Quick Delivery.")
-                appendLine("Pickup: ${order.pickupAddress.fullAddress}")
-                appendLine("Drop: ${order.dropAddress.fullAddress}")
-                if (!order.assignedRiderName.isNullOrBlank()) {
-                    appendLine("Rider Partner: ${order.assignedRiderName} (${order.assignedRiderPhone.orEmpty()})")
-                }
+    val buildShareMessage: () -> String = {
+        buildString {
+            appendLine("Hi $receiverName! Your parcel (#${order.orderId}) is on the way via Quick Delivery.")
+            appendLine("Pickup: ${order.pickupAddress.fullAddress}")
+            appendLine("Drop: ${order.dropAddress.fullAddress}")
+            if (!order.assignedRiderName.isNullOrBlank()) {
+                val riderPhonePart = order.assignedRiderPhone?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+                appendLine("Rider Partner: ${order.assignedRiderName}$riderPhonePart")
+            }
+            if (order.paymentMethod != com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY) {
                 appendLine("DROP OTP (Share with Rider at Delivery): ${order.deliveryOtp}")
-                append("Live Track Link: ${com.example.data.cloud.QuickDeliveryBrandLinks.CUSTOMER_APK_URL}")
+            } else {
+                appendLine("Payment Mode: Cash on Delivery (${order.totalAmount})")
             }
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, "Quick Delivery Drop OTP (${order.deliveryOtp}) - #${order.orderId}")
-                putExtra(Intent.EXTRA_TEXT, summary)
-            }
-            runCatching {
-                context.startActivity(Intent.createChooser(shareIntent, "Send Tracking & Drop OTP to Receiver"))
-            }
-        },
-        colors = ButtonDefaults.buttonColors(containerColor = EnhOrange),
-        shape = RoundedCornerShape(10.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .testTag("customer_send_receiver_otp_btn")
+            append("Track / Download Quick Delivery: ${com.example.data.cloud.QuickDeliveryBrandLinks.CUSTOMER_APK_URL}")
+        }
+    }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(Icons.Default.Share, contentDescription = "Send Receiver OTP", tint = Color.White, modifier = Modifier.size(16.dp))
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = "Send Tracking & Drop OTP (${order.deliveryOtp}) to $receiverName",
-            fontWeight = FontWeight.ExtraBold,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        // 1-Tap Direct WhatsApp Share (₹0 Free, falls back to WhatsApp Business or standard share sheet)
+        Button(
+            onClick = {
+                val summary = buildShareMessage()
+                val receiverDigits = order.dropAddress.contactPhone.filter(Char::isDigit).takeLast(10)
+                val openedWhatsApp = runCatching {
+                    val waIntent = if (receiverDigits.length == 10) {
+                        val encoded = android.net.Uri.encode(summary)
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://wa.me/91$receiverDigits?text=$encoded")
+                        ).apply {
+                            setPackage("com.whatsapp")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    } else {
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            setPackage("com.whatsapp")
+                            putExtra(Intent.EXTRA_TEXT, summary)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                    }
+                    context.startActivity(waIntent)
+                    true
+                }.getOrElse {
+                    runCatching {
+                        val waBizIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            setPackage("com.whatsapp.w4b")
+                            putExtra(Intent.EXTRA_TEXT, summary)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(waBizIntent)
+                        true
+                    }.getOrDefault(false)
+                }
+                if (!openedWhatsApp) {
+                    val fallbackIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, "Quick Delivery Order #${order.orderId} & Drop OTP")
+                        putExtra(Intent.EXTRA_TEXT, summary)
+                    }
+                    runCatching {
+                        context.startActivity(
+                            Intent.createChooser(fallbackIntent, "Share Order & OTP on WhatsApp").apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                        )
+                    }
+                }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .testTag("customer_whatsapp_share_otp_btn")
+        ) {
+            Icon(Icons.Default.Share, contentDescription = "Share on WhatsApp", tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "💬 Share Order & OTP on WhatsApp",
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Button(
+            onClick = {
+                val summary = buildShareMessage()
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "Quick Delivery Drop OTP (${order.deliveryOtp}) - #${order.orderId}")
+                    putExtra(Intent.EXTRA_TEXT, summary)
+                }
+                runCatching {
+                    context.startActivity(Intent.createChooser(shareIntent, "Send Tracking & Drop OTP to Receiver"))
+                }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = EnhOrange),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .testTag("customer_send_receiver_otp_btn")
+        ) {
+            Icon(Icons.Default.Share, contentDescription = "Send Receiver OTP", tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Send Tracking & Drop OTP (${order.deliveryOtp}) to $receiverName",
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 

@@ -1707,7 +1707,7 @@ fun RiderBankAccountFormScreen(
                             errorMsg = null
                         },
                         label = { Text("IFSC Code (11 Characters) *") },
-                        placeholder = { Text("e.g., SBIN0001234") },
+                        placeholder = { Text("Enter 11-character Bank IFSC Code") },
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
                         isError = ifscInput.length == 11 && !com.example.security.QuickDeliverySecurityGuard.isValidIfscCode(ifscInput),
                         supportingText = {
@@ -1715,7 +1715,7 @@ fun RiderBankAccountFormScreen(
                                 text = if (com.example.security.QuickDeliverySecurityGuard.isValidIfscCode(ifscInput)) {
                                     "✓ Valid IFSC format"
                                 } else {
-                                    "Format: 4 bank letters + 0 + 6 branch characters (e.g., HDFC0001024)"
+                                    "Format: 4 bank letters + 0 + 6 branch characters"
                                 },
                                 color = if (com.example.security.QuickDeliverySecurityGuard.isValidIfscCode(ifscInput)) {
                                     Color(0xFF059669)
@@ -1737,7 +1737,7 @@ fun RiderBankAccountFormScreen(
                             errorMsg = null
                         },
                         label = { Text("UPI ID (Optional • Fast IMPS/UPI Payout)") },
-                        placeholder = { Text("e.g., 9876543210@ybl or name@okicici") },
+                        placeholder = { Text("Enter your UPI ID (name@bank)") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()

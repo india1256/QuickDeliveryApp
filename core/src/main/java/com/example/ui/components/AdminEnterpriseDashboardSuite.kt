@@ -2635,71 +2635,15 @@ private fun DashboardLiveOrdersRidersMapCard(
                 }
             }
 
-            // Live Radar Map Canvas
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(140.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF021619))
-                    .testTag("admin_live_fleet_radar_canvas")
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val w = size.width
-                    val h = size.height
-                    val vStep = w / 8f
-                    val hStep = h / 5f
-                    for (i in 1..7) {
-                        drawLine(Color(0xFF0F3B42), Offset(i * vStep, 0f), Offset(i * vStep, h), strokeWidth = 1f)
-                    }
-                    for (j in 1..4) {
-                        drawLine(Color(0xFF0F3B42), Offset(0f, j * hStep), Offset(w, j * hStep), strokeWidth = 1f)
-                    }
-
-                    val routeCount = maxOf(activeOrders.size, 2).coerceAtMost(4)
-                    for (idx in 0 until routeCount) {
-                        val startX = w * (0.14f + idx * 0.17f)
-                        val startY = h * (0.76f - (idx % 2) * 0.44f)
-                        val endX = w * (0.85f - idx * 0.14f)
-                        val endY = h * (0.24f + (idx % 2) * 0.46f)
-
-                        drawLine(
-                            color = SidebarActiveTeal.copy(alpha = 0.5f),
-                            start = Offset(startX, startY),
-                            end = Offset(endX, endY),
-                            strokeWidth = 3f,
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
-                        )
-                        drawCircle(color = SidebarActiveTeal, radius = 6f, center = Offset(startX, startY))
-                        drawCircle(color = DashOrange, radius = 6f, center = Offset(endX, endY))
-
-                        val prog = ((routeProgress + idx * 0.25f) % 1f)
-                        val rx = startX + (endX - startX) * prog
-                        val ry = startY + (endY - startY) * prog
-                        drawCircle(color = DashEmerald.copy(alpha = 0.32f), radius = 14f, center = Offset(rx, ry))
-                        drawCircle(color = Color.White, radius = 6.5f, center = Offset(rx, ry))
-                        drawCircle(color = DashEmerald, radius = 4f, center = Offset(rx, ry))
-                    }
-                }
-
-                Surface(
-                    color = SidebarDeepTeal.copy(alpha = 0.88f),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp)
-                ) {
-                    Text(
-                        text = lastAutoActionLog,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = SidebarMintText,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-            }
+            // Rich Vector City Cartography & Live Fleet Radar Map (Zero dummy routes when empty)
+            AdminLiveVectorCityMapCanvas(
+                activeOrders = activeOrders,
+                onlineRidersCount = onlineRiders.size,
+                sweepProgress = routeProgress,
+                topStartLabel = lastAutoActionLog,
+                bottomEndLabel = if (activeOrders.isNotEmpty()) "🟢 Live GPS Synced" else "📡 Radar Active",
+                mapHeight = 185.dp
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

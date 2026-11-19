@@ -411,20 +411,20 @@ fun PorterRiderDrawerContent(
                                 color = Color.White
                             )
                             Text(
-                                text = "ID: ${rider?.riderId ?: "RIDER-101"} • ${rider?.vehicleType?.title ?: "Bike"}",
+                                text = "ID: ${rider?.riderId?.ifBlank { "Pending ID" } ?: "Pending ID"} • ${rider?.vehicleType?.title ?: "Bike"}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White.copy(alpha = 0.8f)
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.Star,
+                                    imageVector = Icons.Default.CameraAlt,
                                     contentDescription = null,
                                     tint = PorterAmber,
                                     modifier = Modifier.size(13.dp)
                                 )
-                                Spacer(modifier = Modifier.width(2.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "4.92 ★ • Tap to set / change DP",
+                                    text = "Tap to add / change Profile Photo (DP)",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = PorterGreen
@@ -512,6 +512,8 @@ fun PorterRiderDrawerContent(
                     netTakeHome = netDailyTakeHome,
                     completedTripsCount = completedTripsCount,
                     isSuspended = isSuspended,
+                    hasBankDetails = hasBankDetails,
+                    bankSummary = bankSummary,
                     onOpenWallet = onOpenWallet,
                     onOpenRecharge = onOpenRecharge,
                     onInstantCashout = { onInstantCashout(pendingPayoutAmount) }
@@ -1787,6 +1789,8 @@ fun PorterDrawerEarningsAndWalletSection(
     netTakeHome: Double,
     completedTripsCount: Int,
     isSuspended: Boolean,
+    hasBankDetails: Boolean = false,
+    bankSummary: String = "",
     onOpenWallet: () -> Unit,
     onOpenRecharge: () -> Unit,
     onInstantCashout: () -> Unit,
@@ -2044,9 +2048,13 @@ fun PorterDrawerEarningsAndWalletSection(
                                 color = PorterNavy
                             )
                             Text(
-                                text = "HDFC Bank •••• 4092 • Verified ✓",
+                                text = if (hasBankDetails && bankSummary.isNotBlank()) {
+                                    "$bankSummary • Verified ✓"
+                                } else {
+                                    "No bank account linked yet • Add Bank in menu"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF475569)
+                                color = if (hasBankDetails) Color(0xFF047857) else Color(0xFF64748B)
                             )
                         }
 

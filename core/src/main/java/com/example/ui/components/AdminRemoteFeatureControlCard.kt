@@ -280,15 +280,29 @@ fun AdminRemoteFeatureSwitchesCard(
                 }
             }
 
-            // 5. Referral & Wallet Bonus
+            // 4b. Promo Codes & Discount Coupons (Customer App — Default OFF)
             FeatureToggleRow(
-                title = "Referral & Wallet Bonus (₹${flags.referralBonusInr})",
+                title = "Promo Codes & Discount Coupons",
+                subtitle = "Default OFF • Show Promo Code input & offers box in Customer App",
+                checked = flags.promoCodeEnabled,
+                onCheckedChange = { enabled ->
+                    pushUpdate(
+                        { it.copy(promoCodeEnabled = enabled) },
+                        if (enabled) "🏷️ Promo Codes ACTIVATED in Customer App" else "Promo Codes hidden from Customer App"
+                    )
+                },
+                testTag = "admin_switch_promo_code_enabled"
+            )
+
+            // 5. Referral & Wallet Bonus (Default OFF)
+            FeatureToggleRow(
+                title = "Refer & Earn Bonus (₹${flags.referralBonusInr})",
                 subtitle = "Default OFF • Invite & Earn card in Customer & Rider Partner apps",
                 checked = flags.referralWalletEnabled,
                 onCheckedChange = { enabled ->
                     pushUpdate(
                         { it.copy(referralWalletEnabled = enabled) },
-                        if (enabled) "🎁 Referral & Wallet Rewards ACTIVATED (₹${flags.referralBonusInr})" else "Referral Program paused"
+                        if (enabled) "🎁 Refer & Earn Rewards ACTIVATED (₹${flags.referralBonusInr})" else "Refer & Earn paused"
                     )
                 },
                 testTag = "admin_switch_referral_wallet"

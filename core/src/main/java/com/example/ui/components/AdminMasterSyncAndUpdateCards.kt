@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
@@ -20,12 +23,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -216,11 +222,12 @@ fun AdminMasterSyncAndAppUpdateCard(
     val orders by repository.orders.collectAsState()
     val codSettlements by QuickDeliveryOperationsManager.codSettlements.collectAsState()
 
-    // Collapsible sections (clean mobile ergonomics)
+    // Collapsible sections (Rate Card expanded by default for 1-click Kiraya / Fare edits)
     var expandAppUpdate by remember { mutableStateOf(false) }
-    var expandRateCard by remember { mutableStateOf(false) }
+    var expandRateCard by remember { mutableStateOf(true) }
     var expandFutureOps by remember { mutableStateOf(false) }
     var expandBlocklist by remember { mutableStateOf(false) }
+    var expandGoogleSignInHelper by remember { mutableStateOf(false) }
 
     // Draft states
     var versionNameDraft by remember(flags.latestAppVersionName) { mutableStateOf(flags.latestAppVersionName) }
@@ -473,10 +480,10 @@ fun AdminMasterSyncAndAppUpdateCard(
             }
         }
 
-        // 3. COLLAPSIBLE GROUP 2: LIVE RATE CARD, VEHICLE AVAILABILITY & NIGHT SURCHARGE
+        // 3. COLLAPSIBLE GROUP 2: LIVE FARE / KIRAYA EDITOR, VEHICLE AVAILABILITY & NIGHT SURCHARGE
         CollapsibleAdminSectionCard(
-            title = "Live Rate Card, Vehicles & Night Charge",
-            subtitle = "Bike ₹${flags.bikeBaseFareInr.toInt()}+₹${flags.bikeRatePerKmInr.toInt()}/km • Night ${if (flags.nightSurchargeEnabled) "ON (${flags.nightSurchargeMultiplier}x)" else "OFF"}",
+            title = "Live Fare / Kiraya & Vehicle Switch (1-Click Sync)",
+            subtitle = "Bike ₹${flags.bikeBaseFareInr.toInt()}+₹${flags.bikeRatePerKmInr.toInt()}/km • Scooter ₹${flags.scooterBaseFareInr.toInt()}+₹${flags.scooterRatePerKmInr.toInt()}/km • Auto ${if (flags.autoEnabled) "ON" else "OFF"}",
             icon = Icons.Default.LocalShipping,
             iconTint = SyncOrange,
             expanded = expandRateCard,
@@ -685,10 +692,46 @@ fun AdminMasterSyncAndAppUpdateCard(
             HorizontalDivider()
 
             Text(
-                text = "Future Paid Modules (Keep OFF now — 1-Tap ON later)",
+                text = "Future Modules & Customer Features (Keep OFF now — 1-Tap ON later)",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.ExtraBold,
                 color = SyncIndigo
+            )
+            CompactSwitchRow(
+                title = "Auto (3-Wheeler) Vehicle Option",
+                subtitle = "Default OFF (Bike & Scooter active) • Turn ON anytime to show Auto in Customer App",
+                checked = flags.autoEnabled,
+                onCheckedChange = { on ->
+                    pushFlags(
+                        { it.copy(autoEnabled = on) },
+                        if (on) "🛺 Auto (3-Wheeler) ENABLED in Customer App!" else "Auto hidden from Customer App (Bike & Scooter active)"
+                    )
+                },
+                testTag = "admin_future_switch_auto_vehicle"
+            )
+            CompactSwitchRow(
+                title = "Promo Codes & Discount Coupons",
+                subtitle = "Default OFF (Hidden in Customer App) • Turn ON to show Promo Code box & offers",
+                checked = flags.promoCodeEnabled,
+                onCheckedChange = { on ->
+                    pushFlags(
+                        { it.copy(promoCodeEnabled = on) },
+                        if (on) "🏷️ Promo Codes ENABLED in Customer App!" else "Promo Codes hidden from Customer App"
+                    )
+                },
+                testTag = "admin_future_switch_promo_codes"
+            )
+            CompactSwitchRow(
+                title = "Refer & Earn Program (₹${flags.referralBonusInr} Bonus)",
+                subtitle = "Default OFF (Hidden in Customer & Rider Apps) • Turn ON later for referral growth",
+                checked = flags.referralWalletEnabled,
+                onCheckedChange = { on ->
+                    pushFlags(
+                        { it.copy(referralWalletEnabled = on) },
+                        if (on) "🎁 Refer & Earn ENABLED across Customer & Rider Apps!" else "Refer & Earn hidden from Customer & Rider Apps"
+                    )
+                },
+                testTag = "admin_future_switch_refer_earn"
             )
             CompactSwitchRow(
                 title = "Online Payment Gateway Live Mode (${flags.gatewayProvider})",
@@ -769,7 +812,7 @@ fun AdminMasterSyncAndAppUpdateCard(
                     },
                     prefix = { Text("+91 ", fontWeight = FontWeight.Bold, color = SyncTeal) },
                     label = { Text("10-Digit Mobile") },
-                    placeholder = { Text("9876543210") },
+                    placeholder = { Text("10-digit mobile") },
                     isError = blockPhoneError != null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
@@ -826,6 +869,96 @@ fun AdminMasterSyncAndAppUpdateCard(
                         )
                     }
                 }
+            }
+        }
+
+        // 6. COLLAPSIBLE GROUP 5: STANDALONE GOOGLE SIGN-IN SETUP (FIREBASE SHA-1 HELPER)
+        val copyToClipboard: (String, String) -> Unit = { label, value ->
+            runCatching {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                cm?.setPrimaryClip(ClipData.newPlainText(label, value))
+            }
+            onFeedback("📋 Copied $label")
+        }
+        val signingSha1 = "E2:99:79:4D:C8:AE:C8:C3:1F:61:05:E0:FD:92:34:E6:CF:1A:10:CE"
+        CollapsibleAdminSectionCard(
+            title = "Standalone Google Sign-In Setup (Firebase SHA-1)",
+            subtitle = "1-tap copy 3 Package IDs & SHA-1 to register standalone APKs in Firebase Console",
+            icon = Icons.Default.Security,
+            iconTint = SyncTeal,
+            expanded = expandGoogleSignInHelper,
+            onToggle = { expandGoogleSignInHelper = !expandGoogleSignInHelper },
+            testTag = "admin_section_firebase_sha1_helper"
+        ) {
+            Text(
+                text = "Register these 3 standalone Android package names with the SHA-1 below in Firebase Project Settings so Sign in with Google works on every standalone APK:",
+                style = MaterialTheme.typography.labelSmall,
+                color = SyncSlate
+            )
+            listOf(
+                "Customer APK Package" to "com.aistudio.quickdelivery.cust01",
+                "Rider APK Package" to "com.aistudio.quickdelivery.ride02",
+                "Admin APK Package" to "com.aistudio.quickdelivery.admn03",
+                "Signing SHA-1 Fingerprint" to signingSha1
+            ).forEach { (label, value) ->
+                Surface(
+                    color = Color.White,
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = SyncNavy
+                            )
+                            Text(
+                                text = value,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SyncTeal
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { copyToClipboard(label, value) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("admin_copy_${label.lowercase().replace(" ", "_")}")
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy $label", modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Copy", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+            Button(
+                onClick = {
+                    runCatching {
+                        val url = "https://console.firebase.google.com/project/gen-lang-client-0738232271/settings/general"
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = SyncTeal),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("admin_open_firebase_console_btn")
+            ) {
+                Icon(Icons.Default.OpenInNew, contentDescription = "Open Firebase Console", modifier = Modifier.size(16.dp), tint = Color.White)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Open Firebase Console Settings →", fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
     }

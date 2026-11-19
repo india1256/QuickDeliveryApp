@@ -563,7 +563,7 @@ fun RiderShiftAndSmartFilterCard(
             OutlinedTextField(
                 value = preferredAreaKeyword,
                 onValueChange = onAreaKeywordChange,
-                label = { Text("Preferred Area Keyword (e.g. Andheri, Sector 18)") },
+                label = { Text("Preferred Area Keyword") },
                 singleLine = true,
                 trailingIcon = {
                     if (preferredAreaKeyword.isNotBlank()) {

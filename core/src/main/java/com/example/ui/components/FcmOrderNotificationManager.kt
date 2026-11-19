@@ -521,7 +521,7 @@ object FcmOrderNotificationManager {
     ) {
         val status = order.orderStatus
         val isCompletion = status == OrderStatus.DELIVERED
-        val riderName = order.assignedRiderName?.ifBlank { "Vikram Rathore" } ?: "Vikram Rathore"
+        val riderName = order.assignedRiderName?.ifBlank { "Delivery Partner" } ?: "Delivery Partner"
         val riderEarning80 = order.riderEarning
         val totalFare = order.totalAmount
         val pickupShort = order.pickupAddress.landmark.ifBlank { order.pickupAddress.fullAddress.take(32) }

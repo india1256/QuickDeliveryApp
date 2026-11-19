@@ -484,6 +484,59 @@ class SecurityAndPricingIntegrationTest {
         assertFalse(hindiStrings.mobileOrEmailLabel.contains("पता"))
         assertFalse(hindiStrings.emailAddressLabel.contains("पता"))
     }
+
+    @Test
+    fun testSchemaV5DefaultsAndAdminFutureSwitches() {
+        // 1. Fresh Schema v5 defaults hide Auto, Promo Codes, and Refer & Earn until Admin enables them
+        val defaults = com.example.data.cloud.AdminRemoteFeatureFlags()
+        assertEquals(5, defaults.flagsSchemaVersion)
+        assertFalse(defaults.autoEnabled)
+        assertFalse(defaults.promoCodeEnabled)
+        assertFalse(defaults.referralWalletEnabled)
+        assertTrue(defaults.bikeEnabled)
+        assertTrue(defaults.scooterEnabled)
+
+        val defaultPolicy = com.example.data.delivery.AdminVehicleAndWeightPolicy()
+        assertFalse(defaultPolicy.autoEnabled)
+        assertTrue(defaultPolicy.bikeEnabled)
+        assertTrue(defaultPolicy.scooterEnabled)
+
+        // 2. Legacy v4 JSON automatically migrates Auto, Promo Code, and Refer & Earn to OFF
+        val legacyV4Json = org.json.JSONObject().apply {
+            put("flagsSchemaVersion", 4)
+            put("autoEnabled", true)
+            put("referralWalletEnabled", true)
+        }
+        val migrated = com.example.data.cloud.AdminRemoteFeatureFlags.fromJson(legacyV4Json)
+        assertEquals(5, migrated.flagsSchemaVersion)
+        assertFalse(migrated.autoEnabled)
+        assertFalse(migrated.promoCodeEnabled)
+        assertFalse(migrated.referralWalletEnabled)
+
+        // 3. Admin turning Auto, Promo Code, and Refer & Earn ON in Schema v5 round-trips & propagates cleanly
+        val adminEnabled = defaults.copy(
+            autoEnabled = true,
+            promoCodeEnabled = true,
+            referralWalletEnabled = true,
+            remoteRateCardOverrideEnabled = true,
+            bikeBaseFareInr = 45.0,
+            scooterBaseFareInr = 55.0,
+            autoBaseFareInr = 80.0
+        )
+        val roundTrip = com.example.data.cloud.AdminRemoteFeatureFlags.fromJson(adminEnabled.toJson())
+        assertTrue(roundTrip.autoEnabled)
+        assertTrue(roundTrip.promoCodeEnabled)
+        assertTrue(roundTrip.referralWalletEnabled)
+
+        com.example.data.cloud.QuickDeliveryOperationsManager.applyPricingOverridesFromFlags(roundTrip, sharedRepo)
+        assertTrue(com.example.data.delivery.AutomatedFairRiderAssignmentEngine.vehicleAndWeightPolicy.value.autoEnabled)
+        assertEquals(45.0, sharedRepo.pricingConfig.value.bikeBaseFare, 0.01)
+        assertEquals(55.0, sharedRepo.pricingConfig.value.scooterBaseFare, 0.01)
+        assertEquals(80.0, sharedRepo.pricingConfig.value.autoBaseFare, 0.01)
+
+        // Restore defaults cleanly
+        com.example.data.delivery.AutomatedFairRiderAssignmentEngine.resetPricingAndWeightPolicyToDefaults(sharedRepo)
+    }
 }
 
 
