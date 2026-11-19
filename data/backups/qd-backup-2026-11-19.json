@@ -1,0 +1,44 @@
+{
+  "resetEpochMs": 1795057498104,
+  "ordersById": {},
+  "devicesById": {},
+  "fcmTokensByDevice": {},
+  "riderRegistrationsByKey": {},
+  "promoCouponsByCode": {},
+  "withdrawalRequestsById": {},
+  "supportTicketsById": {},
+  "remoteFeatureFlags": null,
+  "chatMessagesById": {},
+  "waitTimerStartByOrder": {},
+  "riderLiveCoordsByOrder": {},
+  "codSettlementsById": {},
+  "disputeRecordsById": {},
+  "riderDocExpiriesById": {},
+  "paymentsByOrder": {},
+  "orderRatingsByOrder": {},
+  "orderTimelineEventsById": {},
+  "unreachableByOrder": {},
+  "b2bAccountsById": {},
+  "emailedTicketIds": {},
+  "emailOtpsByEmail": {},
+  "verifiedEmails": {},
+  "securityStats": {
+    "blockedFakeOrders": 0,
+    "rateLimitedRequests": 0,
+    "rejectedInvalidPayloads": 2,
+    "recentBlockedEvents": [
+      {
+        "type": "INVALID_SIG",
+        "actor": "127.0.0.1",
+        "detail": "Rejected payment webhook: RAZORPAY_WEBHOOK_SECRET not configured",
+        "atIso": "2026-11-19T03:04:59.547Z"
+      },
+      {
+        "type": "INVALID_SIG",
+        "actor": "127.0.0.1",
+        "detail": "Unauthorized /api/backup-export attempt blocked",
+        "atIso": "2026-11-19T03:04:59.515Z"
+      }
+    ]
+  }
+}

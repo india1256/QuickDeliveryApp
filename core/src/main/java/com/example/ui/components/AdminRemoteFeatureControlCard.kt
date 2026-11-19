@@ -666,42 +666,7 @@ fun AdminRemoteFeatureSwitchesCard(
 
             HorizontalDivider()
 
-            // 13. Live Payment Gateway Mode (Razorpay / Cashfree Webhook)
-            FeatureToggleRow(
-                title = "Live Payment Gateway Mode (${flags.gatewayProvider})",
-                subtitle = "Default OFF • Routes prepaid checkouts via ${flags.gatewayProvider} webhook verification",
-                checked = flags.liveGatewayModeEnabled,
-                onCheckedChange = { enabled ->
-                    pushUpdate(
-                        { it.copy(liveGatewayModeEnabled = enabled) },
-                        if (enabled) "💳 ${flags.gatewayProvider} Live Gateway Mode ON!" else "Standard UPI Checkout Mode active"
-                    )
-                },
-                testTag = "admin_switch_live_gateway"
-            )
-            if (flags.liveGatewayModeEnabled) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("RAZORPAY", "CASHFREE").forEach { provider ->
-                        FilterChip(
-                            selected = flags.gatewayProvider == provider,
-                            onClick = {
-                                pushUpdate(
-                                    { it.copy(gatewayProvider = provider) },
-                                    "💳 Gateway switched to $provider"
-                                )
-                            },
-                            label = { Text(provider, fontWeight = FontWeight.Bold) }
-                        )
-                    }
-                }
-            }
-
-            HorizontalDivider()
-
-            // 14. Cloud DB Backup Export, Push Webhook & Play Store Readiness
+            // 13. Cloud DB Backup Export & Legal Links
             Surface(
                 color = Color(0xFFF0FDFA),
                 shape = RoundedCornerShape(12.dp),
@@ -716,7 +681,7 @@ fun AdminRemoteFeatureSwitchesCard(
                         Icon(Icons.Default.Shield, contentDescription = null, tint = CtrlTeal, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Cloud Backup & Play Store Launch Console",
+                            text = "Cloud Backup & Legal Links",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.ExtraBold,
                             color = CtrlNavy
@@ -733,11 +698,23 @@ fun AdminRemoteFeatureSwitchesCard(
                     ) {
                         Button(
                             onClick = {
+                                val ts = System.currentTimeMillis()
+                                val adminDevId = "admin-console-${android.os.Build.MODEL.filter(Char::isLetterOrDigit).take(16)}"
+                                val sig = com.example.security.QuickDeliverySecurityGuard.computeSyncIntegritySignature(
+                                    deviceId = adminDevId,
+                                    role = "ADMIN",
+                                    timestampEpochMs = ts
+                                )
                                 val uri = Uri.parse(com.example.data.cloud.QuickDeliveryBrandLinks.BACKUP_EXPORT_URL)
+                                    .buildUpon()
+                                    .appendQueryParameter("deviceId", adminDevId)
+                                    .appendQueryParameter("ts", ts.toString())
+                                    .appendQueryParameter("sig", sig)
+                                    .build()
                                 runCatching {
                                     context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
-                                feedbackNote = "📦 Downloading full Cloud DB backup JSON..."
+                                feedbackNote = "📦 Downloading signed Cloud DB backup JSON..."
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = CtrlTeal),
                             shape = RoundedCornerShape(10.dp),

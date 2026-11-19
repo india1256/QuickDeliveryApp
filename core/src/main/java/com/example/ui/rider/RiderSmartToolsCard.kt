@@ -20,6 +20,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Redeem
 import androidx.compose.material.icons.filled.Share
@@ -45,6 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -367,6 +371,9 @@ fun RiderShiftAndSmartFilterCard(
         "₹0/km"
     }
 
+    var showFilterTools by remember { mutableStateOf(false) }
+    val hasActiveFilter = minPayoutFilterInr > 0 || preferredAreaKeyword.isNotBlank()
+
     Card(
         colors = CardDefaults.cardColors(containerColor = cardBg),
         shape = RoundedCornerShape(14.dp),
@@ -377,11 +384,14 @@ fun RiderShiftAndSmartFilterCard(
             .testTag("rider_shift_and_smart_filter_card")
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showFilterTools = !showFilterTools }
+                    .testTag("rider_toggle_smart_filters_btn"),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -393,26 +403,37 @@ fun RiderShiftAndSmartFilterCard(
                         imageVector = Icons.Default.Tune,
                         contentDescription = null,
                         tint = SmartTeal,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                     Text(
-                        text = "Shift Log & Smart Order Tools",
+                        text = "Today's Shift • ${riderSharePercent}% Share",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.ExtraBold,
                         color = headingColor
                     )
                 }
                 Surface(
-                    color = SmartEmerald.copy(alpha = 0.12f),
+                    color = if (hasActiveFilter) SmartOrange.copy(alpha = 0.14f) else SmartEmerald.copy(alpha = 0.12f),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text(
-                        text = "${riderSharePercent}% Share",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF047857),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                    ) {
+                        Text(
+                            text = if (hasActiveFilter) "Filters Active" else "Filters & Voice",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (hasActiveFilter) SmartOrange else Color(0xFF047857)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Icon(
+                            imageVector = if (showFilterTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = if (showFilterTools) "Collapse filters" else "Expand filters",
+                            tint = if (hasActiveFilter) SmartOrange else Color(0xFF047857),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
 
@@ -447,6 +468,8 @@ fun RiderShiftAndSmartFilterCard(
                 )
             }
 
+            AnimatedVisibility(visible = showFilterTools) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // Voice Order Alert Toggle (Rider only)
             Surface(
                 color = tileBg,
@@ -627,6 +650,8 @@ fun RiderShiftAndSmartFilterCard(
                             }
                         }
                     }
+                }
+            }
                 }
             }
 

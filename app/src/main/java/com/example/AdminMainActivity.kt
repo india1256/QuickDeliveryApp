@@ -42,8 +42,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,7 +56,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.QuickDeliveryFirebaseInitializer
 import com.example.data.cloud.QuickDeliveryOperationsManager
@@ -351,6 +356,38 @@ private fun AdminSecurityPinUnlockScreen(
 ) {
     var pinInput by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf<String?>(null) }
+    var failedAttempts by remember { mutableIntStateOf(0) }
+    var lockoutUntilMs by remember { mutableLongStateOf(0L) }
+    var remainingLockSec by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(lockoutUntilMs) {
+        while (lockoutUntilMs > System.currentTimeMillis()) {
+            remainingLockSec = (((lockoutUntilMs - System.currentTimeMillis()) + 999L) / 1000L).toInt().coerceAtLeast(1)
+            delay(1000L)
+        }
+        remainingLockSec = 0
+    }
+
+    val isLockedOut = remainingLockSec > 0
+
+    fun verifyPinAttempt(candidate: String) {
+        if (isLockedOut) return
+        if (candidate == expectedPin) {
+            failedAttempts = 0
+            pinError = null
+            onPinUnlocked()
+        } else {
+            failedAttempts += 1
+            pinInput = ""
+            if (failedAttempts >= 5) {
+                lockoutUntilMs = System.currentTimeMillis() + 30_000L
+                failedAttempts = 0
+                pinError = "Too many wrong attempts. Locked for 30s."
+            } else {
+                pinError = "Incorrect 4-digit Admin PIN (${5 - failedAttempts} tries left)"
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -395,21 +432,28 @@ private fun AdminSecurityPinUnlockScreen(
                     color = Color(0xFF0F172A)
                 )
                 Text(
-                    text = "Security Lock is enabled in Admin Settings",
+                    text = if (isLockedOut) {
+                        "Security cooldown active — retry in ${remainingLockSec}s"
+                    } else {
+                        "Security Lock is enabled in Admin Settings"
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF475569)
+                    color = if (isLockedOut) Color(0xFFDC2626) else Color(0xFF475569)
                 )
                 OutlinedTextField(
                     value = pinInput,
                     onValueChange = { next ->
+                        if (isLockedOut) return@OutlinedTextField
                         val clean = next.filter(Char::isDigit).take(4)
                         pinInput = clean
                         pinError = null
-                        if (clean.length == 4 && clean == expectedPin) {
-                            onPinUnlocked()
+                        if (clean.length == 4) {
+                            verifyPinAttempt(clean)
                         }
                     },
+                    enabled = !isLockedOut,
                     label = { Text("4-Digit PIN") },
+                    visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
@@ -426,14 +470,8 @@ private fun AdminSecurityPinUnlockScreen(
                     )
                 }
                 Button(
-                    onClick = {
-                        if (pinInput == expectedPin) {
-                            onPinUnlocked()
-                        } else {
-                            pinError = "Incorrect 4-digit Admin PIN"
-                        }
-                    },
-                    enabled = pinInput.length == 4,
+                    onClick = { verifyPinAttempt(pinInput) },
+                    enabled = !isLockedOut && pinInput.length == 4,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E)),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
@@ -441,7 +479,11 @@ private fun AdminSecurityPinUnlockScreen(
                         .height(48.dp)
                         .testTag("admin_pin_unlock_submit_btn")
                 ) {
-                    Text("Unlock Admin Console", fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(
+                        if (isLockedOut) "Locked (${remainingLockSec}s)" else "Unlock Admin Console",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
                 }
                 OutlinedButton(
                     onClick = onSignOut,

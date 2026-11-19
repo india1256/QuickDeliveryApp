@@ -119,13 +119,13 @@ fun AdminB2bAndEnterpriseReleaseCard(
                     AdminIconBadge(icon = Icons.Default.Apartment, tint = EntIndigo, sizeDp = 34)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Future Scale & Enterprise Modules",
+                            text = "B2B Dukaan Credit Module",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = EntNavy
                         )
                         Text(
-                            text = "All 3 switches stay OFF by default — activate anytime when scaling up",
+                            text = "Stays OFF by default — turn ON anytime for local shop monthly billing",
                             style = MaterialTheme.typography.labelSmall,
                             color = EntSlate
                         )
@@ -199,44 +199,6 @@ fun AdminB2bAndEnterpriseReleaseCard(
                         }
                     }
                 }
-
-                HorizontalDivider()
-
-                // 2. Razorpay Route 80/20 Auto-Split Switch (Default OFF)
-                EnterpriseSwitchItem(
-                    title = "Razorpay Route 80/20 Auto-Split (API)",
-                    subtitle = if (flags.razorpayRouteSplitEnabled) {
-                        "Auto-Split API Mode ON • Routes 80% Rider / 20% Admin on gateway capture"
-                    } else {
-                        "Default OFF • ₹0 Extra Cost Manual Payout Desk Active"
-                    },
-                    checked = flags.razorpayRouteSplitEnabled,
-                    onCheckedChange = { enabled ->
-                        onPushFlagUpdate(
-                            { it.copy(razorpayRouteSplitEnabled = enabled) },
-                            if (enabled) "⚡ Razorpay Route 80/20 Auto-Split switch ON (configure key in Secrets)" else "Free Manual Payout Desk active"
-                        )
-                    },
-                    testTag = "admin_switch_razorpay_route_split"
-                )
-
-                // 3. Auto-KYC Instant API (DigiLocker / Surepass) (Default OFF)
-                EnterpriseSwitchItem(
-                    title = "Auto-KYC Instant API (DigiLocker / DL-RC)",
-                    subtitle = if (flags.autoKycApiEnabled) {
-                        "Auto-KYC API Check ON • Pre-screens DL, RC & Aadhaar formats"
-                    } else {
-                        "Default OFF • Free Admin Manual Selfie & Doc Approval Active"
-                    },
-                    checked = flags.autoKycApiEnabled,
-                    onCheckedChange = { enabled ->
-                        onPushFlagUpdate(
-                            { it.copy(autoKycApiEnabled = enabled) },
-                            if (enabled) "🪪 Auto-KYC Instant API mode ON" else "Free Manual Admin KYC Review active"
-                        )
-                    },
-                    testTag = "admin_switch_auto_kyc_api"
-                )
             }
         }
 
@@ -432,75 +394,6 @@ fun AdminB2bAndEnterpriseReleaseCard(
                                 }
                             }
                         }
-                    }
-                }
-            }
-        }
-
-        // C. Google Play Store Launch Readiness (.aab Production Checklist)
-        Surface(
-            color = Color(0xFFF0F9FF),
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, Color(0xFFBAE6FD)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("admin_play_store_readiness_card")
-        ) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Default.RocketLaunch, contentDescription = null, tint = Color(0xFF0369A1), modifier = Modifier.size(20.dp))
-                    Text(
-                        text = "Google Play Store Release (.AAB) Readiness",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = EntNavy
-                    )
-                }
-                Text(
-                    text = "✓ Cloud Firestore Named Database & Zero-Trust Rules Live\n" +
-                        "✓ Google Credential Manager Sign-In + App Check Ready\n" +
-                        "✓ Photo Picker (No Broad Storage Permission) + Play Policy Safe\n" +
-                        "✓ Custom Domain Legal Pages (${com.example.data.cloud.QuickDeliveryBrandLinks.PRIMARY_DOMAIN})\n" +
-                        "✓ Signed .aab Bundle Generator Ready (3 Standalone Package IDs)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF0C4A6E)
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(
-                                        Intent.ACTION_VIEW,
-                                        Uri.parse(com.example.data.cloud.QuickDeliveryBrandLinks.DELETE_ACCOUNT_URL)
-                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                )
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Account Deletion URL", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(
-                                        Intent.ACTION_VIEW,
-                                        Uri.parse(com.example.data.cloud.QuickDeliveryBrandLinks.TERMS_OF_SERVICE_URL)
-                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                )
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Terms of Service", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                     }
                 }
             }

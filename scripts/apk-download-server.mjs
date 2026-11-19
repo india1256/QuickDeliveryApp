@@ -13,7 +13,7 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
-const APP_SUITE_VERSION = '6.3.3';
+const APP_SUITE_VERSION = '6.3.5';
 const OTP_FROM_EMAIL = (process.env.OTP_FROM_EMAIL || process.env.SUPPORT_FROM_EMAIL || BRAND_SUPPORT_EMAIL).trim();
 const SYNC_STATE_FILE = process.env.SYNC_STATE_FILE || '/tmp/quickdelivery-live-sync.json';
 const BACKUP_DIR = path.join(ROOT, 'data', 'backups');
@@ -1157,17 +1157,6 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
       color: #E2E8F0;
       line-height: 1.55;
     }
-    .live-box {
-      background: #042F2E;
-      border: 1.5px solid #10B981;
-      border-radius: 16px;
-      padding: 16px;
-    }
-    .live-box h2 {
-      margin: 0 0 8px 0;
-      font-size: 15px;
-      color: #A7F3D0;
-    }
   </style>
 </head>
 <body>
@@ -1175,7 +1164,7 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     <div class="header-box">
       <span class="badge">Direct Instant APK Download • 1 Link = 1 Single App</span>
       <h1>${pageHeading}</h1>
-      <p>Ab koi "Connecting to server" ya waiting nahi! Niche green button dabayein ya auto-download start hone dein — <b>Chrome seedha .apk file (${sizeMb}) download karega</b>.</p>
+      <p>Niche green button dabayein ya auto-download start hone dein — <b>Chrome seedha .apk file (${sizeMb}) download karega</b>.</p>
     </div>
 
     <div id="progress-panel">
@@ -1193,27 +1182,19 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     </div>
 
     <div class="guide-box">
-      <h2>✨ v${APP_SUITE_VERSION} ${BRAND_DOMAIN} • Cloud Firestore &amp; Enterprise Suite</h2>
+      <h2>✨ Quick Delivery Suite v${APP_SUITE_VERSION}</h2>
       <ol class="step-list">
-        <li><b>Customer App:</b> Clean Booking Flow, Address Autocomplete, Saved Address Labels, Phonebook Picker, Proximity Arrival OTP, Post-Delivery Rating/Tip &amp; Optional B2B Dukaan Monthly Postpaid / Bulk Dispatch (only visible when enabled by Admin).</li>
-        <li><b>Rider Partner App:</b> 30s Ringing Offer Countdown with Distance &amp; ₹/km Payout, Rejection Reason Tracking &amp; Auto Re-Search, Reached Pickup Gate Check-In, Unreachable Call Logger &amp; Complete Earnings / TDS Breakdown.</li>
-        <li><b>Admin Enterprise:</b> Permanent Cloud Firestore Cross-Device Sync, Remote Feature Switches (B2B Postpaid, Razorpay 80/20 Split &amp; Auto-KYC API — all safely OFF by default until activated), Consolidated GST Invoices &amp; Play Store .aab Release Readiness.</li>
+        <li><b>Quick Delivery (Customer):</b> Fast doorstep parcel booking, profile DP, saved addresses, phonebook receiver picker, live tracking &amp; OTP delivery verification.</li>
+        <li><b>Partner Quick Delivery (Rider):</b> Instant nearby pickup alerts, profile DP, duty switch, wallet &amp; trip earnings history, and direct bank payout requests.</li>
+        <li><b>Quick Delivery Admin:</b> Live orders &amp; rider KYC approval desk, payout management, fare &amp; feature switches, and cloud backup export.</li>
       </ol>
-    </div>
-
-    <div class="live-box">
-      <h2>Live Dispatch &amp; Fleet Sync Monitor</h2>
-      <div id="live-sync-summary" style="font-size: 13px; color: #ECFDF5;">
-        Connecting to live dispatch status...
-      </div>
     </div>
 
     <div style="margin-top: 16px; text-align: center; font-size: 12px; color: #A7F3D0; line-height: 1.8;">
       <div><b>Official Domain:</b> <a href="${BRAND_ORIGIN}" style="color: #6EE7B7;">${BRAND_DOMAIN}</a> • <b>Support:</b> <a href="mailto:${BRAND_SUPPORT_EMAIL}" style="color: #6EE7B7;">${BRAND_SUPPORT_EMAIL}</a></div>
       <a href="/privacy-policy" style="color: #6EE7B7; margin: 0 8px;">Privacy Policy</a> •
       <a href="/terms" style="color: #6EE7B7; margin: 0 8px;">Terms of Service</a> •
-      <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a> •
-      <a href="/api/backup-export" style="color: #6EE7B7; margin: 0 8px;">Cloud Backup (.json)</a>
+      <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a>
     </div>
   </div>
 
@@ -1239,31 +1220,6 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
         }, 150);
       });
     }
-
-    async function refreshLiveSync() {
-      try {
-        const res = await fetch('/api/live-sync');
-        if (!res.ok) return;
-        const data = await res.json();
-        const devices = data.connectedDevices || [];
-        const orders = data.orders || [];
-        const sec = data.securityStats || {};
-        const el = document.getElementById('live-sync-summary');
-        if (!el) return;
-        const devHtml = devices.length
-          ? devices.map(d => '<b>' + d.role + '</b> (' + d.deviceModel + ')').join(' &nbsp;|&nbsp; ')
-          : 'System Online — Ready for Customer, Rider Partner & Admin connections.';
-        const secHtml = '<div style="margin-top:6px;font-size:12px;color:#A7F3D0;">Anti-Spam Security Shield Active • Blocked Fake Orders: <b>' + (sec.blockedFakeOrders || 0) + '</b> • Rate-Limited Floods: <b>' + (sec.rateLimitedRequests || 0) + '</b></div>';
-        const ordHtml = orders.length
-          ? '<ul style="margin:8px 0 0 0;padding-left:18px;">' + orders.map(o =>
-              '<li><b>' + o.orderId + '</b> — ' + o.orderStatus + ' | ' + o.totalAmount + '</li>'
-            ).join('') + '</ul>'
-          : '<div style="margin-top:6px;color:#A7F3D0;">No active orders in queue.</div>';
-        el.innerHTML = '<div><b>Connected Devices (' + devices.length + '):</b> ' + devHtml + '</div>' + secHtml + ordHtml;
-      } catch (e) {}
-    }
-    setInterval(refreshLiveSync, 3000);
-    refreshLiveSync();
   </script>
 </body>
 </html>`;
@@ -2205,24 +2161,84 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    const out = JSON.stringify(buildSyncResponsePayload());
+    // Public GET /api/live-sync returns ONLY non-PII aggregate health counters.
+    // Full operational state is exclusively available via HMAC-authenticated POST /api/live-sync.
+    const fullSnap = buildSyncResponsePayload();
+    const secStats = ensureSecurityStats();
+    const publicSummary = JSON.stringify({
+      ok: true,
+      serverTimeEpochMs: fullSnap.serverTimeEpochMs,
+      connectedDevicesCount: fullSnap.connectedDevices.length,
+      connectedRoles: Array.from(new Set(fullSnap.connectedDevices.map(d => d.role))),
+      activeOrdersCount: fullSnap.orders.filter(o => o && o.orderStatus !== 'DELIVERED' && o.orderStatus !== 'CANCELLED').length,
+      securityStats: {
+        blockedFakeOrders: Number(secStats.blockedFakeOrders || 0),
+        rateLimitedRequests: Number(secStats.rateLimitedRequests || 0),
+        rejectedInvalidPayloads: Number(secStats.rejectedInvalidPayloads || 0),
+      },
+    });
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
       'Access-Control-Allow-Origin': '*',
     });
-    res.end(out);
+    res.end(publicSummary);
     return;
   }
 
   if (pathname === '/api/backup-export') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many backup requests. Please wait shortly.' }));
+      return;
+    }
+    const backupParams = new URLSearchParams(queryString);
+    const adminBackupKey = String(process.env.ADMIN_BACKUP_KEY || '').trim();
+    const authHeader = String(req.headers.authorization || '').trim();
+    const bearerKey = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+    const queryKey = String(backupParams.get('key') || '').trim();
+    const providedKey = bearerKey || queryKey;
+    let isAuthorized = false;
+
+    if (adminBackupKey && providedKey) {
+      const a = Buffer.from(providedKey, 'utf-8');
+      const b = Buffer.from(adminBackupKey, 'utf-8');
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
+      const qDeviceId = String(backupParams.get('deviceId') || req.headers['x-qd-device-id'] || '').trim();
+      const qTs = String(backupParams.get('ts') || req.headers['x-qd-sync-ts'] || '').trim();
+      const qSig = String(backupParams.get('sig') || req.headers['x-qd-sync-sig'] || '').trim();
+      if (qDeviceId && qTs && qSig) {
+        const fakeReq = { headers: { 'x-qd-sync-ts': qTs, 'x-qd-sync-sig': qSig } };
+        const sigCheck = verifySyncHmacHeaders(fakeReq, qDeviceId, 'ADMIN');
+        if (sigCheck.ok) {
+          isAuthorized = true;
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      recordSecurityBlock('INVALID_SIG', getClientIp(req), 'Unauthorized /api/backup-export attempt blocked');
+      res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ ok: false, error: 'Admin authentication required to export cloud backups.' }));
+      return;
+    }
+
     writeDailyBackupSnapshot(true);
     const dayStr = new Date().toISOString().slice(0, 10);
+    // Never export ephemeral OTP hashes in backups
+    const sanitizedState = { ...syncState };
+    delete sanitizedState.emailOtpsByEmail;
     const snapshot = JSON.stringify(
       {
         exportedAtIso: new Date().toISOString(),
         version: APP_SUITE_VERSION,
-        ...syncState,
+        ...sanitizedState,
       },
       null,
       2
@@ -2233,7 +2249,6 @@ const server = http.createServer((req, res) => {
       'Content-Disposition': `attachment; filename="quickdelivery-backup-${dayStr}.json"`,
       'Content-Length': String(buf.length),
       'Cache-Control': 'no-store',
-      'Access-Control-Allow-Origin': '*',
     });
     if (req.method === 'HEAD') {
       res.end();
@@ -2403,7 +2418,10 @@ const server = http.createServer((req, res) => {
           return;
         }
         const expectedHash = crypto.createHmac('sha256', SYNC_HMAC_SECRET).update(`${rawEmail}|${enteredOtp}`).digest('hex');
-        if (enteredOtp.length !== 6 || expectedHash !== rec.otpHash) {
+        const expectedBuf = Buffer.from(expectedHash, 'utf-8');
+        const storedBuf = Buffer.from(String(rec.otpHash || ''), 'utf-8');
+        const otpMatches = enteredOtp.length === 6 && expectedBuf.length === storedBuf.length && crypto.timingSafeEqual(expectedBuf, storedBuf);
+        if (!otpMatches) {
           rec.attemptsLeft = Math.max(0, Number(rec.attemptsLeft || 1) - 1);
           saveSyncState();
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
@@ -2425,6 +2443,12 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/payments/create-order' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many payment requests. Please wait shortly.' }));
+      return;
+    }
     let body = '';
     req.on('data', chunk => {
       body += chunk;
@@ -2433,9 +2457,22 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const parsed = JSON.parse(body || '{}');
-        const orderId = String(parsed.orderId || `QD-${Date.now() % 10000}`);
+        const deviceId = String(parsed.deviceId || '');
+        const role = String(parsed.role || 'CUSTOMER').trim().toUpperCase();
+        const sigCheck = verifySyncHmacHeaders(req, deviceId, role);
+        if (!sigCheck.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
+          return;
+        }
+        const orderId = String(parsed.orderId || `QD-${Date.now() % 10000}`).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
         const amountInr = Number(parsed.amountInr || 0);
-        const amountPaise = Math.max(100, Math.round(amountInr * 100));
+        if (!Number.isFinite(amountInr) || amountInr < 1 || amountInr > 500000) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Amount must be between ₹1 and ₹5,00,000.' }));
+          return;
+        }
+        const amountPaise = Math.round(amountInr * 100);
         const provider = String(
           parsed.provider || (syncState.remoteFeatureFlags && syncState.remoteFeatureFlags.gatewayProvider) || 'RAZORPAY'
         ).toUpperCase();
@@ -2471,17 +2508,22 @@ const server = http.createServer((req, res) => {
       if (rawBody.length > 512 * 1024) req.destroy();
     });
     req.on('end', () => {
-      const secret = process.env.RAZORPAY_WEBHOOK_SECRET || '';
-      const sigHeader = String(req.headers['x-razorpay-signature'] || '');
-      if (secret) {
-        const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-        const sigBuf = Buffer.from(sigHeader, 'utf-8');
-        const expBuf = Buffer.from(expected, 'utf-8');
-        if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'Invalid webhook signature' }));
-          return;
-        }
+      const secret = String(process.env.RAZORPAY_WEBHOOK_SECRET || '').trim();
+      if (!secret) {
+        recordSecurityBlock('INVALID_SIG', getClientIp(req), 'Rejected payment webhook: RAZORPAY_WEBHOOK_SECRET not configured');
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'Payment webhook secret not configured on server.' }));
+        return;
+      }
+      const sigHeader = String(req.headers['x-razorpay-signature'] || '').trim();
+      const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+      const sigBuf = Buffer.from(sigHeader, 'utf-8');
+      const expBuf = Buffer.from(expected, 'utf-8');
+      if (!sigHeader || sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+        recordSecurityBlock('INVALID_SIG', getClientIp(req), 'Invalid Razorpay webhook signature');
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid webhook signature' }));
+        return;
       }
       try {
         const evt = JSON.parse(rawBody || '{}');
@@ -2521,6 +2563,7 @@ const server = http.createServer((req, res) => {
         ];
       })
     );
+    const secStats = ensureSecurityStats();
     const healthJson = JSON.stringify(
       {
         ok: true,
@@ -2532,12 +2575,15 @@ const server = http.createServer((req, res) => {
         apkBuilds,
         connectedDevicesCount: syncPayload.connectedDevices.length,
         connectedRoles: rolesConnected,
-        connectedDevices: syncPayload.connectedDevices,
         totalOrders: syncPayload.orders.length,
         activeSearchingOrders,
         registeredRiders: syncPayload.riderRegistrations.length,
         withdrawalRequestsCount: syncPayload.withdrawalRequests.length,
-        securityStats: ensureSecurityStats(),
+        securityStats: {
+          blockedFakeOrders: Number(secStats.blockedFakeOrders || 0),
+          rateLimitedRequests: Number(secStats.rateLimitedRequests || 0),
+          rejectedInvalidPayloads: Number(secStats.rejectedInvalidPayloads || 0),
+        },
       },
       null,
       2

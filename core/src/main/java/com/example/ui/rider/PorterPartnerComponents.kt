@@ -152,12 +152,14 @@ object RiderThemeManager {
 }
 
 /**
- * Manages Rider Profile Photo capture & upload persistence across the Rider App.
+ * Manages Rider Profile Photo (DP) capture & upload persistence across the Rider App.
+ * Stores downscaled 384x384 JPEG in app-private filesDir and auto-migrates legacy Base64 photos.
  */
 object RiderProfilePhotoManager {
     private const val PREFS_NAME = "quick_delivery_rider_profile_photo_prefs"
     private const val KEY_PHOTO_BASE64 = "rider_profile_photo_base64"
     private const val KEY_PHOTO_NOTE = "rider_profile_photo_note"
+    private const val AVATAR_FILE_NAME = "rider_profile_dp.jpg"
     private var loaded = false
 
     private val _profilePhotoBitmap = MutableStateFlow<Bitmap?>(null)
@@ -169,36 +171,60 @@ object RiderProfilePhotoManager {
     fun ensureLoaded(context: Context) {
         if (!loaded) {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val encoded = prefs.getString(KEY_PHOTO_BASE64, null)
-            val note = prefs.getString(KEY_PHOTO_NOTE, null)
-            if (!encoded.isNullOrBlank()) {
-                runCatching {
-                    val bytes = Base64.decode(encoded, Base64.DEFAULT)
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                }.getOrNull()?.let { bmp ->
-                    _profilePhotoBitmap.value = bmp
+            var bmp = com.example.ui.components.ProfilePhotoStorageUtils.loadJpegAvatar(context, AVATAR_FILE_NAME)
+            if (bmp == null) {
+                val legacyEncoded = prefs.getString(KEY_PHOTO_BASE64, null)
+                if (!legacyEncoded.isNullOrBlank()) {
+                    val migrated = runCatching {
+                        val bytes = Base64.decode(legacyEncoded, Base64.DEFAULT)
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }.getOrNull()
+                    if (migrated != null) {
+                        bmp = com.example.ui.components.ProfilePhotoStorageUtils.saveJpegAvatar(
+                            context,
+                            AVATAR_FILE_NAME,
+                            migrated
+                        )
+                        prefs.edit().remove(KEY_PHOTO_BASE64).apply()
+                    }
                 }
             }
-            _lastUpdatedNote.value = note
+            _profilePhotoBitmap.value = bmp
+            _lastUpdatedNote.value = if (bmp != null) prefs.getString(KEY_PHOTO_NOTE, null) else null
             loaded = true
         }
     }
 
     fun saveProfilePhoto(context: Context, bitmap: Bitmap, sourceLabel: String = "Camera") {
-        _profilePhotoBitmap.value = bitmap
+        val saved = com.example.ui.components.ProfilePhotoStorageUtils.saveJpegAvatar(context, AVATAR_FILE_NAME, bitmap)
+        _profilePhotoBitmap.value = saved
         val timestamp = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date())
         val note = "Uploaded via $sourceLabel ($timestamp)"
         _lastUpdatedNote.value = note
-        runCatching {
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 90, out)
-            val encoded = Base64.encodeToString(out.toByteArray(), Base64.DEFAULT)
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putString(KEY_PHOTO_BASE64, encoded)
-                .putString(KEY_PHOTO_NOTE, note)
-                .apply()
-        }
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_PHOTO_BASE64)
+            .putString(KEY_PHOTO_NOTE, note)
+            .apply()
+        loaded = true
+    }
+
+    fun saveProfilePhotoFromUri(context: Context, uri: android.net.Uri): Boolean {
+        val decoded = com.example.ui.components.ProfilePhotoStorageUtils.decodeUriToAvatarBitmap(context, uri)
+            ?: return false
+        saveProfilePhoto(context, decoded, "Gallery")
+        return true
+    }
+
+    fun clearProfilePhoto(context: Context) {
+        com.example.ui.components.ProfilePhotoStorageUtils.deleteAvatarFile(context, AVATAR_FILE_NAME)
+        _profilePhotoBitmap.value = null
+        _lastUpdatedNote.value = null
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_PHOTO_BASE64)
+            .remove(KEY_PHOTO_NOTE)
+            .apply()
     }
 }
 
@@ -229,9 +255,7 @@ fun PorterRiderDrawerContent(
     onOpenBankAccount: () -> Unit = {},
     hasBankDetails: Boolean = false,
     bankSummary: String = "",
-    onOpenSuggestionBox: () -> Unit = {},
     onInstantCashout: (Double) -> Unit = {},
-    onSimulateBalance: (Double) -> Unit,
     onLogout: () -> Unit = {},
     onOpenPrivacyPolicy: () -> Unit = {},
     onDeleteAccount: () -> Unit = {},
@@ -400,13 +424,19 @@ fun PorterRiderDrawerContent(
                                 )
                                 Spacer(modifier = Modifier.width(2.dp))
                                 Text(
-                                    text = "4.92 ★ • 100% KYC Verified",
+                                    text = "4.92 ★ • Tap to set / change DP",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = PorterGreen
                                 )
                             }
                         }
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = "Edit Rider DP",
+                            tint = Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 
@@ -695,18 +725,6 @@ fun PorterRiderDrawerContent(
                     subtitle = "Support Ticket • support@quickdelivery.co.in",
                     onClick = onOpenSupport,
                     tag = "drawer_item_support"
-                )
-            }
-
-            item {
-                PorterDrawerMenuItem(
-                    icon = Icons.Default.Description,
-                    title = "Suggestion & Feedback Box",
-                    subtitle = "Send suggestion or report issue directly to Admin",
-                    badge = "FEEDBACK",
-                    badgeColor = QuickDeliveryOrange,
-                    onClick = onOpenSuggestionBox,
-                    tag = "drawer_item_suggestion_box"
                 )
             }
 

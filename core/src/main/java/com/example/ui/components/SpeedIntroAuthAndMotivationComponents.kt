@@ -46,6 +46,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -1163,6 +1164,8 @@ fun QuickDeliveryUserAuthScreen(
         )
     }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var signupPhoneOverLimit by remember { mutableStateOf(false) }
+    var signinPhoneOverLimit by remember { mutableStateOf(false) }
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
 
     val authScope = rememberCoroutineScope()
@@ -1208,8 +1211,8 @@ fun QuickDeliveryUserAuthScreen(
             Column(
                 modifier = Modifier
                     .verticalScroll(rememberScrollState())
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1330,15 +1333,44 @@ fun QuickDeliveryUserAuthScreen(
                             .testTag("${prefsKeyPrefix}_signup_name_input")
                     )
 
+                    val signupPhoneError = evaluateIndianMobileError(
+                        digits = mobileNumber,
+                        overLimitAttempted = signupPhoneOverLimit
+                    )
+                    val isSignupPhoneValid = mobileNumber.length == 10 &&
+                        !QuickDeliverySecurityGuard.isFakeOrDummyPhone(mobileNumber)
                     OutlinedTextField(
                         value = mobileNumber,
-                        onValueChange = {
-                            if (it.length <= 10) mobileNumber = it.filter(Char::isDigit)
+                        onValueChange = { raw ->
+                            val parsed = processIndianMobileInput(raw)
+                            mobileNumber = parsed.sanitizedDigits
+                            signupPhoneOverLimit = parsed.overLimitAttempted
                             if (errorMessage != null) errorMessage = null
                         },
                         label = { Text(uiStrings.mobileNumberLabel) },
-                        placeholder = { Text(uiStrings.mobileNumberPlaceholder) },
-                        leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                        placeholder = { Text("10-digit mobile number") },
+                        leadingIcon = { IndianPhonePrefixBadge(accentColor = accentColor) },
+                        trailingIcon = {
+                            if (isSignupPhoneValid && !signupPhoneOverLimit) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Valid 10-digit mobile",
+                                    tint = Color(0xFF059669)
+                                )
+                            }
+                        },
+                        isError = signupPhoneError != null,
+                        supportingText = signupPhoneError?.let { errText ->
+                            {
+                                Text(
+                                    text = errText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFDC2626),
+                                    modifier = Modifier.testTag("${prefsKeyPrefix}_signup_phone_error")
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         singleLine = true,
                         modifier = Modifier
@@ -1365,19 +1397,70 @@ fun QuickDeliveryUserAuthScreen(
                             .testTag("${prefsKeyPrefix}_signup_email_input")
                     )
                 } else {
-                    // EXISTING USER SIGN IN: Mobile Number or Email Address
+                    // EXISTING USER SIGN IN: 10-Digit Mobile Number (+91) OR Email Address
+                    val isSignInPhoneMode = !existingMobileOrEmail.contains("@") &&
+                        !existingMobileOrEmail.any(Char::isLetter)
+                    val signInDigits = existingMobileOrEmail.filter(Char::isDigit)
+                    val signInPhoneError = if (isSignInPhoneMode) {
+                        when {
+                            signinPhoneOverLimit -> "Only 10 digits allowed (cannot exceed 10 digits)"
+                            signInDigits.isEmpty() -> null
+                            signInDigits.length < 10 -> "Enter exact 10-digit mobile number (${signInDigits.length}/10) or Email"
+                            QuickDeliverySecurityGuard.isFakeOrDummyPhone(signInDigits) -> "Enter a valid 10-digit Indian mobile number"
+                            else -> null
+                        }
+                    } else null
+                    val isSignInPhoneValid = isSignInPhoneMode &&
+                        signInDigits.length == 10 &&
+                        !QuickDeliverySecurityGuard.isFakeOrDummyPhone(signInDigits)
+
                     OutlinedTextField(
                         value = existingMobileOrEmail,
-                        onValueChange = {
-                            existingMobileOrEmail = it
-                            if (!it.trim().equals(verifiedOtpEmail, ignoreCase = true)) {
+                        onValueChange = { raw ->
+                            val looksEmailInput = raw.contains("@") || raw.any(Char::isLetter)
+                            if (looksEmailInput) {
+                                signinPhoneOverLimit = false
+                                existingMobileOrEmail = raw
+                            } else {
+                                val parsed = processIndianMobileInput(raw)
+                                existingMobileOrEmail = parsed.sanitizedDigits
+                                signinPhoneOverLimit = parsed.overLimitAttempted
+                            }
+                            if (!existingMobileOrEmail.trim().equals(verifiedOtpEmail, ignoreCase = true)) {
                                 verifiedOtpEmail = null
                             }
                             if (errorMessage != null) errorMessage = null
                         },
                         label = { Text(uiStrings.mobileOrEmailLabel) },
-                        placeholder = { Text(uiStrings.mobileOrEmailPlaceholder) },
-                        leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                        placeholder = { Text("10-digit mobile or email") },
+                        leadingIcon = {
+                            if (isSignInPhoneMode) {
+                                IndianPhonePrefixBadge(accentColor = accentColor)
+                            } else {
+                                Icon(Icons.Default.Email, contentDescription = null)
+                            }
+                        },
+                        trailingIcon = {
+                            if (isSignInPhoneValid && !signinPhoneOverLimit) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Valid 10-digit mobile",
+                                    tint = Color(0xFF059669)
+                                )
+                            }
+                        },
+                        isError = signInPhoneError != null,
+                        supportingText = signInPhoneError?.let { errText ->
+                            {
+                                Text(
+                                    text = errText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFDC2626),
+                                    modifier = Modifier.testTag("${prefsKeyPrefix}_signin_phone_error")
+                                )
+                            }
+                        },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1575,13 +1658,13 @@ fun QuickDeliveryUserAuthScreen(
                     }
                 }
 
-                // REMEMBER LOGIN OPTION FOR PERSISTENT SESSION
+                // COMPACT REMEMBER LOGIN STRIP
                 Surface(
-                    color = if (allowPhoneStoragePermission) Color(0xFFECFDF5) else Color(0xFFFFFBEB),
-                    shape = RoundedCornerShape(12.dp),
+                    color = if (allowPhoneStoragePermission) Color(0xFFECFDF5) else Color(0xFFF8FAFC),
+                    shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(
                         1.dp,
-                        if (allowPhoneStoragePermission) Color(0xFF10B981) else Color(0xFFF59E0B)
+                        if (allowPhoneStoragePermission) Color(0xFF10B981) else Color(0xFFCBD5E1)
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1590,42 +1673,35 @@ fun QuickDeliveryUserAuthScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = 10.dp, vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = uiStrings.keepMeSignedIn,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF0D1B2A)
-                            )
-                            Text(
-                                text = if (allowPhoneStoragePermission) {
-                                    uiStrings.keepMeSignedInDescOn
-                                } else {
-                                    uiStrings.keepMeSignedInDescOff
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF475569)
-                            )
-                        }
+                        Text(
+                            text = uiStrings.keepMeSignedIn,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF0D1B2A),
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f)
+                        )
                         Switch(
                             checked = allowPhoneStoragePermission,
                             onCheckedChange = { allowPhoneStoragePermission = it },
-                            modifier = Modifier.testTag("${prefsKeyPrefix}_storage_permission_switch")
+                            modifier = Modifier
+                                .scale(0.78f)
+                                .testTag("${prefsKeyPrefix}_storage_permission_switch")
                         )
                     }
                 }
 
-                // MANDATORY PRIVACY POLICY & TERMS CONSENT CHECKBOX — SHOWN ONLY ON NEW USER SIGN UP!
+                // COMPACT PRIVACY POLICY & TERMS CONSENT STRIP (SHOWN ONLY ON NEW USER SIGN UP)
                 if (isNewUserSignUp) {
                     Surface(
                         color = if (acceptedPrivacyTerms) Color(0xFFECFDF5) else Color(0xFFFFF7ED),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(10.dp),
                         border = BorderStroke(
-                            1.2.dp,
+                            1.dp,
                             if (acceptedPrivacyTerms) Color(0xFF10B981) else Color(0xFFF97316)
                         ),
                         modifier = Modifier
@@ -1646,7 +1722,7 @@ fun QuickDeliveryUserAuthScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
@@ -1665,38 +1741,28 @@ fun QuickDeliveryUserAuthScreen(
                                     checkedColor = accentColor,
                                     uncheckedColor = Color(0xFFEA580C)
                                 ),
-                                modifier = Modifier.testTag("${prefsKeyPrefix}_privacy_terms_checkbox")
+                                modifier = Modifier
+                                    .scale(0.86f)
+                                    .testTag("${prefsKeyPrefix}_privacy_terms_checkbox")
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = uiStrings.acceptPrivacyTermsTitle,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF0D1B2A)
-                                )
-                                Text(
-                                    text = uiStrings.tapToReadPrivacyTerms,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = accentColor,
-                                    textDecoration = TextDecoration.Underline,
-                                    modifier = Modifier
-                                        .padding(top = 2.dp)
-                                        .clickable { showPrivacyPolicyDialog = true }
-                                        .testTag("${prefsKeyPrefix}_privacy_policy_read_link")
-                                )
-                            }
+                            Text(
+                                text = "I agree to ",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF334155)
+                            )
+                            Text(
+                                text = "Privacy Policy & Terms",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = accentColor,
+                                textDecoration = TextDecoration.Underline,
+                                modifier = Modifier
+                                    .clickable { showPrivacyPolicyDialog = true }
+                                    .padding(vertical = 6.dp, horizontal = 2.dp)
+                                    .testTag("${prefsKeyPrefix}_privacy_policy_read_link")
+                            )
                         }
-                    }
-
-                    if (!acceptedPrivacyTerms) {
-                        Text(
-                            text = uiStrings.privacyCheckboxHint,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFC2410C)
-                        )
                     }
                 }
 
@@ -1739,8 +1805,8 @@ fun QuickDeliveryUserAuthScreen(
                                     errorMessage = "Please enter your valid Full Name (minimum 2 characters)."
                                     return@Button
                                 }
-                                finalPhone.length != 10 -> {
-                                    errorMessage = "Please enter a valid 10-digit Mobile Number."
+                                finalPhone.length != 10 || QuickDeliverySecurityGuard.isFakeOrDummyPhone(finalPhone) -> {
+                                    errorMessage = "Please enter a valid 10-digit Indian Mobile Number (+91)."
                                     return@Button
                                 }
                                 !finalEmail.contains("@") || !finalEmail.contains(".") -> {
@@ -1767,10 +1833,12 @@ fun QuickDeliveryUserAuthScreen(
                         } else {
                             val identifier = QuickDeliverySecurityGuard.sanitizeText(existingMobileOrEmail, 120)
                             val digitsOnly = identifier.filter(Char::isDigit)
-                            val looksLikePhone = digitsOnly.length == 10 && !identifier.contains("@")
+                            val looksLikePhone = digitsOnly.length == 10 &&
+                                !identifier.contains("@") &&
+                                !QuickDeliverySecurityGuard.isFakeOrDummyPhone(digitsOnly)
                             val looksLikeEmail = identifier.contains("@") && identifier.contains(".")
                             if (!looksLikePhone && !looksLikeEmail) {
-                                errorMessage = "Please enter a valid 10-digit Mobile Number or Email Address."
+                                errorMessage = "Please enter a valid 10-digit Mobile Number (+91) or Email Address."
                                 return@Button
                             }
                             val savedPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(
@@ -1874,29 +1942,31 @@ fun QuickDeliveryUserAuthScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showPrivacyPolicyDialog = true }
-                        .padding(vertical = 4.dp)
-                        .testTag("${prefsKeyPrefix}_privacy_policy_link"),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Shield,
-                        contentDescription = "Privacy Policy",
-                        tint = accentColor,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = uiStrings.viewPrivacyTermsFooter,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = accentColor,
-                        textDecoration = TextDecoration.Underline
-                    )
+                if (!isNewUserSignUp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showPrivacyPolicyDialog = true }
+                            .padding(vertical = 2.dp)
+                            .testTag("${prefsKeyPrefix}_privacy_policy_link"),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = "Privacy Policy",
+                            tint = accentColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = uiStrings.viewPrivacyTermsFooter,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor,
+                            textDecoration = TextDecoration.Underline
+                        )
+                    }
                 }
             }
         }

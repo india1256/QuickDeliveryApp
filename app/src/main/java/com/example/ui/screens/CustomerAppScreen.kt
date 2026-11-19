@@ -19,7 +19,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -157,8 +161,13 @@ import com.example.ui.components.QuickDeliveryPrivacyPolicyDialog
 import com.example.ui.components.QuickDeliverySpeedingVehicleIntro
 import com.example.ui.components.QuickDeliverySuggestionBoxCard
 import com.example.ui.components.QuickDeliveryUserAuthScreen
+import com.example.ui.components.CustomerProfileDpDialog
+import com.example.ui.components.CustomerProfilePhotoManager
+import com.example.ui.components.IndianPhonePrefixBadge
 import com.example.ui.components.RiderFeedbackManager
+import com.example.ui.components.evaluateIndianMobileError
 import com.example.ui.components.hasAllMandatoryAppPermissions
+import com.example.ui.components.processIndianMobileInput
 import com.example.ui.i18n.AppLanguageManager
 import com.example.ui.i18n.InlineLanguageSelectorBar
 import com.example.ui.i18n.LanguageSwitcherPill
@@ -210,6 +219,8 @@ fun CustomerAppScreen(
     // 0. Intro Animation & Customer Sign Up / Sign In State (cached in session so tab switches are 0ms instant)
     remember(context) { MotivationAndPromoManager.restoreSavedLoginFromPhoneStorage(context) }
     remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
+    remember(context) { CustomerProfilePhotoManager.ensureLoaded(context) }
+    val customerProfileBitmap by CustomerProfilePhotoManager.profilePhotoBitmap.collectAsState()
     var showSpeedIntro by remember { mutableStateOf(!MotivationAndPromoManager.customerIntroCompleted) }
 
     // 1 = Address & Route, 2 = Parcel Photo (after Address Next), 3 = Payment, 4 = Live Tracking
@@ -277,6 +288,7 @@ fun CustomerAppScreen(
     var selectedDropSavedTag by rememberSaveable { mutableStateOf("Office") }
     var receiverFullName by rememberSaveable { mutableStateOf("") }
     var receiverMobilePhone by rememberSaveable { mutableStateOf("") }
+    var receiverPhoneOverLimit by remember { mutableStateOf(false) }
 
     val fullPickupAddressFormatted = remember(
         pickupHouseFlat,
@@ -394,8 +406,6 @@ fun CustomerAppScreen(
         }
     }
 
-    // Customer Notification-style Promo Banner (rotates with a fresh message to encourage more orders)
-    var customerPromoNotification by remember { mutableStateOf<String?>(null) }
     val customerPostDeliveryMotivation by MotivationAndPromoManager.customerPostDeliveryMotivation.collectAsState()
     var liveRiderGpsCoordinates by rememberSaveable { mutableStateOf<String?>(null) }
     var showOrderHistoryScreen by rememberSaveable { mutableStateOf(false) }
@@ -491,7 +501,10 @@ fun CustomerAppScreen(
                                 cursor.getString(numIdx).orEmpty().filter(Char::isDigit).takeLast(10)
                             } else ""
                             if (pickedName.isNotBlank()) receiverFullName = pickedName
-                            if (pickedNum.length == 10) receiverMobilePhone = pickedNum
+                            if (pickedNum.length == 10) {
+                                receiverMobilePhone = pickedNum
+                                receiverPhoneOverLimit = false
+                            }
                             isErrorBanner = false
                             statusBanner = "📇 Contact selected: ${pickedName.ifBlank { pickedNum }}"
                         }
@@ -735,10 +748,10 @@ fun CustomerAppScreen(
     }
 
     var showCustomerTopOptionsDialog by remember { mutableStateOf(false) }
+    var showCustomerProfileDialog by remember { mutableStateOf(false) }
     var showCustomerShareThreeDotsMenu by remember { mutableStateOf(false) }
     var attemptedStep1Next by rememberSaveable { mutableStateOf(false) }
     var showCustomerLogoutConfirmDialog by remember { mutableStateOf(false) }
-    var showCustomerSuggestionDialog by remember { mutableStateOf(false) }
     var showCustomerSupportTicketDialog by remember { mutableStateOf(false) }
     var showCustomerPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showCustomerDeleteAccountDialog by remember { mutableStateOf(false) }
@@ -772,6 +785,7 @@ fun CustomerAppScreen(
         dropLiveGpsVerified = false
         receiverFullName = ""
         receiverMobilePhone = ""
+        receiverPhoneOverLimit = false
         packageDescription = ""
         selectedInstructionsCsv = ""
         currentBookingPhotoSummary = null
@@ -801,7 +815,8 @@ fun CustomerAppScreen(
             pickupPinCode.length != 6 -> "Please enter a valid 6-digit Pickup PIN Code (*)"
             !remoteFlags.isPinCodeAllowed(pickupPinCode) -> "Pickup PIN $pickupPinCode is currently outside Admin serviceable PIN zones."
             receiverFullName.isBlank() -> "Receiver Name (*) is mandatory"
-            receiverMobilePhone.length != 10 -> "Please enter a valid 10-digit Receiver Phone (*)"
+            receiverMobilePhone.length != 10 || com.example.security.QuickDeliverySecurityGuard.isFakeOrDummyPhone(receiverMobilePhone) ->
+                "Please enter a valid 10-digit Receiver Mobile Number (+91) (*)"
             dropHouseFlat.isBlank() -> "Drop House / Flat No. (*) is mandatory"
             dropBuilding.isBlank() -> "Drop Building / Society (*) is mandatory"
             dropAddressText.isBlank() -> "Drop Area / Locality / Street (*) is mandatory"
@@ -821,7 +836,7 @@ fun CustomerAppScreen(
         showCustomerPrivacyPolicyDialog ||
         showCustomerSupportTicketDialog ||
         showCustomerLogoutConfirmDialog ||
-        showCustomerSuggestionDialog ||
+        showCustomerProfileDialog ||
         showCustomerTopOptionsDialog ||
         showBookingConfirmationScreen ||
         showOrderHistoryScreen ||
@@ -836,7 +851,7 @@ fun CustomerAppScreen(
             showCustomerPrivacyPolicyDialog -> showCustomerPrivacyPolicyDialog = false
             showCustomerSupportTicketDialog -> showCustomerSupportTicketDialog = false
             showCustomerLogoutConfirmDialog -> showCustomerLogoutConfirmDialog = false
-            showCustomerSuggestionDialog -> showCustomerSuggestionDialog = false
+            showCustomerProfileDialog -> showCustomerProfileDialog = false
             showCustomerTopOptionsDialog -> showCustomerTopOptionsDialog = false
             showBookingConfirmationScreen -> showBookingConfirmationScreen = false
             showOrderHistoryScreen -> showOrderHistoryScreen = false
@@ -1406,6 +1421,10 @@ fun CustomerAppScreen(
                         color = SlateMuted
                     )
                     Surface(
+                        onClick = {
+                            showCustomerTopOptionsDialog = false
+                            showCustomerProfileDialog = true
+                        },
                         shape = RoundedCornerShape(12.dp),
                         color = Color(0xFFF8FAFC),
                         border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
@@ -1419,18 +1438,50 @@ fun CustomerAppScreen(
                                 .padding(horizontal = 14.dp, vertical = 11.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = PrimaryTeal.copy(alpha = 0.12f),
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = "Verified Customer Profile",
-                                        tint = PrimaryTeal,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                            Box(modifier = Modifier.size(44.dp)) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = PrimaryTeal.copy(alpha = 0.14f),
+                                    border = BorderStroke(1.5.dp, BrandOrange),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    val dpBmp = customerProfileBitmap
+                                    if (dpBmp != null) {
+                                        Image(
+                                            bitmap = dpBmp.asImageBitmap(),
+                                            contentDescription = "Customer Profile Photo",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(CircleShape)
+                                        )
+                                    } else {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Person,
+                                                contentDescription = "Customer Profile",
+                                                tint = PrimaryTeal,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Surface(
+                                    color = BrandOrange,
+                                    shape = CircleShape,
+                                    border = BorderStroke(1.5.dp, Color.White),
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .align(Alignment.BottomEnd)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.CameraAlt,
+                                            contentDescription = "Edit DP",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(9.dp)
+                                        )
+                                    }
                                 }
                             }
                             Spacer(modifier = Modifier.width(12.dp))
@@ -1444,7 +1495,15 @@ fun CustomerAppScreen(
                                 Text(
                                     text = "+91 ${customerPhone.removePrefix("+91").trim()} • $customerEmail",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = SlateMuted
+                                    color = SlateMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = if (customerProfileBitmap != null) "Tap to change DP" else "Tap to add Profile DP",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PrimaryTeal
                                 )
                             }
                         }
@@ -1503,61 +1562,6 @@ fun CustomerAppScreen(
                                     color = SlateMuted
                                 )
                             }
-                        }
-                    }
-
-                    Surface(
-                        onClick = {
-                            showCustomerTopOptionsDialog = false
-                            showCustomerSuggestionDialog = true
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFFF8FAFC),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("customer_menu_suggestion_box_btn")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = BrandOrange.copy(alpha = 0.14f),
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = "Customer Suggestion Box",
-                                        tint = BrandOrange,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = uiStrings.suggestionBoxTitle,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = DeepNavy
-                                )
-                                Text(
-                                    text = uiStrings.suggestionBoxSubtitle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = SlateMuted
-                                )
-                            }
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = null,
-                                tint = BrandOrange,
-                                modifier = Modifier.size(18.dp)
-                            )
                         }
                     }
 
@@ -1766,29 +1770,14 @@ fun CustomerAppScreen(
         )
     }
 
-    if (showCustomerSuggestionDialog) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showCustomerSuggestionDialog = false },
-            title = {
-                Text(
-                    text = "Customer Suggestion & Feedback Box",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = DeepNavy
-                )
-            },
-            text = {
-                QuickDeliverySuggestionBoxCard(
-                    appRole = "CUSTOMER",
-                    senderName = customerName,
-                    accentColor = PrimaryTeal
-                )
-            },
-            confirmButton = {
-                OutlinedButton(onClick = { showCustomerSuggestionDialog = false }) {
-                    Text("Close", fontWeight = FontWeight.Bold)
-                }
-            }
+    if (showCustomerProfileDialog) {
+        CustomerProfileDpDialog(
+            customerName = customerName,
+            customerPhone = customerPhone,
+            customerEmail = customerEmail,
+            accentColor = PrimaryTeal,
+            secondaryColor = BrandOrange,
+            onDismiss = { showCustomerProfileDialog = false }
         )
     }
 
@@ -1997,6 +1986,7 @@ fun CustomerAppScreen(
             accountIdentifier = customerEmail.ifBlank { customerPhone.ifBlank { customerName } },
             onConfirmDelete = {
                 showCustomerDeleteAccountDialog = false
+                CustomerProfilePhotoManager.clearProfilePhoto(context)
                 MotivationAndPromoManager.deleteUserAccountData(context, "customer")
                 resetCustomerTransientBookingState()
                 isCustomerLoggedIn = false
@@ -2375,6 +2365,40 @@ fun CustomerAppScreen(
                         accentColor = BrandOrange,
                         modifier = Modifier.padding(end = 2.dp)
                     )
+                    IconButton(
+                        onClick = { showCustomerProfileDialog = true },
+                        modifier = Modifier.testTag("customer_top_bar_dp_avatar_btn")
+                    ) {
+                        Box(modifier = Modifier.size(32.dp)) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.White.copy(alpha = 0.2f),
+                                border = BorderStroke(1.5.dp, Color.White),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                val topDp = customerProfileBitmap
+                                if (topDp != null) {
+                                    Image(
+                                        bitmap = topDp.asImageBitmap(),
+                                        contentDescription = "My Profile DP",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(CircleShape)
+                                    )
+                                } else {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = "Set Profile DP",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Box {
                         IconButton(
                             onClick = { showCustomerShareThreeDotsMenu = true },
@@ -2477,21 +2501,6 @@ fun CustomerAppScreen(
             }
 
             // Background MultiPhoneLiveSyncManager stays active silently; technical latency strip hidden from customer UI.
-
-            // Customer Promo Notification Banner
-            if (!customerPromoNotification.isNullOrBlank()) {
-                item(key = "customer_promo_banner") {
-                    CustomerOrderMoreNotificationBanner(
-                        message = customerPromoNotification,
-                        onBookAnotherOrderClick = {
-                            statusBanner = null
-                            customerPromoNotification = null
-                            currentStep = 1
-                        },
-                        onDismiss = { customerPromoNotification = null }
-                    )
-                }
-            }
 
             // Remote Admin Maintenance / Broadcast Announcements
             val activeZonePin = pickupPinCode.ifBlank { dropPinCode }
@@ -3292,38 +3301,67 @@ fun CustomerAppScreen(
                                             }
                                         }
 
-                                        // Receiver Name & Phone Inputs + 1-Tap Phonebook Contact Picker (Zero-permission ACTION_PICK)
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            OutlinedTextField(
-                                                value = receiverFullName,
-                                                onValueChange = { receiverFullName = it },
-                                                label = { Text(uiStrings.receiverNameLabel) },
-                                                isError = attemptedStep1Next && receiverFullName.isBlank(),
-                                                singleLine = true,
-                                                shape = RoundedCornerShape(12.dp),
-                                                colors = OutlinedTextFieldDefaults.colors(
-                                                    focusedBorderColor = BrandOrange,
-                                                    unfocusedContainerColor = Color.White,
-                                                    focusedContainerColor = Color.White
-                                                ),
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .testTag("receiver_name_input")
-                                            )
-                                            OutlinedTextField(
-                                                value = receiverMobilePhone,
-                                                onValueChange = { input ->
-                                                    receiverMobilePhone = input.filter { it.isDigit() }.take(10)
-                                                },
-                                                label = { Text(uiStrings.receiverPhoneLabel) },
-                                                isError = attemptedStep1Next && receiverMobilePhone.length != 10,
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                                                singleLine = true,
-                                                trailingIcon = {
+                                        // Receiver Name & Strict 10-Digit (+91) Phone Inputs + 1-Tap Phonebook Contact Picker
+                                        val receiverPhoneError = evaluateIndianMobileError(
+                                            digits = receiverMobilePhone,
+                                            overLimitAttempted = receiverPhoneOverLimit
+                                        ) ?: if (attemptedStep1Next && receiverMobilePhone.length != 10) {
+                                            "Enter exact 10-digit Receiver Mobile Number"
+                                        } else null
+                                        val isReceiverPhoneValid = receiverMobilePhone.length == 10 &&
+                                            !com.example.security.QuickDeliverySecurityGuard.isFakeOrDummyPhone(receiverMobilePhone)
+
+                                        OutlinedTextField(
+                                            value = receiverFullName,
+                                            onValueChange = { receiverFullName = it },
+                                            label = { Text(uiStrings.receiverNameLabel) },
+                                            isError = attemptedStep1Next && receiverFullName.isBlank(),
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = BrandOrange,
+                                                unfocusedContainerColor = Color.White,
+                                                focusedContainerColor = Color.White
+                                            ),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("receiver_name_input")
+                                        )
+
+                                        OutlinedTextField(
+                                            value = receiverMobilePhone,
+                                            onValueChange = { input ->
+                                                val parsed = processIndianMobileInput(input)
+                                                receiverMobilePhone = parsed.sanitizedDigits
+                                                receiverPhoneOverLimit = parsed.overLimitAttempted
+                                            },
+                                            label = { Text(uiStrings.receiverPhoneLabel) },
+                                            placeholder = { Text("10-digit mobile number") },
+                                            leadingIcon = { IndianPhonePrefixBadge(accentColor = BrandOrange) },
+                                            isError = receiverPhoneError != null,
+                                            supportingText = receiverPhoneError?.let { errText ->
+                                                {
+                                                    Text(
+                                                        text = errText,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = Color(0xFFDC2626),
+                                                        modifier = Modifier.testTag("receiver_phone_error_text")
+                                                    )
+                                                }
+                                            },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                            singleLine = true,
+                                            trailingIcon = {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    if (isReceiverPhoneValid && !receiverPhoneOverLimit) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.CheckCircle,
+                                                            contentDescription = "Valid 10-digit receiver mobile",
+                                                            tint = VerifiedGreen,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
                                                     IconButton(
                                                         onClick = {
                                                             runCatching {
@@ -3345,18 +3383,18 @@ fun CustomerAppScreen(
                                                             tint = BrandOrange
                                                         )
                                                     }
-                                                },
-                                                shape = RoundedCornerShape(12.dp),
-                                                colors = OutlinedTextFieldDefaults.colors(
-                                                    focusedBorderColor = BrandOrange,
-                                                    unfocusedContainerColor = Color.White,
-                                                    focusedContainerColor = Color.White
-                                                ),
-                                                modifier = Modifier
-                                                    .weight(1.08f)
-                                                    .testTag("receiver_phone_input")
-                                            )
-                                        }
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = BrandOrange,
+                                                unfocusedContainerColor = Color.White,
+                                                focusedContainerColor = Color.White
+                                            ),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("receiver_phone_input")
+                                        )
 
                                         // Drop Row 1: House / Flat No. + Building / Society Name
                                         Row(

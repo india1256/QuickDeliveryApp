@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -717,7 +718,6 @@ fun RiderPartnerCompactScreen(
     var showCashoutDialog by rememberSaveable { mutableStateOf(false) }
     var cashoutAmount by rememberSaveable { mutableStateOf(0.0) }
     var showKycCenterDialog by rememberSaveable { mutableStateOf(false) }
-    var showRiderSuggestionDialog by rememberSaveable { mutableStateOf(false) }
     var showTopSosEmergencyDialog by rememberSaveable { mutableStateOf(false) }
     var showLiveSelfieOnlineGateDialog by rememberSaveable { mutableStateOf(false) }
     var showRiderPrivacyPolicyDialog by rememberSaveable { mutableStateOf(false) }
@@ -725,6 +725,8 @@ fun RiderPartnerCompactScreen(
     var showPartnerSupportDialog by rememberSaveable { mutableStateOf(false) }
     var showBankAccountDialog by rememberSaveable { mutableStateOf(false) }
     var orderPendingRejection by remember { mutableStateOf<CustomerOrder?>(null) }
+    remember(context) { RiderProfilePhotoManager.ensureLoaded(context) }
+    val riderHomeProfileBitmap by RiderProfilePhotoManager.profilePhotoBitmap.collectAsState()
     val selfieCheckIns by RiderLiveSelfieCallAndExcelManager.selfieCheckIns.collectAsState()
     val partnerSupportTickets by com.example.data.cloud.QuickDeliveryOperationsManager.supportTickets.collectAsState()
 
@@ -741,7 +743,6 @@ fun RiderPartnerCompactScreen(
         showRechargeDialog = false
         showIncentivesDialog = false
         showGuidelinesDialog = false
-        showRiderSuggestionDialog = false
         showTopSosEmergencyDialog = false
         if (drawerState.isOpen) {
             scope.launch { drawerState.close() }
@@ -773,7 +774,6 @@ fun RiderPartnerCompactScreen(
         showBankAccountDialog ||
         showLiveSelfieOnlineGateDialog ||
         showTopSosEmergencyDialog ||
-        showRiderSuggestionDialog ||
         showKycCenterDialog ||
         showCashoutDialog ||
         showSuspendedDialog ||
@@ -795,7 +795,6 @@ fun RiderPartnerCompactScreen(
             showBankAccountDialog -> showBankAccountDialog = false
             showLiveSelfieOnlineGateDialog -> showLiveSelfieOnlineGateDialog = false
             showTopSosEmergencyDialog -> showTopSosEmergencyDialog = false
-            showRiderSuggestionDialog -> showRiderSuggestionDialog = false
             showKycCenterDialog -> showKycCenterDialog = false
             showCashoutDialog -> showCashoutDialog = false
             showSuspendedDialog -> showSuspendedDialog = false
@@ -985,38 +984,10 @@ fun RiderPartnerCompactScreen(
                     } else {
                         "Add Bank A/C, IFSC & UPI for Payouts"
                     },
-                    onOpenSuggestionBox = {
-                        scope.launch { drawerState.close() }
-                        showRiderSuggestionDialog = true
-                    },
                     onInstantCashout = { amount ->
                         scope.launch { drawerState.close() }
                         cashoutAmount = amount
                         showCashoutDialog = true
-                    },
-                    onSimulateBalance = { newBal ->
-                        scope.launch { drawerState.close() }
-                        updateRiderProfileState(
-                            newBalance = newBal,
-                            newStatus = if (newBal <= -200.0) "SUSPENDED" else "ACTIVE",
-                            newOnline = if (newBal <= -150.0 && !hasOngoingActiveOrder) false else currentRider?.isOnline
-                        )
-                        if (newBal <= -200.0) {
-                            showSuspendedDialog = true
-                            statusMessage = "Simulated Balance: ₹${newBal.toInt()} → Partner ID Suspended!"
-                            isErrorBanner = true
-                        } else if (newBal <= -150.0) {
-                            showAutoOfflineAlert = true
-                            statusMessage = if (hasOngoingActiveOrder) {
-                                "Simulated Balance: ₹${newBal.toInt()} → Auto-Offline will trigger as soon as order completes!"
-                            } else {
-                                "Simulated Balance: ₹${newBal.toInt()} → Auto-Offline Enforced immediately!"
-                            }
-                            isErrorBanner = true
-                        } else {
-                            statusMessage = "✅ Wallet Recharged to ₹${newBal.toInt()}! All dues cleared, ID reactivated."
-                            isErrorBanner = false
-                        }
                     },
                     onLogout = {
                         scope.launch { drawerState.close() }
@@ -1344,32 +1315,6 @@ fun RiderPartnerCompactScreen(
                 )
             }
 
-            if (showRiderSuggestionDialog) {
-                AlertDialog(
-                    onDismissRequest = { showRiderSuggestionDialog = false },
-                    title = {
-                        Text(
-                            text = "Partner Suggestion & Feedback Box",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = RiderNavy
-                        )
-                    },
-                    text = {
-                        QuickDeliverySuggestionBoxCard(
-                            appRole = "RIDER",
-                            senderName = riderDisplayName,
-                            accentColor = RiderOrange
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showRiderSuggestionDialog = false }) {
-                            Text("Close", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                )
-            }
-
             if (showTopSosEmergencyDialog) {
                 AlertDialog(
                     onDismissRequest = { showTopSosEmergencyDialog = false },
@@ -1656,6 +1601,7 @@ fun RiderPartnerCompactScreen(
                     accountIdentifier = riderEmail.ifBlank { riderPhone.ifBlank { riderDisplayName } },
                     onConfirmDelete = {
                         showRiderDeleteAccountDialog = false
+                        RiderProfilePhotoManager.clearProfilePhoto(context)
                         MotivationAndPromoManager.deleteUserAccountData(context, "rider")
                         isRiderLoggedIn = false
                         statusMessage = "Your partner account data has been deleted from this device."
@@ -1878,6 +1824,57 @@ fun RiderPartnerCompactScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clickable { showRiderProfileDialog = true }
+                                    .testTag("rider_home_dp_avatar_btn")
+                            ) {
+                                Surface(
+                                    color = QuickDeliveryTeal.copy(alpha = 0.14f),
+                                    shape = CircleShape,
+                                    border = BorderStroke(1.5.dp, QuickDeliveryOrange),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    val homeDp = riderHomeProfileBitmap
+                                    if (homeDp != null) {
+                                        Image(
+                                            bitmap = homeDp.asImageBitmap(),
+                                            contentDescription = "Rider Profile DP",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(CircleShape)
+                                        )
+                                    } else {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.Person,
+                                                contentDescription = "Set Rider DP",
+                                                tint = QuickDeliveryTeal,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Surface(
+                                    color = QuickDeliveryOrange,
+                                    shape = CircleShape,
+                                    border = BorderStroke(1.5.dp, Color.White),
+                                    modifier = Modifier
+                                        .size(15.dp)
+                                        .align(Alignment.BottomEnd)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.CameraAlt,
+                                            contentDescription = "Edit DP",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(9.dp)
+                                        )
+                                    }
+                                }
+                            }
                             Surface(
                                 color = if (isSuspended) PorterRed.copy(alpha = 0.12f) else if (currentRider?.isOnline == true) Color(0xFF10B981).copy(alpha = 0.15f) else Color(0xFF64748B).copy(alpha = 0.12f),
                                 shape = RoundedCornerShape(8.dp),
@@ -1890,11 +1887,11 @@ fun RiderPartnerCompactScreen(
                                     .testTag("rider_online_status_pill")
                             ) {
                                 Text(
-                                    text = if (isSuspended) "SUSPENDED" else if (currentRider?.isOnline == true) "🟢 ON DUTY" else "⚪ OFF DUTY",
+                                    text = if (isSuspended) "SUSPENDED" else if (currentRider?.isOnline == true) "🟢 ON" else "⚪ OFF",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = if (isSuspended) PorterRed else if (currentRider?.isOnline == true) Color(0xFF047857) else Color(0xFF475569),
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                                 )
                             }
                             Column {
@@ -3417,14 +3414,11 @@ fun RiderProfileDetailsDialog(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            val decoded = runCatching {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    BitmapFactory.decodeStream(stream)
-                }
-            }.getOrNull()
-            if (decoded != null) {
-                RiderProfilePhotoManager.saveProfilePhoto(context, decoded, "Photo Picker")
-                photoStatusMessage = "✅ Profile photo uploaded from gallery!"
+            val saved = RiderProfilePhotoManager.saveProfilePhotoFromUri(context, uri)
+            photoStatusMessage = if (saved) {
+                "✅ Profile DP updated from gallery!"
+            } else {
+                "⚠️ Could not read selected photo."
             }
         }
     }
@@ -3614,6 +3608,33 @@ fun RiderProfileDetailsDialog(
                                     color = QuickDeliveryOrange,
                                     maxLines = 1,
                                     softWrap = false
+                                )
+                            }
+                        }
+
+                        if (profilePhotoBitmap != null) {
+                            TextButton(
+                                onClick = {
+                                    RiderProfilePhotoManager.clearProfilePhoto(context)
+                                    photoStatusMessage = "Profile DP removed."
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .testTag("rider_remove_profile_photo_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Remove DP",
+                                    tint = Color(0xFFDC2626),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Remove DP",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFDC2626)
                                 )
                             }
                         }
