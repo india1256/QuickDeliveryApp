@@ -181,7 +181,6 @@ fun RiderPartnerCompactScreen(
     remember(context) { QuickDeliveryOperationsManager.ensureLoaded(context) }
     remember(context) { RiderSmartToolsPrefs.ensureLoaded(context) }
     val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
-    val liveSyncStatus by MultiPhoneLiveSyncManager.syncStatus.collectAsState()
     val pendingNotificationTap by FcmOrderNotificationManager.pendingNotificationTap.collectAsState()
     val voiceAlertEnabled by RiderSmartToolsPrefs.voiceAlertEnabled.collectAsState()
     val minPayoutFilterInr by RiderSmartToolsPrefs.minPayoutFilterInr.collectAsState()
@@ -1935,42 +1934,7 @@ fun RiderPartnerCompactScreen(
                             )
                         }
                     }
-                    HorizontalDivider(color = Color(0xFFE2E8F0))
-                    val syncOk = liveSyncStatus.isConnected
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
-                                isErrorBanner = false
-                                statusMessage = "🔄 Syncing live orders from server..."
-                            }
-                            .padding(horizontal = 12.dp, vertical = 7.dp)
-                            .testTag("rider_live_sync_status_strip"),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (syncOk) {
-                                "🟢 Live Dispatch (${liveSyncStatus.lastLatencyMs}ms) • ${liveSyncStatus.syncedOrdersCount} Orders • Sync ${liveSyncStatus.lastSyncTimeLabel}"
-                            } else {
-                                "🟡 Connecting to server... Tap to Sync Now"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (syncOk) Color(0xFF047857) else Color(0xFFB45309),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Refresh Live Orders",
-                            tint = if (syncOk) RiderTeal else Color(0xFFB45309),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                    // Background real-time dispatch sync runs silently; technical latency strip hidden from rider UI.
                     if (todayCodCollectedInr > 0.0) {
                         val codLimit = remoteFlags.maxCodLimitInr.coerceAtLeast(500).toDouble()
                         val codRatio = (todayCodCollectedInr / codLimit).toFloat().coerceIn(0f, 1f)

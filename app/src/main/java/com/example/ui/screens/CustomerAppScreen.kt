@@ -430,7 +430,6 @@ fun CustomerAppScreen(
         }
     }
 
-    val liveSyncStatus by MultiPhoneLiveSyncManager.syncStatus.collectAsState()
     val pendingNotificationTap by FcmOrderNotificationManager.pendingNotificationTap.collectAsState()
 
     // Observe this customer's orders for automatic delivery motivation notifications & real-time FCM push updates
@@ -2477,55 +2476,7 @@ fun CustomerAppScreen(
                 }
             }
 
-            // Live 3-Phone Cloud Sync Strip (shows real server connection / wakeup state & allows instant tap retry)
-            item(key = "customer_live_sync_status_strip") {
-                val syncConnected = liveSyncStatus.isConnected
-                Surface(
-                    color = if (syncConnected) Color(0xFFECFDF5) else Color(0xFFFFFBEB),
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(
-                        1.dp,
-                        if (syncConnected) Color(0xFF10B981).copy(alpha = 0.45f) else Color(0xFFF59E0B)
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
-                            isErrorBanner = false
-                            statusBanner = "🔄 Syncing orders with live server..."
-                        }
-                        .testTag("customer_live_sync_pill")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 7.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (syncConnected) {
-                                "🟢 Live Dispatch Connected (${liveSyncStatus.lastLatencyMs}ms) • ${liveSyncStatus.syncedOrdersCount} Orders"
-                            } else {
-                                "🟡 Waking dispatch server... Tap to Sync Now"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (syncConnected) Color(0xFF065F46) else Color(0xFF92400E),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Sync Live Orders",
-                            tint = if (syncConnected) Color(0xFF047857) else Color(0xFFB45309),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
+            // Background MultiPhoneLiveSyncManager stays active silently; technical latency strip hidden from customer UI.
 
             // Customer Promo Notification Banner
             if (!customerPromoNotification.isNullOrBlank()) {
