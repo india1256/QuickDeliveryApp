@@ -494,10 +494,12 @@ object FcmOrderNotificationManager {
             if (previousStatus == null) {
                 observedOrderStatuses[order.orderId] = order.orderStatus
                 observedRejectionCounts[order.orderId] = currentRejectCount
+                val shouldPostInitialForRider = order.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                    com.example.data.cloud.MultiPhoneLiveSyncManager.lockedPhoneRole.value == "RIDER"
                 dispatchOrderStatusPair(
                     context = context,
                     order = order,
-                    postToSystemTray = !isInitialSeed
+                    postToSystemTray = !isInitialSeed || shouldPostInitialForRider
                 )
             } else if (previousStatus != order.orderStatus || currentRejectCount > prevRejectCount) {
                 observedOrderStatuses[order.orderId] = order.orderStatus

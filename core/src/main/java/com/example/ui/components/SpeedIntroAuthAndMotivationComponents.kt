@@ -234,6 +234,213 @@ object MotivationAndPromoManager {
     val riderStoragePermissionGranted: StateFlow<Boolean> = _riderStoragePermissionGranted.asStateFlow()
 
     private const val AUTH_PREFS_NAME = "quick_delivery_user_auth_prefs"
+    private const val KEY_REGISTERED_ACCOUNTS_JSON = "registered_accounts_json_v1"
+
+    data class RegisteredAccountRecord(
+        val role: String,
+        val name: String,
+        val phone: String,
+        val email: String,
+        val updatedAtEpochMs: Long = System.currentTimeMillis()
+    )
+
+    private fun normalizeAccountRole(rolePrefix: String): String =
+        if (rolePrefix.trim().lowercase() == "rider") "rider" else "customer"
+
+    private fun loadRegisteredAccountsMap(context: Context): MutableMap<String, RegisteredAccountRecord> {
+        val result = linkedMapOf<String, RegisteredAccountRecord>()
+        runCatching {
+            val raw = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_REGISTERED_ACCOUNTS_JSON, null)
+            if (raw.isNullOrBlank()) return@runCatching
+            val arr = org.json.JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val role = normalizeAccountRole(obj.optString("role", "customer"))
+                val phone = QuickDeliverySecurityGuard.sanitizePhoneNumber(obj.optString("phone", ""))
+                val email = QuickDeliverySecurityGuard.sanitizeEmail(obj.optString("email", ""))
+                if (phone.isBlank() && email.isBlank()) continue
+                val key = "${role}:${if (phone.length == 10) phone else email.lowercase()}"
+                result[key] = RegisteredAccountRecord(
+                    role = role,
+                    name = QuickDeliverySecurityGuard.sanitizeText(obj.optString("name", ""), 80),
+                    phone = phone,
+                    email = email,
+                    updatedAtEpochMs = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
+                )
+            }
+        }
+        return result
+    }
+
+    private fun saveRegisteredAccountsMap(context: Context, map: Map<String, RegisteredAccountRecord>) {
+        runCatching {
+            val arr = org.json.JSONArray()
+            map.values.forEach { rec ->
+                arr.put(
+                    JSONObject().apply {
+                        put("role", rec.role)
+                        put("name", rec.name)
+                        put("phone", rec.phone)
+                        put("email", rec.email)
+                        put("updatedAtEpochMs", rec.updatedAtEpochMs)
+                    }
+                )
+            }
+            context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_REGISTERED_ACCOUNTS_JSON, arr.toString())
+                .apply()
+        }
+    }
+
+    /**
+     * Records a genuinely registered Customer or Rider account locally (called ONLY on New Sign Up,
+     * Google Sign-In, or verified cloud account restoration).
+     */
+    fun registerNewAccountLocally(
+        context: Context,
+        rolePrefix: String,
+        name: String,
+        phone: String,
+        email: String,
+        updatedAtEpochMs: Long = System.currentTimeMillis()
+    ) {
+        val cleanRole = normalizeAccountRole(rolePrefix)
+        val cleanPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(phone)
+        val cleanEmail = QuickDeliverySecurityGuard.sanitizeEmail(email)
+        val cleanName = QuickDeliverySecurityGuard.sanitizeText(name, 80).ifBlank {
+            if (cleanRole == "rider") "Partner User" else "Customer"
+        }
+        if (cleanPhone.isBlank() && cleanEmail.isBlank()) return
+        val map = loadRegisteredAccountsMap(context)
+        val key = "${cleanRole}:${if (cleanPhone.length == 10) cleanPhone else cleanEmail.lowercase()}"
+        val prev = map[key]
+        map[key] = RegisteredAccountRecord(
+            role = cleanRole,
+            name = cleanName.ifBlank { prev?.name.orEmpty() },
+            phone = cleanPhone.ifBlank { prev?.phone.orEmpty() },
+            email = cleanEmail.ifBlank { prev?.email.orEmpty() },
+            updatedAtEpochMs = maxOf(updatedAtEpochMs, prev?.updatedAtEpochMs ?: 0L)
+        )
+        saveRegisteredAccountsMap(context, map)
+    }
+
+    /**
+     * Strictly checks whether a Mobile Number or Email has ALREADY been registered on this device
+     * (via New Sign Up, synced cloud registry, Rider KYC registry, or historical real customer orders).
+     * Returns null for any unregistered number/email — NEVER fabricates a fake profile!
+     */
+    fun findLocallyRegisteredAccount(
+        context: Context,
+        rolePrefix: String,
+        identifier: String
+    ): RegisteredAccountRecord? {
+        val cleanRole = normalizeAccountRole(rolePrefix)
+        val trimmed = QuickDeliverySecurityGuard.sanitizeText(identifier, 120)
+        if (trimmed.isBlank()) return null
+        val isEmailInput = trimmed.contains("@") && trimmed.contains(".")
+        val cleanEmail = if (isEmailInput) QuickDeliverySecurityGuard.sanitizeEmail(trimmed) else ""
+        val cleanPhone = if (!isEmailInput) QuickDeliverySecurityGuard.sanitizePhoneNumber(trimmed) else ""
+        if (cleanEmail.isBlank() && cleanPhone.length != 10) return null
+
+        // 1. Check strict local registered accounts table
+        val localMap = loadRegisteredAccountsMap(context)
+        localMap.values.firstOrNull { rec ->
+            rec.role == cleanRole && (
+                (cleanPhone.length == 10 && rec.phone == cleanPhone) ||
+                    (cleanEmail.isNotBlank() && rec.email.equals(cleanEmail, ignoreCase = true))
+                )
+        }?.let { return it }
+
+        // 2. For Rider, also check RiderRegistrationApprovalManager (synced from cloud across reinstalls)
+        if (cleanRole == "rider") {
+            com.example.data.cloud.RiderRegistrationApprovalManager.getRecordForIdentity(
+                context = context,
+                phone = cleanPhone.takeIf { it.length == 10 },
+                email = cleanEmail.takeIf { it.isNotBlank() }
+            )?.let { riderRec ->
+                return RegisteredAccountRecord(
+                    role = "rider",
+                    name = riderRec.name.ifBlank { "Rider Partner" },
+                    phone = QuickDeliverySecurityGuard.sanitizePhoneNumber(riderRec.phone),
+                    email = QuickDeliverySecurityGuard.sanitizeEmail(riderRec.email),
+                    updatedAtEpochMs = riderRec.updatedAtEpochMs
+                )
+            }
+        } else if (cleanPhone.length == 10) {
+            // 3. Legacy fallback for genuine pre-v6.6.0 customers who already placed real orders
+            val repo = runCatching { com.example.data.repository.SharedOrderRepository.getInstance(context) }.getOrNull()
+            val matchedOrder = repo?.orders?.value?.firstOrNull { ord ->
+                QuickDeliverySecurityGuard.sanitizePhoneNumber(ord.customerPhone) == cleanPhone
+            }
+            if (matchedOrder != null) {
+                return RegisteredAccountRecord(
+                    role = "customer",
+                    name = matchedOrder.customerName.ifBlank { "Customer" },
+                    phone = cleanPhone,
+                    email = ""
+                )
+            }
+        }
+        return null
+    }
+
+    fun exportRegisteredCustomersToJsonArray(context: Context): org.json.JSONArray {
+        val arr = org.json.JSONArray()
+        loadRegisteredAccountsMap(context).values
+            .filter { it.role == "customer" }
+            .forEach { rec ->
+                arr.put(
+                    JSONObject().apply {
+                        put("role", "CUSTOMER")
+                        put("name", rec.name)
+                        put("phone", rec.phone)
+                        put("email", rec.email)
+                        put("updatedAtEpochMs", rec.updatedAtEpochMs)
+                    }
+                )
+            }
+        return arr
+    }
+
+    fun mergeRegisteredCustomersFromServer(context: Context, arr: org.json.JSONArray?) {
+        if (arr == null || arr.length() == 0) return
+        val map = loadRegisteredAccountsMap(context)
+        var changed = false
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val phone = QuickDeliverySecurityGuard.sanitizePhoneNumber(obj.optString("phone", ""))
+            val email = QuickDeliverySecurityGuard.sanitizeEmail(obj.optString("email", ""))
+            if (phone.length != 10 && email.isBlank()) continue
+            val name = QuickDeliverySecurityGuard.sanitizeText(obj.optString("name", ""), 80)
+            val updatedAt = obj.optLong("updatedAtEpochMs", System.currentTimeMillis())
+            val key = "customer:${if (phone.length == 10) phone else email.lowercase()}"
+            val prev = map[key]
+            if (prev == null || updatedAt >= prev.updatedAtEpochMs) {
+                map[key] = RegisteredAccountRecord(
+                    role = "customer",
+                    name = name.ifBlank { prev?.name.orEmpty().ifBlank { "Customer" } },
+                    phone = phone.ifBlank { prev?.phone.orEmpty() },
+                    email = email.ifBlank { prev?.email.orEmpty() },
+                    updatedAtEpochMs = updatedAt
+                )
+                changed = true
+            }
+        }
+        if (changed) {
+            saveRegisteredAccountsMap(context, map)
+        }
+    }
+
+    fun clearRegisteredAccountsForTesting(context: Context) {
+        runCatching {
+            context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_REGISTERED_ACCOUNTS_JSON)
+                .apply()
+        }
+    }
 
     fun restoreSavedLoginFromPhoneStorage(context: Context) {
         runCatching {
@@ -510,6 +717,9 @@ object MotivationAndPromoManager {
 
     fun deleteUserAccountData(context: Context, rolePrefix: String) {
         val cleanRole = if (rolePrefix.trim().lowercase() == "rider") "rider" else "customer"
+        val prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+        val removedPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(prefs.getString("${cleanRole}_phone", ""))
+        val removedEmail = QuickDeliverySecurityGuard.sanitizeEmail(prefs.getString("${cleanRole}_email", ""))
         if (cleanRole == "rider") {
             riderAuthenticatedInSession = false
             _riderStoragePermissionGranted.value = false
@@ -524,8 +734,19 @@ object MotivationAndPromoManager {
             cachedCustomerEmail = ""
         }
         runCatching {
-            context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
+            val map = loadRegisteredAccountsMap(context)
+            val filtered = map.filterValues { rec ->
+                !(rec.role == cleanRole && (
+                    (removedPhone.length == 10 && rec.phone == removedPhone) ||
+                        (removedEmail.isNotBlank() && rec.email.equals(removedEmail, ignoreCase = true))
+                    ))
+            }
+            if (filtered.size != map.size) {
+                saveRegisteredAccountsMap(context, filtered)
+            }
+        }
+        runCatching {
+            prefs.edit()
                 .remove("${cleanRole}_name")
                 .remove("${cleanRole}_phone")
                 .remove("${cleanRole}_email")
@@ -1149,9 +1370,9 @@ fun QuickDeliveryUserAuthScreen(
         mutableStateOf(if (hasSavedLoggedOutProfile) prefs.getString("${prefsKeyPrefix}_email", "") ?: "" else "")
     }
 
-    // Old User Sign In field: Mobile Number OR Email ID
+    // Old User Sign In field: Mobile Number OR Email ID (blank unless actively logged in)
     var existingMobileOrEmail by remember {
-        mutableStateOf(prefs.getString("${prefsKeyPrefix}_phone", "") ?: "")
+        mutableStateOf(if (hasSavedLoggedOutProfile) prefs.getString("${prefsKeyPrefix}_phone", "") ?: "" else "")
     }
     var allowPhoneStoragePermission by remember {
         mutableStateOf(prefs.getBoolean("${prefsKeyPrefix}_storage_permission_granted", true))
@@ -1163,6 +1384,8 @@ fun QuickDeliveryUserAuthScreen(
         )
     }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isCheckingExistingAccount by remember { mutableStateOf(false) }
+    var showSwitchToSignUpPrompt by remember { mutableStateOf(false) }
     var signupPhoneOverLimit by remember { mutableStateOf(false) }
     var signinPhoneOverLimit by remember { mutableStateOf(false) }
     var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
@@ -1296,8 +1519,16 @@ fun QuickDeliveryUserAuthScreen(
                         onClick = {
                             isNewUserSignUp = true
                             errorMessage = null
+                            showSwitchToSignUpPrompt = false
                         },
-                        label = { Text(uiStrings.newUserSignUpTab) },
+                        label = {
+                            Text(
+                                text = uiStrings.newUserSignUpTab,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("${prefsKeyPrefix}_tab_new_signup")
@@ -1307,8 +1538,16 @@ fun QuickDeliveryUserAuthScreen(
                         onClick = {
                             isNewUserSignUp = false
                             errorMessage = null
+                            showSwitchToSignUpPrompt = false
                         },
-                        label = { Text(uiStrings.existingSignInTab) },
+                        label = {
+                            Text(
+                                text = uiStrings.existingSignInTab,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("${prefsKeyPrefix}_tab_old_signin")
@@ -1443,6 +1682,7 @@ fun QuickDeliveryUserAuthScreen(
                                 verifiedOtpEmail = null
                             }
                             if (errorMessage != null) errorMessage = null
+                            if (showSwitchToSignUpPrompt) showSwitchToSignUpPrompt = false
                         },
                         label = {
                             Text(
@@ -1796,11 +2036,44 @@ fun QuickDeliveryUserAuthScreen(
                         text = errorMessage.orEmpty(),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFB91C1C)
+                        color = Color(0xFFB91C1C),
+                        modifier = Modifier.testTag("${prefsKeyPrefix}_auth_error_text")
                     )
                 }
 
-                val isAuthButtonEnabled = if (isNewUserSignUp) acceptedPrivacyTerms else true
+                if (showSwitchToSignUpPrompt && !isNewUserSignUp) {
+                    OutlinedButton(
+                        onClick = {
+                            val trimmed = existingMobileOrEmail.trim()
+                            if (trimmed.contains("@")) {
+                                emailId = trimmed
+                            } else {
+                                val parsed = processIndianMobileInput(trimmed)
+                                mobileNumber = parsed.sanitizedDigits
+                            }
+                            isNewUserSignUp = true
+                            errorMessage = null
+                            showSwitchToSignUpPrompt = false
+                        },
+                        border = BorderStroke(1.5.dp, accentColor),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("${prefsKeyPrefix}_switch_to_signup_btn")
+                    ) {
+                        Text(
+                            text = "New User • Sign Up par jayein →",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = accentColor,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+
+                val isAuthButtonEnabled = !isCheckingExistingAccount && (if (isNewUserSignUp) acceptedPrivacyTerms else true)
 
                 Button(
                     enabled = isAuthButtonEnabled,
@@ -1846,6 +2119,23 @@ fun QuickDeliveryUserAuthScreen(
                             MotivationAndPromoManager.lastAuthWasNewSignUp = true
                             MotivationAndPromoManager.forceSignInTabNextOpen = false
                             MotivationAndPromoManager.riderApprovalBannerMessage = null
+                            MotivationAndPromoManager.registerNewAccountLocally(
+                                context = context,
+                                rolePrefix = prefsKeyPrefix,
+                                name = finalName,
+                                phone = finalPhone,
+                                email = finalEmail
+                            )
+                            authScope.launch {
+                                com.example.data.cloud.MultiPhoneLiveSyncManager.registerAccountOnServer(
+                                    context = context,
+                                    role = prefsKeyPrefix.uppercase(),
+                                    name = finalName,
+                                    phone = finalPhone,
+                                    email = finalEmail
+                                )
+                                com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                            }
                             MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
                                 context = context,
                                 rolePrefix = prefsKeyPrefix,
@@ -1864,53 +2154,81 @@ fun QuickDeliveryUserAuthScreen(
                             val looksLikeEmail = identifier.contains("@") && identifier.contains(".")
                             if (!looksLikePhone && !looksLikeEmail) {
                                 errorMessage = "Please enter a valid 10-digit Mobile Number (+91) or Email Address."
+                                showSwitchToSignUpPrompt = false
                                 return@Button
                             }
-                            val savedPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(
-                                prefs.getString("${prefsKeyPrefix}_phone", "")
-                            )
-                            val savedEmail = QuickDeliverySecurityGuard.sanitizeEmail(
-                                prefs.getString("${prefsKeyPrefix}_email", "")
-                            )
-                            val savedName = QuickDeliverySecurityGuard.sanitizeText(
-                                prefs.getString("${prefsKeyPrefix}_name", null),
-                                80
-                            )
-                            val isSameSavedUser = (looksLikePhone && digitsOnly == savedPhone) ||
-                                (looksLikeEmail && identifier.equals(savedEmail, ignoreCase = true))
-                            val resolvedName = if (isSameSavedUser && savedName.isNotBlank()) {
-                                savedName
-                            } else if (looksLikeEmail) {
-                                identifier.substringBefore("@").replaceFirstChar { it.uppercase() }
-                            } else {
-                                "$roleTitle (${digitsOnly.takeLast(4)})"
-                            }
-                            val resolvedPhone = if (looksLikePhone) {
-                                digitsOnly
-                            } else if (isSameSavedUser) {
-                                savedPhone
-                            } else {
-                                ""
-                            }
-                            val resolvedEmail = if (looksLikeEmail) {
-                                QuickDeliverySecurityGuard.sanitizeEmail(identifier)
-                            } else if (isSameSavedUser) {
-                                savedEmail
-                            } else {
-                                ""
-                            }
-                            MotivationAndPromoManager.lastAuthWasNewSignUp = false
-                            MotivationAndPromoManager.forceSignInTabNextOpen = false
-                            MotivationAndPromoManager.riderApprovalBannerMessage = null
-                            MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
+                            val localRegistered = MotivationAndPromoManager.findLocallyRegisteredAccount(
                                 context = context,
                                 rolePrefix = prefsKeyPrefix,
-                                name = resolvedName,
-                                phone = resolvedPhone,
-                                email = resolvedEmail,
-                                storageAllowed = allowPhoneStoragePermission
+                                identifier = identifier
                             )
-                            onAuthenticated(resolvedName, resolvedPhone, resolvedEmail)
+                            if (localRegistered != null) {
+                                val resolvedName = localRegistered.name.ifBlank { roleTitle }
+                                val resolvedPhone = localRegistered.phone.ifBlank { if (looksLikePhone) digitsOnly else "" }
+                                val resolvedEmail = localRegistered.email.ifBlank {
+                                    if (looksLikeEmail) QuickDeliverySecurityGuard.sanitizeEmail(identifier) else ""
+                                }
+                                showSwitchToSignUpPrompt = false
+                                MotivationAndPromoManager.lastAuthWasNewSignUp = false
+                                MotivationAndPromoManager.forceSignInTabNextOpen = false
+                                MotivationAndPromoManager.riderApprovalBannerMessage = null
+                                MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
+                                    context = context,
+                                    rolePrefix = prefsKeyPrefix,
+                                    name = resolvedName,
+                                    phone = resolvedPhone,
+                                    email = resolvedEmail,
+                                    storageAllowed = allowPhoneStoragePermission
+                                )
+                                onAuthenticated(resolvedName, resolvedPhone, resolvedEmail)
+                            } else {
+                                // Strictly verify against live cloud registry (FAIL-CLOSED: never allow unregistered login!)
+                                isCheckingExistingAccount = true
+                                errorMessage = null
+                                showSwitchToSignUpPrompt = false
+                                authScope.launch {
+                                    val checkRes = com.example.data.cloud.MultiPhoneLiveSyncManager.verifyExistingAccountOnServer(
+                                        context = context,
+                                        role = prefsKeyPrefix.uppercase(),
+                                        identifier = identifier
+                                    )
+                                    isCheckingExistingAccount = false
+                                    checkRes.onSuccess { remoteAcc ->
+                                        if (remoteAcc != null) {
+                                            val resolvedName = remoteAcc.name.ifBlank { roleTitle }
+                                            val resolvedPhone = remoteAcc.phone.ifBlank { if (looksLikePhone) digitsOnly else "" }
+                                            val resolvedEmail = remoteAcc.email.ifBlank {
+                                                if (looksLikeEmail) QuickDeliverySecurityGuard.sanitizeEmail(identifier) else ""
+                                            }
+                                            MotivationAndPromoManager.registerNewAccountLocally(
+                                                context = context,
+                                                rolePrefix = prefsKeyPrefix,
+                                                name = resolvedName,
+                                                phone = resolvedPhone,
+                                                email = resolvedEmail
+                                            )
+                                            MotivationAndPromoManager.lastAuthWasNewSignUp = false
+                                            MotivationAndPromoManager.forceSignInTabNextOpen = false
+                                            MotivationAndPromoManager.riderApprovalBannerMessage = null
+                                            MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
+                                                context = context,
+                                                rolePrefix = prefsKeyPrefix,
+                                                name = resolvedName,
+                                                phone = resolvedPhone,
+                                                email = resolvedEmail,
+                                                storageAllowed = allowPhoneStoragePermission
+                                            )
+                                            onAuthenticated(resolvedName, resolvedPhone, resolvedEmail)
+                                        } else {
+                                            showSwitchToSignUpPrompt = true
+                                            errorMessage = "❌ Account nahi mila! Is number/email se pehle Sign Up nahi hua hai. Kripya pehle 'New User • Sign Up' par click karke apna account banayein."
+                                        }
+                                    }.onFailure {
+                                        showSwitchToSignUpPrompt = true
+                                        errorMessage = "❌ Account verify nahi ho saka! Is phone par ye account registered nahi hai aur server connect nahi ho pa raha. Internet check karein ya 'New User • Sign Up' se register karein."
+                                    }
+                                }
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -1923,15 +2241,31 @@ fun QuickDeliveryUserAuthScreen(
                         .height(50.dp)
                         .testTag("${prefsKeyPrefix}_auth_submit_btn")
                 ) {
-                    Text(
-                        text = if (isNewUserSignUp) {
-                            uiStrings.createAccountContinueBtn
-                        } else {
-                            uiStrings.signInContinueBtn
-                        },
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (isCheckingExistingAccount) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Verifying Account...",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    } else {
+                        Text(
+                            text = if (isNewUserSignUp) {
+                                uiStrings.createAccountContinueBtn
+                            } else {
+                                uiStrings.signInContinueBtn
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
 
                 GoogleSignInButton(
@@ -1951,6 +2285,23 @@ fun QuickDeliveryUserAuthScreen(
                         MotivationAndPromoManager.lastAuthWasNewSignUp = isNewUserSignUp
                         MotivationAndPromoManager.forceSignInTabNextOpen = false
                         MotivationAndPromoManager.riderApprovalBannerMessage = null
+                        MotivationAndPromoManager.registerNewAccountLocally(
+                            context = context,
+                            rolePrefix = prefsKeyPrefix,
+                            name = googleName,
+                            phone = googlePhone,
+                            email = googleEmail
+                        )
+                        authScope.launch {
+                            com.example.data.cloud.MultiPhoneLiveSyncManager.registerAccountOnServer(
+                                context = context,
+                                role = prefsKeyPrefix.uppercase(),
+                                name = googleName,
+                                phone = googlePhone,
+                                email = googleEmail
+                            )
+                            com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                        }
                         MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
                             context = context,
                             rolePrefix = prefsKeyPrefix,
@@ -2895,19 +3246,24 @@ fun LiveRiderContinuousTrackingCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Live Order Tracking (#${order.orderId})",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0D1B2A)
+                        color = Color(0xFF0D1B2A),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     Text(
                         text = "${order.vehicleType.title} • Fare: ${order.totalAmount} (${order.paymentMethod.shortBadge})",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF475569)
+                        color = Color(0xFF475569),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 AnimatedContent(
                     targetState = order.orderStatus,
                     transitionSpec = { fadeIn(tween(350)) togetherWith fadeOut(tween(250)) },
@@ -2923,6 +3279,8 @@ fun LiveRiderContinuousTrackingCard(
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = if (targetDelivered) Color(0xFF059669) else Color(0xFFEA580C),
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
@@ -2974,6 +3332,7 @@ fun LiveRiderContinuousTrackingCard(
                             color = Color(0xFF0F766E)
                         )
                     }
+                    Spacer(modifier = Modifier.width(8.dp))
                     Surface(
                         color = if (isDelivered) Color(0xFF10B981) else Color(0xFFFF6B35),
                         shape = RoundedCornerShape(10.dp)
@@ -2983,6 +3342,8 @@ fun LiveRiderContinuousTrackingCard(
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White,
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                         )
                     }

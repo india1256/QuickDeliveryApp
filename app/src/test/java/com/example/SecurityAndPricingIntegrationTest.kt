@@ -19,6 +19,8 @@ import com.example.ui.wallet.WalletViewModel
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -723,14 +725,15 @@ class SecurityAndPricingIntegrationTest {
         assertEquals(200.0, snapLocked.unpaidCommissionDueInr, 0.01)
         assertTrue("Rider must be LOCKED once unpaid 20% COD commission reaches ₹200", snapLocked.isLockedAtLimit)
 
-        // 3. Rider submits ₹200 transfer claim (PENDING_ADMIN): Rider stays LOCKED until Admin verifies!
+        // 3. Rider submits ₹200 transfer claim in manual-review mode (PENDING_ADMIN): Rider stays LOCKED until Admin verifies!
         val claim = com.example.data.cloud.QuickDeliveryOperationsManager.submitRiderCodTransferClaim(
             context = context,
             riderId = riderId,
             riderName = "Ravi Partner",
             riderPhone = "9876543210",
             amountInr = 200.0,
-            referenceUtr = "UTR9988776655"
+            referenceUtr = "UTR9988776655",
+            autoUnlockImmediately = false
         )!!
         assertEquals("PENDING_ADMIN", claim.status)
         val snapPending = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
@@ -772,6 +775,362 @@ class SecurityAndPricingIntegrationTest {
         assertTrue(slip.contains("₹1000"))
         assertTrue(slip.contains("₹800"))
         assertTrue(slip.contains("FREE (₹0 Due)"))
+    }
+
+    @Test
+    fun testExactAutomaticPrepaidOffsetClearsNegative199AndCredits41ToWallet() {
+        val riderId = "RIDER-AUTO-OFFSET-199"
+        val flags = com.example.data.cloud.AdminRemoteFeatureFlags(
+            platformCommissionPercent = 20,
+            riderCodCommissionLimitInr = 200
+        )
+
+        fun makeOrder(
+            orderId: String,
+            fareInr: Double,
+            commInr: Double,
+            riderShareInr: Double,
+            method: com.example.data.model.CustomerPaymentMethod
+        ) = com.example.data.model.CustomerOrder(
+            orderId = orderId,
+            customerId = "CUST-1",
+            customerName = "Rahul",
+            customerPhone = "9876543210",
+            pickupAddress = com.example.data.model.AddressDetails("Pickup", "", "Sender", "9876543210"),
+            dropAddress = com.example.data.model.AddressDetails("Drop", "", "Receiver", "9876543211"),
+            packageDetails = com.example.data.model.PackageDetails(
+                com.example.data.model.PackageType.DOCUMENTS,
+                "1.0",
+                "Box"
+            ),
+            vehicleType = com.example.data.model.VehicleType.SCOOTER,
+            orderStatus = com.example.data.model.OrderStatus.DELIVERED,
+            totalAmount = "₹$fareInr",
+            platformCommission = "₹$commInr",
+            riderEarning = "₹$riderShareInr",
+            distanceKm = 4.0,
+            pickupOtp = "",
+            deliveryOtp = "",
+            assignedRiderId = riderId,
+            assignedRiderName = "Vikram Rider",
+            paymentMethod = method,
+            paymentStatus = if (method == com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY) {
+                com.example.data.model.PaymentVerificationStatus.UNPAID_CASH_DUE
+            } else {
+                com.example.data.model.PaymentVerificationStatus.VERIFIED_PAID_TO_COMPANY
+            },
+            createdAt = "Today"
+        )
+
+        // 5 COD orders accumulating exactly ₹199 in 20% company commission (4 x ₹40 + 1 x ₹39 = ₹199)
+        val codOrders = listOf(
+            makeOrder("QD-C1", 200.0, 40.0, 160.0, com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY),
+            makeOrder("QD-C2", 200.0, 40.0, 160.0, com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY),
+            makeOrder("QD-C3", 200.0, 40.0, 160.0, com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY),
+            makeOrder("QD-C4", 200.0, 40.0, 160.0, com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY),
+            makeOrder("QD-C5", 195.0, 39.0, 156.0, com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY)
+        )
+        val beforeOnline = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 199.0,
+            orders = codOrders,
+            settlements = emptyList(),
+            flags = flags,
+            withdrawalRequests = emptyList()
+        )
+        assertEquals(199.0, beforeOnline.unpaidCommissionDueInr, 0.01)
+        assertEquals(-199.0, beforeOnline.netLedgerBalanceInr, 0.01)
+        assertEquals(0.0, beforeOnline.withdrawableWalletBalanceInr, 0.01)
+        assertFalse("At -₹199 (< ₹200 limit), Rider MUST remain unlocked to accept Online order", beforeOnline.isLockedAtLimit)
+
+        // 6th order: Online/Prepaid ₹300 -> Company keeps 20% (₹60), Rider earns 80% (+₹240)
+        // System MUST automatically deduct -₹199 due and credit +₹41 surplus to Rider's withdrawable wallet!
+        val onlineOrder = makeOrder(
+            "QD-ONL-6",
+            300.0,
+            60.0,
+            240.0,
+            com.example.data.model.CustomerPaymentMethod.GATEWAY_UPI
+        )
+        val afterOnline = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 199.0,
+            orders = codOrders + onlineOrder,
+            settlements = emptyList(),
+            flags = flags,
+            withdrawalRequests = emptyList()
+        )
+        assertEquals(240.0, afterOnline.prepaidRider80CreditsInr, 0.01)
+        assertEquals(199.0, afterOnline.prepaidAutoOffsetAppliedInr, 0.01)
+        assertEquals(0.0, afterOnline.unpaidCommissionDueInr, 0.01)
+        assertEquals(41.0, afterOnline.netLedgerBalanceInr, 0.01)
+        assertEquals(41.0, afterOnline.withdrawableWalletBalanceInr, 0.01)
+        assertTrue("COD due must automatically become FREE (₹0)", afterOnline.isFreeZeroDue)
+        assertFalse("Rider must remain UNLOCKED after automatic prepaid offset", afterOnline.isLockedAtLimit)
+    }
+
+    @Test
+    fun testAutomatic200CodLockInstantAutoUnlockAndAdminReversal() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val riderId = "RIDER-AUTOPILOT-200"
+        val flags = com.example.data.cloud.AdminRemoteFeatureFlags(
+            platformCommissionPercent = 20,
+            riderCodCommissionLimitInr = 200
+        )
+
+        val codOrder1000 = com.example.data.model.CustomerOrder(
+            orderId = "QD-AUTO-LOCK-1",
+            customerId = "CUST-9",
+            customerName = "Suman",
+            customerPhone = "9876543210",
+            pickupAddress = com.example.data.model.AddressDetails("Pickup", "", "Sender", "9876543210"),
+            dropAddress = com.example.data.model.AddressDetails("Drop", "", "Receiver", "9876543211"),
+            packageDetails = com.example.data.model.PackageDetails(
+                com.example.data.model.PackageType.DOCUMENTS,
+                "2.0",
+                "Parcel"
+            ),
+            vehicleType = com.example.data.model.VehicleType.SCOOTER,
+            orderStatus = com.example.data.model.OrderStatus.DELIVERED,
+            totalAmount = "₹1000",
+            platformCommission = "₹200",
+            riderEarning = "₹800",
+            distanceKm = 8.0,
+            pickupOtp = "",
+            deliveryOtp = "",
+            assignedRiderId = riderId,
+            assignedRiderName = "Ajay Partner",
+            paymentMethod = com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY,
+            paymentStatus = com.example.data.model.PaymentVerificationStatus.UNPAID_CASH_DUE,
+            createdAt = "Today"
+        )
+
+        val lockedSnap = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 200.0,
+            orders = listOf(codOrder1000),
+            settlements = emptyList(),
+            flags = flags,
+            withdrawalRequests = emptyList()
+        )
+        assertTrue("Rider must auto-lock at -₹200 due", lockedSnap.isLockedAtLimit)
+
+        // Autopilot default: valid 6+ char UTR immediately records AUTO_SETTLED & unlocks Rider with ZERO manual Admin action!
+        val autoSettled = com.example.data.cloud.QuickDeliveryOperationsManager.submitRiderCodTransferClaim(
+            context = context,
+            riderId = riderId,
+            riderName = "Ajay Partner",
+            riderPhone = "9876500112",
+            amountInr = 200.0,
+            referenceUtr = "UTR4321987654",
+            autoUnlockImmediately = true
+        )!!
+        assertEquals("AUTO_SETTLED", autoSettled.status)
+
+        val unlockedSnap = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 200.0,
+            orders = listOf(codOrder1000),
+            settlements = listOf(autoSettled),
+            flags = flags,
+            withdrawalRequests = emptyList()
+        )
+        assertEquals(0.0, unlockedSnap.unpaidCommissionDueInr, 0.01)
+        assertEquals(200.0, unlockedSnap.autoSettledTransfersInr, 0.01)
+        assertTrue("Rider must instantly become FREE (₹0 Due) on valid UTR", unlockedSnap.isFreeZeroDue)
+        assertFalse("Rider must instantly AUTO-UNLOCK with zero manual Admin click", unlockedSnap.isLockedAtLimit)
+
+        // Admin safety override: reversing a disputed UTR immediately restores debt & re-locks Rider!
+        val reversed = com.example.data.cloud.QuickDeliveryOperationsManager.reverseCodSettlementByAdmin(
+            context = context,
+            settlementId = autoSettled.settlementId
+        )!!
+        assertEquals("REVERSED", reversed.status)
+
+        val relockedSnap = com.example.data.cloud.QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = riderId,
+            riderCommissionDebtInr = 0.0,
+            orders = listOf(codOrder1000),
+            settlements = listOf(reversed),
+            flags = flags,
+            withdrawalRequests = emptyList()
+        )
+        assertEquals(200.0, relockedSnap.unpaidCommissionDueInr, 0.01)
+        assertTrue("Reversing a disputed UTR must immediately re-lock the Rider", relockedSnap.isLockedAtLimit)
+    }
+
+    @Test
+    fun testStrictExistingSignInRejectsUnregisteredAndAllowsRegisteredCustomer() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        com.example.ui.components.MotivationAndPromoManager.clearRegisteredAccountsForTesting(context)
+
+        // 1. Unregistered phone number MUST return null (strictly blocked on Existing Sign In!)
+        val beforeSignUp = com.example.ui.components.MotivationAndPromoManager.findLocallyRegisteredAccount(
+            context = context,
+            rolePrefix = "customer",
+            identifier = "9876501234"
+        )
+        assertNull("Unregistered Customer number must NOT be allowed to Sign In", beforeSignUp)
+
+        // 2. Register Customer via New User Sign Up
+        com.example.ui.components.MotivationAndPromoManager.registerNewAccountLocally(
+            context = context,
+            rolePrefix = "customer",
+            name = "Amit Verma",
+            phone = "9876501234",
+            email = "amit.verma@example.com"
+        )
+
+        // 3. Registered phone AND registered email MUST now resolve cleanly
+        val byPhone = com.example.ui.components.MotivationAndPromoManager.findLocallyRegisteredAccount(
+            context = context,
+            rolePrefix = "customer",
+            identifier = "9876501234"
+        )
+        assertNotNull(byPhone)
+        assertEquals("Amit Verma", byPhone?.name)
+        assertEquals("9876501234", byPhone?.phone)
+
+        val byEmail = com.example.ui.components.MotivationAndPromoManager.findLocallyRegisteredAccount(
+            context = context,
+            rolePrefix = "customer",
+            identifier = "AMIT.VERMA@example.com"
+        )
+        assertNotNull(byEmail)
+        assertEquals("Amit Verma", byEmail?.name)
+
+        // 4. Another random unregistered number MUST STILL be blocked!
+        val randomUnknown = com.example.ui.components.MotivationAndPromoManager.findLocallyRegisteredAccount(
+            context = context,
+            rolePrefix = "customer",
+            identifier = "9876509999"
+        )
+        assertNull("Any other unregistered number must still be rejected on Existing Sign In", randomUnknown)
+
+        // 5. Same customer phone must NOT allow logging into Rider app without Rider signup
+        val crossRoleBlocked = com.example.ui.components.MotivationAndPromoManager.findLocallyRegisteredAccount(
+            context = context,
+            rolePrefix = "rider",
+            identifier = "9876501234"
+        )
+        assertNull("Customer signup must NOT unlock Rider Existing Sign In", crossRoleBlocked)
+    }
+
+    @Test
+    fun testRiderOrderDiscoveryProductionEndpointsOnlyAndOnlineCodVisibility() = runTest {
+        // 1. Live sync endpoints must NEVER contain temporary ais-dev or ais-pre preview servers (prevents split-brain sync)
+        val endpoints = com.example.data.cloud.MultiPhoneLiveSyncManager.getConfiguredSyncEndpoints()
+        assertTrue("Configured sync endpoints must not be empty", endpoints.isNotEmpty())
+        assertTrue(
+            "Primary endpoint must be production quickdelivery.co.in",
+            endpoints.first().contains("quickdelivery.co.in", ignoreCase = true)
+        )
+        endpoints.forEach { url ->
+            assertFalse("Preview ais-dev server must NEVER be in sync endpoints: $url", url.contains("ais-dev-", ignoreCase = true))
+            assertFalse("Preview ais-pre server must NEVER be in sync endpoints: $url", url.contains("ais-pre-", ignoreCase = true))
+        }
+
+        // 2. Customer places BOTH an Online/Prepaid UPI order AND a COD order with auto-match OFF ->
+        // both MUST remain in SEARCHING_RIDER so Rider app immediately displays and can accept them!
+        val adminToken = sharedRepo.issueAdminPreviewSessionToken()
+        sharedRepo.updateAdminAutomationConfig(
+            sharedRepo.automationConfig.value.copy(autoMatchEligibleRiders = false),
+            adminToken
+        )
+
+        // 2. Customer creates an Online/Prepaid UPI order and completes orderId-bound gateway verification (matching CustomerAppScreen)
+        val rawOnlineOrder = sharedRepo.createCustomerOrder(
+            customerId = "CUST-LIVE-ONLINE",
+            customerName = "Deepak Kumar",
+            customerPhone = "9876511122",
+            pickupAddress = AddressDetails("Indiranagar 100ft Road", "Metro", "Deepak", "9876511122", lat = 12.9784, lng = 77.6408),
+            dropAddress = AddressDetails("Koramangala 4th Block", "Signal", "Sonia", "9876533344", lat = 12.9382, lng = 77.6275),
+            packageDetails = PackageDetails(PackageType.DOCUMENTS, "1.5", "Urgent File"),
+            vehicleType = VehicleType.BIKE,
+            paymentMethod = CustomerPaymentMethod.GATEWAY_UPI,
+            selectedUpiApp = UpiAppOption.GOOGLE_PAY,
+            verifiedGatewayOrderId = null
+        ).getOrThrow()
+
+        val exactOnlineFareInr = rawOnlineOrder.totalAmount.replace("₹", "").replace(",", "").trim().toDouble()
+        val gwInit = sharedRepo.initiateGatewayPaymentOrder(
+            purpose = "CUSTOMER_ORDER",
+            referenceId = rawOnlineOrder.orderId,
+            amountInr = exactOnlineFareInr,
+            paymentMethod = CustomerPaymentMethod.GATEWAY_UPI,
+            selectedUpiApp = UpiAppOption.GOOGLE_PAY
+        ).getOrThrow()
+        val gwSig = sharedRepo.signGatewayCallback(
+            gatewayOrderId = gwInit.gatewayOrderId,
+            gatewayPaymentId = "pay_live_online_01",
+            callbackStatus = GatewayCallbackStatus.SUCCESS
+        ).getOrThrow()
+        sharedRepo.verifyAndProcessGatewayCallback(
+            gatewayOrderId = gwInit.gatewayOrderId,
+            gatewayPaymentId = "pay_live_online_01",
+            callbackStatus = GatewayCallbackStatus.SUCCESS,
+            providedSignature = gwSig
+        ).getOrThrow()
+
+        val onlineOrder = sharedRepo.orders.value.first { it.orderId == rawOnlineOrder.orderId }
+        assertTrue("Verified Online order must be marked isPaidToCompany=true", onlineOrder.isPaidToCompany)
+        assertEquals(PaymentVerificationStatus.VERIFIED_PAID_TO_COMPANY, onlineOrder.paymentStatus)
+
+        val codOrder = sharedRepo.createCustomerOrder(
+            customerId = "CUST-LIVE-COD",
+            customerName = "Pooja Singh",
+            customerPhone = "9876555566",
+            pickupAddress = AddressDetails("MG Road Metro", "Gate 2", "Pooja", "9876555566", lat = 12.9756, lng = 77.6066),
+            dropAddress = AddressDetails("HSR Layout Sector 2", "Park", "Anil", "9876577788", lat = 12.9121, lng = 77.6446),
+            packageDetails = PackageDetails(PackageType.GROCERIES, "2.0", "Parcel Box"),
+            vehicleType = VehicleType.SCOOTER,
+            paymentMethod = CustomerPaymentMethod.CASH_ON_DELIVERY
+        ).getOrThrow()
+
+        val searchableForRider = sharedRepo.orders.value.filter { it.orderStatus == OrderStatus.SEARCHING_RIDER }
+        assertTrue(
+            "Online/Prepaid order MUST be visible in Rider SEARCHING_RIDER feed",
+            searchableForRider.any { it.orderId == onlineOrder.orderId }
+        )
+        assertTrue(
+            "COD order MUST be visible in Rider SEARCHING_RIDER feed",
+            searchableForRider.any { it.orderId == codOrder.orderId }
+        )
+
+        // 3. Approved online Rider accepts the Online/Prepaid order cleanly AND another Rider accepts the COD order
+        sharedRepo.setRiderCommissionDebt("RIDER-101", 0.0)
+        val rider101 = sharedRepo.riders.value.first { it.riderId == "RIDER-101" }
+        val acceptResult = sharedRepo.acceptOrderByRider(onlineOrder.orderId, rider101)
+        assertTrue(
+            "Online Rider must be able to accept Customer Online order (err=${acceptResult.exceptionOrNull()?.message})",
+            acceptResult.isSuccess
+        )
+        val acceptedOrder = sharedRepo.orders.value.first { it.orderId == onlineOrder.orderId }
+        assertEquals(OrderStatus.RIDER_ASSIGNED, acceptedOrder.orderStatus)
+        assertEquals("RIDER-101", acceptedOrder.assignedRiderId)
+
+        val updatedFleet = sharedRepo.riders.value.map { r ->
+            if (r.riderId == "RIDER-102") {
+                r.copy(
+                    isOnline = true,
+                    accountStatus = "ACTIVE",
+                    shiftStatus = com.example.data.model.RiderShiftStatus.ON_ACTIVE_SHIFT,
+                    verificationStatus = com.example.data.model.RiderVerificationStatus.VERIFIED,
+                    commissionDebtInr = 0.0,
+                    currentLat = 12.9750,
+                    currentLng = 77.6060
+                )
+            } else {
+                r
+            }
+        }
+        com.example.data.delivery.AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(sharedRepo, updatedFleet)
+        val refreshedSecondRider = sharedRepo.riders.value.first { it.riderId == "RIDER-102" }
+        val codAcceptResult = sharedRepo.acceptOrderByRider(codOrder.orderId, refreshedSecondRider)
+        assertTrue(
+            "Approved online Rider must be able to accept Customer COD order (err=${codAcceptResult.exceptionOrNull()?.message})",
+            codAcceptResult.isSuccess
+        )
     }
 }
 

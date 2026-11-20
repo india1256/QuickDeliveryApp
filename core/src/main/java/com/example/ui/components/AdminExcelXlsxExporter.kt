@@ -416,6 +416,7 @@ fun AdminEnterprisePaginatedTableCard(
                     )
                 }
 
+                Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = {
                         lastExportResult = AdminExcelXlsxExporter.exportSingleSheetToXlsx(
@@ -429,7 +430,7 @@ fun AdminEnterprisePaginatedTableCard(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C41)),
                     shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     modifier = Modifier.testTag("${testTagPrefix}_export_xlsx_btn")
                 ) {
                     Icon(
@@ -438,12 +439,14 @@ fun AdminEnterprisePaginatedTableCard(
                         tint = Color.White,
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "Export .xlsx ($totalRecords)",
+                        text = "Export ($totalRecords)",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
@@ -707,57 +710,70 @@ fun AdminEnterprisePaginatedTableCard(
                     }
                 }
 
-                // 4. Pagination Footer Controls
-                Row(
+                // 4. Pagination Footer Controls (2 clean single-line rows so mobile never stacks text vertically)
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Left: Showing X-Y of Z + Page Size Selector
+                    // Row 1: Showing X-Y of Z + Page Size Selector
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = "Showing ${pageStartIndex + 1}–$pageEndIndexExclusive of $totalRecords",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF334155)
+                            color = Color(0xFF334155),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
-                        listOf(5, 10, 25).forEach { sizeOption ->
-                            val isSelectedSize = pageSize == sizeOption
-                            Surface(
-                                color = if (isSelectedSize) Color(0xFF063940) else Color(0xFFF1F5F9),
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.clickable {
-                                    pageSize = sizeOption
-                                    currentPage = 0
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(5, 10, 25).forEach { sizeOption ->
+                                val isSelectedSize = pageSize == sizeOption
+                                Surface(
+                                    color = if (isSelectedSize) Color(0xFF063940) else Color(0xFFF1F5F9),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.clickable {
+                                        pageSize = sizeOption
+                                        currentPage = 0
+                                    }
+                                ) {
+                                    Text(
+                                        text = "${sizeOption}/pg",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelectedSize) Color.White else Color(0xFF475569),
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                    )
                                 }
-                            ) {
-                                Text(
-                                    text = "${sizeOption}/pg",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isSelectedSize) Color.White else Color(0xFF475569),
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                                )
                             }
                         }
                     }
 
-                    // Right: Prev / Page X of Y / Next
+                    // Row 2: Prev / Page X of Y / Next
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedButton(
                             onClick = { if (safePage > 0) currentPage = safePage - 1 },
                             enabled = safePage > 0,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             modifier = Modifier
-                                .height(30.dp)
+                                .height(32.dp)
                                 .testTag("${testTagPrefix}_prev_page_btn")
                         ) {
                             Icon(
@@ -765,25 +781,27 @@ fun AdminEnterprisePaginatedTableCard(
                                 contentDescription = "Previous Page",
                                 modifier = Modifier.size(16.dp)
                             )
-                            Text("Prev", style = MaterialTheme.typography.labelSmall)
+                            Text("Prev", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                         }
 
                         Text(
                             text = "Page ${safePage + 1}/$totalPages",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFF063940)
+                            color = Color(0xFF063940),
+                            maxLines = 1,
+                            softWrap = false
                         )
 
                         OutlinedButton(
                             onClick = { if (safePage < totalPages - 1) currentPage = safePage + 1 },
                             enabled = safePage < totalPages - 1,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             modifier = Modifier
-                                .height(30.dp)
+                                .height(32.dp)
                                 .testTag("${testTagPrefix}_next_page_btn")
                         ) {
-                            Text("Next", style = MaterialTheme.typography.labelSmall)
+                            Text("Next", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                 contentDescription = "Next Page",

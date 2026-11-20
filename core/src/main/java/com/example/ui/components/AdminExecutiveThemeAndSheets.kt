@@ -223,19 +223,24 @@ fun AdminExecutiveHeroSummaryCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "EXECUTIVE COMMAND SUMMARY",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF94A3B8)
+                            color = Color(0xFF94A3B8),
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                         Text(
                             text = "$cityFilterLabel • $dateRangeLabel",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF6EE7B7)
+                            color = Color(0xFF6EE7B7),
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
+                    Spacer(modifier = Modifier.width(8.dp))
                     Surface(
                         color = Color(0xFF10B981).copy(alpha = 0.18f),
                         shape = RoundedCornerShape(999.dp),
@@ -246,6 +251,8 @@ fun AdminExecutiveHeroSummaryCard(
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF6EE7B7),
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
@@ -331,8 +338,10 @@ fun AdminExecutiveHeroSummaryCard(
                         if (dWeight > 0f) Box(Modifier.weight(dWeight).height(8.dp).background(Color(0xFF10B981)))
                     }
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         FunnelDotLabel("Searching $searching", Color(0xFFF97316))
                         FunnelDotLabel("Assigned $assigned", Color(0xFF38BDF8))
@@ -351,13 +360,18 @@ private fun HeroMiniStat(label: String, value: String) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF94A3B8)
+            color = Color(0xFF94A3B8),
+            maxLines = 1,
+            softWrap = false,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
         )
         Text(
             text = value,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.ExtraBold,
-            color = Color.White
+            color = Color.White,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -369,7 +383,9 @@ private fun FunnelDotLabel(text: String, color: Color) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFFCBD5E1)
+            color = Color(0xFFCBD5E1),
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -507,19 +523,24 @@ fun AdminOrderDetailBottomSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Order #${order.orderId}",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold,
-                        color = palette.textPrimary
+                        color = palette.textPrimary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     Text(
                         text = "${order.vehicleType.title} • ${String.format(Locale.US, "%.1f km", order.distanceKm)} • ${order.paymentMethod.name.replace("_", " ")}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = palette.textSecondary
+                        color = palette.textSecondary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 val isDone = order.orderStatus == OrderStatus.DELIVERED
                 val pillColor = when {
                     order.orderStatus == OrderStatus.CANCELLED -> palette.accentCrimson
@@ -535,6 +556,8 @@ fun AdminOrderDetailBottomSheet(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = pillColor,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
@@ -562,7 +585,10 @@ fun AdminOrderDetailBottomSheet(
                     }
                     listOf("Booked", "Assigned", "In Transit", "Delivered").forEachIndexed { idx, stepName ->
                         val active = idx <= stageIdx
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Icon(
                                 imageVector = if (active) Icons.Default.CheckCircle else Icons.Default.RadioButtonChecked,
                                 contentDescription = stepName,
@@ -574,7 +600,10 @@ fun AdminOrderDetailBottomSheet(
                                 text = stepName,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                                color = if (active) palette.textPrimary else palette.textSecondary
+                                color = if (active) palette.textPrimary else palette.textSecondary,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -641,8 +670,12 @@ fun AdminOrderDetailBottomSheet(
                             text = "Chronological Audit Timeline",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.ExtraBold,
-                            color = palette.textPrimary
+                            color = palette.textPrimary,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = palette.accentIndigo.copy(alpha = 0.14f),
                             shape = RoundedCornerShape(999.dp)
@@ -652,6 +685,8 @@ fun AdminOrderDetailBottomSheet(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = palette.accentIndigo,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                             )
                         }

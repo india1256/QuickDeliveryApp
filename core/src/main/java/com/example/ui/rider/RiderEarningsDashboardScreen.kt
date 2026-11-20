@@ -143,6 +143,17 @@ fun RiderEarningsDashboardScreen(
     val isDarkMode by RiderThemeManager.isDarkMode.collectAsState()
     val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
     val allWithdrawals by QuickDeliveryOperationsManager.withdrawalRequests.collectAsState()
+    val codSettlements by QuickDeliveryOperationsManager.codSettlements.collectAsState()
+    val unifiedCodLedger = remember(rider, orders, codSettlements, remoteFlags, allWithdrawals) {
+        QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
+            riderId = rider.riderId,
+            riderCommissionDebtInr = rider.commissionDebtInr,
+            orders = orders,
+            settlements = codSettlements,
+            flags = remoteFlags,
+            withdrawalRequests = allWithdrawals
+        )
+    }
     val registrationsMap by RiderRegistrationApprovalManager.registrationsByKey.collectAsState()
     val savedBankRecord = remember(registrationsMap, rider.riderId, rider.mobile, rider.email) {
         RiderRegistrationApprovalManager.getRecordForIdentity(context, rider.mobile, rider.email)
@@ -429,7 +440,10 @@ fun RiderEarningsDashboardScreen(
                                     text = "Daily (Today)",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isDaily) Color.White else DashNavy
+                                    color = if (isDaily) Color.White else DashNavy,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -446,13 +460,16 @@ fun RiderEarningsDashboardScreen(
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(vertical = 10.dp)
+                                modifier = Modifier.padding(vertical = 10.dp, horizontal = 6.dp)
                             ) {
                                 Text(
                                     text = "Weekly (Last 7 Days)",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (!isDaily) Color.White else DashNavy
+                                    color = if (!isDaily) Color.White else DashNavy,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -532,19 +549,28 @@ fun RiderEarningsDashboardScreen(
                                     Text(
                                         text = "Trip Payout",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFFCBD5E1)
+                                        color = Color(0xFFCBD5E1),
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = String.format(Locale.US, "₹%.0f", activePeriodBaseEarnings),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color.White
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = "80% Share",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = DashEmerald
+                                        color = DashEmerald,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -569,7 +595,10 @@ fun RiderEarningsDashboardScreen(
                                         Text(
                                             text = "Deliveries",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFFCBD5E1)
+                                            color = Color(0xFFCBD5E1),
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(2.dp))
@@ -577,12 +606,17 @@ fun RiderEarningsDashboardScreen(
                                         text = "$activePeriodDeliveries",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color.White
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                     Text(
                                         text = "Completed",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFF38BDF8)
+                                        color = Color(0xFF38BDF8),
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -608,7 +642,9 @@ fun RiderEarningsDashboardScreen(
                                         Text(
                                             text = "Tips",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFFFDE68A)
+                                            color = Color(0xFFFDE68A),
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(2.dp))
@@ -616,12 +652,18 @@ fun RiderEarningsDashboardScreen(
                                         text = "₹$activePeriodTips",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = DashGold
+                                        color = DashGold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = "100% Yours",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = DashGold
+                                        color = DashGold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -1231,11 +1273,11 @@ fun RiderEarningsDashboardScreen(
                                         text = String.format(
                                             Locale.US,
                                             "₹%.2f",
-                                            rider.walletBalanceInr + liveTipsFromOrdersInr
+                                            unifiedCodLedger.netLedgerBalanceInr + liveTipsFromOrdersInr
                                         ),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color(0xFF065F46)
+                                        color = if (unifiedCodLedger.netLedgerBalanceInr + liveTipsFromOrdersInr < 0.0) Color(0xFFDC2626) else Color(0xFF065F46)
                                     )
                                 }
                             }
@@ -1247,15 +1289,15 @@ fun RiderEarningsDashboardScreen(
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(
-                                        text = "Commission Due (Cap ₹150)",
+                                        text = "Commission Due (Cap ₹${unifiedCodLedger.codLimitInr.toInt()})",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = Color(0xFF9A3412)
                                     )
                                     Text(
-                                        text = String.format(Locale.US, "₹%.2f", rider.commissionDebtInr),
+                                        text = String.format(Locale.US, "₹%.2f", unifiedCodLedger.unpaidCommissionDueInr),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color(0xFF9A3412)
+                                        color = if (unifiedCodLedger.isLockedAtLimit) Color(0xFFDC2626) else Color(0xFF9A3412)
                                     )
                                 }
                             }
@@ -1306,8 +1348,8 @@ fun RiderEarningsDashboardScreen(
                             }
                         }
 
-                        // Withdraw Available Balance to Bank / UPI
-                        val withdrawableInr = (rider.walletBalanceInr + liveTipsFromOrdersInr - rider.commissionDebtInr)
+                        // Withdraw Available Balance to Bank / UPI (after automatic COD offset)
+                        val withdrawableInr = (unifiedCodLedger.withdrawableWalletBalanceInr + liveTipsFromOrdersInr)
                             .coerceAtLeast(0.0)
                         val payoutModePref by QuickDeliveryOperationsManager.riderPayoutModePreference.collectAsState()
                         Surface(
@@ -1528,7 +1570,7 @@ fun RiderEarningsDashboardScreen(
                             }
                         }
 
-                        if (rider.commissionDebtInr > 0.0) {
+                        if (unifiedCodLedger.unpaidCommissionDueInr >= 1.0) {
                             HorizontalDivider()
 
                             // Single Icon to reveal UPI, Card, and Net Banking options
@@ -1555,13 +1597,13 @@ fun RiderEarningsDashboardScreen(
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Column {
                                             Text(
-                                                text = "Pay Commission Online",
+                                                text = "Pay Commission Online (Instant Auto-Unlock)",
                                                 style = MaterialTheme.typography.labelLarge,
                                                 fontWeight = FontWeight.Bold,
                                                 color = DashNavy
                                             )
                                             Text(
-                                                text = "Tap icon to choose UPI, Card, or Net Banking",
+                                                text = "Tap icon to pay via UPI, Card, or Net Banking",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = Color(0xFF64748B)
                                             )
@@ -1622,29 +1664,41 @@ fun RiderEarningsDashboardScreen(
 
                                     Button(
                                         onClick = {
-                                            repository.repayRiderCommissionOnline(
-                                                rider.riderId,
-                                                rider.commissionDebtInr,
-                                                selectedOnlineMethod,
-                                                if (selectedOnlineMethod == CustomerPaymentMethod.GATEWAY_UPI) selectedUpiApp else null,
-                                                selectedOnlineMethod.shortBadge
-                                            ).onSuccess {
-                                                onStatusUpdate(
-                                                    "Commission settled via ${selectedOnlineMethod.displayTitle}!",
-                                                    false
+                                            val dueToClear = unifiedCodLedger.unpaidCommissionDueInr
+                                            val autoRef = "ONL${selectedOnlineMethod.shortBadge.filter(Char::isLetterOrDigit).take(4).uppercase()}${System.currentTimeMillis() % 1000000}"
+                                            QuickDeliveryOperationsManager.submitRiderCodTransferClaim(
+                                                context = context,
+                                                riderId = rider.riderId,
+                                                riderName = rider.name,
+                                                riderPhone = rider.mobile,
+                                                amountInr = dueToClear,
+                                                referenceUtr = autoRef,
+                                                autoUnlockImmediately = true
+                                            )
+                                            runCatching {
+                                                repository.repayRiderCommissionOnline(
+                                                    rider.riderId,
+                                                    dueToClear,
+                                                    selectedOnlineMethod,
+                                                    if (selectedOnlineMethod == CustomerPaymentMethod.GATEWAY_UPI) selectedUpiApp else null,
+                                                    selectedOnlineMethod.shortBadge
                                                 )
-                                            }.onFailure { err ->
-                                                onStatusUpdate(
-                                                    err.message ?: "Failed to settle commission",
-                                                    true
-                                                )
+                                                repository.setRiderCommissionDebt(rider.riderId, 0.0)
                                             }
+                                            onStatusUpdate(
+                                                "⚡ ₹${dueToClear.toInt()} Commission Auto-Settled via ${selectedOnlineMethod.displayTitle} (Ref: $autoRef)! Account UNLOCKED & ₹0 FREE!",
+                                                false
+                                            )
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = DashTeal),
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp)
                                     ) {
                                         Text(
-                                            "Pay ₹${String.format(Locale.US, "%.0f", rider.commissionDebtInr)} via ${selectedOnlineMethod.shortBadge}"
+                                            "Pay ₹${String.format(Locale.US, "%.0f", unifiedCodLedger.unpaidCommissionDueInr)} & Auto-Unlock via ${selectedOnlineMethod.shortBadge}",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }

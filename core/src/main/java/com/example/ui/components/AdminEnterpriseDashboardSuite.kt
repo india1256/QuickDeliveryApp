@@ -1080,7 +1080,9 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                         text = label,
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 },
                                 colors = NavigationBarItemDefaults.colors(
@@ -1107,7 +1109,9 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                     text = "More",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (isMoreTabActive) FontWeight.Bold else FontWeight.Medium,
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             },
                             colors = NavigationBarItemDefaults.colors(
@@ -1229,6 +1233,7 @@ fun QuickDeliveryEnterpriseAdminSuite(
                         ) {
                             OutlinedButton(
                                 onClick = { AdminExecutiveThemeManager.toggleDarkMode(context) },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                 modifier = Modifier.weight(1f).height(46.dp)
                             ) {
                                 Icon(
@@ -1240,13 +1245,17 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                 Text(
                                     text = if (isDarkMode) "Light Theme" else "Dark Theme",
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                             OutlinedButton(
                                 onClick = {
                                     hasSensitivePiiPermission = !hasSensitivePiiPermission
                                 },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
                                 modifier = Modifier.weight(1f).height(46.dp)
                             ) {
                                 Icon(
@@ -1258,7 +1267,10 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                 Text(
                                     text = if (hasSensitivePiiPermission) "Mask PII" else "Unmask PII",
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1345,20 +1357,25 @@ private fun AdminEmeraldNavigationMenuContent(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "NAVIGATION MENU",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        color = SidebarMintText
+                        color = SidebarMintText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = "Quick Delivery SaaS",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.65f)
+                        color = Color.White.copy(alpha = 0.65f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 if (onCloseMobileDrawer != null) {
+                    Spacer(modifier = Modifier.width(8.dp))
                     Surface(
                         color = Color.White.copy(alpha = 0.12f),
                         shape = RoundedCornerShape(8.dp),
@@ -1380,7 +1397,9 @@ private fun AdminEmeraldNavigationMenuContent(
                                 text = "Close",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = Color.White,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -1432,11 +1451,14 @@ private fun AdminEmeraldNavigationMenuContent(
                                 text = page.title,
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.90f)
+                                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.90f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
                         if (badgeText != null) {
+                            Spacer(modifier = Modifier.width(6.dp))
                             Surface(
                                 color = if (isSelected) Color.White.copy(alpha = 0.22f) else SidebarDeepTeal,
                                 shape = RoundedCornerShape(6.dp)
@@ -1446,6 +1468,8 @@ private fun AdminEmeraldNavigationMenuContent(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = if (isSelected) Color.White else SidebarMintText,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -1775,8 +1799,12 @@ private fun EnterpriseDashboardOverviewPage(
                             text = "Unit Economics & Net P&L Margin",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = palette.textPrimary
+                            color = palette.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = (if (netAdminMarginInr >= 0.0) palette.accentEmerald else palette.accentCrimson).copy(alpha = 0.14f),
                             shape = RoundedCornerShape(999.dp)
@@ -1786,6 +1814,8 @@ private fun EnterpriseDashboardOverviewPage(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = if (netAdminMarginInr >= 0.0) palette.accentEmerald else palette.accentCrimson,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
                         }
@@ -1800,12 +1830,22 @@ private fun EnterpriseDashboardOverviewPage(
                             modifier = Modifier.weight(1f)
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
-                                Text("Gross Comm.", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                Text(
+                                    text = "Gross Comm.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.textSecondary,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                                 Text(
                                     text = String.format(Locale.US, "₹%.0f", companyCommission20Inr),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = palette.accentTeal
+                                    color = palette.accentTeal,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1815,12 +1855,22 @@ private fun EnterpriseDashboardOverviewPage(
                             modifier = Modifier.weight(1f)
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
-                                Text("Refund/Promo", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                Text(
+                                    text = "Refund/Promo",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.textSecondary,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                                 Text(
                                     text = String.format(Locale.US, "-₹%.0f", promoSubsidyInr + refundedDisputesInr),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = palette.accentCrimson
+                                    color = palette.accentCrimson,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1830,12 +1880,22 @@ private fun EnterpriseDashboardOverviewPage(
                             modifier = Modifier.weight(1f)
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
-                                Text("Net P&L", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                Text(
+                                    text = "Net P&L",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.textSecondary,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                                 Text(
                                     text = String.format(Locale.US, "₹%.0f", netAdminMarginInr),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = if (netAdminMarginInr >= 0.0) palette.accentEmerald else palette.accentCrimson
+                                    color = if (netAdminMarginInr >= 0.0) palette.accentEmerald else palette.accentCrimson,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1981,7 +2041,9 @@ private fun DashboardMetricKpiCard(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.ExtraBold,
                 color = palette.textPrimary,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = subtitle,
@@ -2024,30 +2086,27 @@ private fun DashboardRevenueAndOrdersChartsCard(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Revenue (80% Rider / 20% Admin) & Volume",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = palette.textPrimary
-                        )
-                        Text(
-                            text = String.format(
-                                Locale.US,
-                                "GMV: ₹%.0f • 80%% Rider: ₹%.0f • 20%% Admin: ₹%.0f",
-                                totalGmvInr,
-                                riderEarnings80Inr,
-                                companyCommission20Inr
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF475569)
-                        )
-                    }
+                    Text(
+                        text = "Revenue (80% Rider / 20% Admin) & Volume",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = palette.textPrimary
+                    )
+                    Text(
+                        text = String.format(
+                            Locale.US,
+                            "GMV: ₹%.0f • 80%% Rider: ₹%.0f • 20%% Admin: ₹%.0f",
+                            totalGmvInr,
+                            riderEarnings80Inr,
+                            companyCommission20Inr
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF475569)
+                    )
                     Surface(
                         color = Color(0xFFECFDF5),
                         shape = RoundedCornerShape(8.dp),
@@ -2058,6 +2117,8 @@ private fun DashboardRevenueAndOrdersChartsCard(
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = SidebarActiveTeal,
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
@@ -2100,15 +2161,19 @@ private fun DashboardRevenueAndOrdersChartsCard(
                 }
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     chartOrders.forEach { ord ->
                         Text(
                             text = "#${ord.orderId.takeLast(4)} (${ord.totalAmount})",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF475569)
+                            color = Color(0xFF475569),
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -2248,13 +2313,16 @@ private fun OrderStageProgressBar(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color = DashNavy
+                    color = DashNavy,
+                    maxLines = 1,
+                    softWrap = false
                 )
                 Surface(
                     color = color.copy(alpha = 0.12f),
@@ -2266,15 +2334,21 @@ private fun OrderStageProgressBar(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = color,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = "$count Orders ($pct%)",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.ExtraBold,
-                color = color
+                color = color,
+                maxLines = 1,
+                softWrap = false
             )
         }
         LinearProgressIndicator(
@@ -2484,7 +2558,13 @@ private fun DashboardEnterpriseDispatchCardsSection(
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                     modifier = Modifier.height(34.dp)
                 ) {
-                    Text("All Orders", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "All Orders",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
 
@@ -2519,20 +2599,26 @@ private fun DashboardEnterpriseDispatchCardsSection(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Text(
                                     text = "#${order.orderId}",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = palette.textPrimary
+                                    color = palette.textPrimary,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                                 Text(
                                     text = "• ${order.vehicleType.title} • ${String.format(Locale.US, "%.1f km", order.distanceKm)}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = palette.textSecondary
+                                    color = palette.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            Spacer(modifier = Modifier.width(6.dp))
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -2546,6 +2632,8 @@ private fun DashboardEnterpriseDispatchCardsSection(
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = statusColor,
+                                        maxLines = 1,
+                                        softWrap = false,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                     )
                                 }
@@ -2585,7 +2673,9 @@ private fun DashboardEnterpriseDispatchCardsSection(
                                 text = String.format(Locale.US, "%s (80%% ₹%.0f)", order.totalAmount, earn80),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = palette.accentTeal
+                                color = palette.accentTeal,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -2654,6 +2744,7 @@ private fun DashboardLiveOrdersRidersMapCard(
                     )
                 }
 
+                Spacer(modifier = Modifier.width(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2664,7 +2755,13 @@ private fun DashboardLiveOrdersRidersMapCard(
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         modifier = Modifier.height(32.dp)
                     ) {
-                        Text("Full Map →", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                        Text(
+                            text = "Full Map →",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
             }
@@ -2687,6 +2784,7 @@ private fun DashboardLiveOrdersRidersMapCard(
                     onClick = onExecuteAutoStepNow,
                     colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("admin_execute_auto_step_btn")
@@ -2695,7 +2793,10 @@ private fun DashboardLiveOrdersRidersMapCard(
                         text = "Advance Active Order",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -2703,6 +2804,7 @@ private fun DashboardLiveOrdersRidersMapCard(
                     onClick = onSpawnNewLiveOrder,
                     colors = ButtonDefaults.buttonColors(containerColor = DashOrange),
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("admin_spawn_auto_order_btn")
@@ -2711,7 +2813,10 @@ private fun DashboardLiveOrdersRidersMapCard(
                         text = "Sync Cloud Orders",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -2760,12 +2865,13 @@ private fun DashboardRealtimeActivityFeedCard(
                         color = palette.textSecondary
                     )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 OutlinedButton(
                     onClick = onViewAllNotifications,
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     modifier = Modifier.height(30.dp)
                 ) {
-                    Text("FCM Console →", style = MaterialTheme.typography.labelSmall)
+                    Text("FCM Console →", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                 }
             }
 
@@ -2835,6 +2941,8 @@ private fun ActivityFeedRow(
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.ExtraBold,
                     color = badgeColor,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                 )
             }
@@ -3095,45 +3203,69 @@ private fun EnterpriseOrdersPage(
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         AdminIconBadge(icon = Icons.Default.LocalShipping, tint = Color(0xFF34D399), sizeDp = 36)
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Orders Management & Live Dispatch",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = Color.White
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = "${orders.size} Total • ${orders.count { it.orderStatus == OrderStatus.DELIVERED }} Delivered • ${orders.count { it.orderStatus != OrderStatus.DELIVERED && it.orderStatus != OrderStatus.CANCELLED }} Active",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF94A3B8)
+                                color = Color(0xFF94A3B8),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Button(
                             onClick = onExecuteAutoStepNow,
-                            colors = ButtonDefaults.buttonColors(containerColor = palette.accentTeal)
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.accentTeal),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text("Advance Next", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Advance Next",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                         Button(
                             onClick = onSpawnNewLiveOrder,
-                            colors = ButtonDefaults.buttonColors(containerColor = palette.accentAmber)
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.accentAmber),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text("Sync Live", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Sync Live",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
@@ -3210,6 +3342,7 @@ private fun EnterpriseOrdersPage(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -3223,6 +3356,8 @@ private fun EnterpriseOrdersPage(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = statusColor,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
@@ -3508,8 +3643,12 @@ private fun EnterpriseLiveTrackingPage(
                                 text = "Live Order #${order.orderId} • ${order.vehicleType.title}",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = SidebarDarkTeal
+                                color = SidebarDarkTeal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 color = Color(0xFFECFDF5),
                                 shape = RoundedCornerShape(8.dp),
@@ -3520,6 +3659,8 @@ private fun EnterpriseLiveTrackingPage(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = DashEmerald,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
@@ -3739,7 +3880,8 @@ private fun EnterpriseRidersPage(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(
                                 imageVector = if (flaggedRiders.isNotEmpty()) Icons.Default.Warning else Icons.Default.Shield,
@@ -3751,9 +3893,12 @@ private fun EnterpriseRidersPage(
                                 text = "Rider Rejection & Fraud/Safety Guard",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = palette.textPrimary
+                                color = palette.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = (if (flaggedRiders.isNotEmpty()) palette.accentCrimson else palette.accentEmerald).copy(alpha = 0.14f),
                             shape = RoundedCornerShape(999.dp)
@@ -3763,6 +3908,8 @@ private fun EnterpriseRidersPage(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = if (flaggedRiders.isEmpty()) palette.accentEmerald else palette.accentCrimson,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
                         }
@@ -3794,6 +3941,7 @@ private fun EnterpriseRidersPage(
                                 )
                             }
                             if (declines >= 2 || riderItem.commissionDebtInr >= 100.0) {
+                                Spacer(modifier = Modifier.width(8.dp))
                                 OutlinedButton(
                                     onClick = {
                                         QuickDeliveryOperationsManager.sendBroadcastFromAdmin(
@@ -3811,7 +3959,9 @@ private fun EnterpriseRidersPage(
                                         text = "Warn",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = palette.accentCrimson
+                                        color = palette.accentCrimson,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
@@ -3909,6 +4059,7 @@ private fun EnterpriseRidersPage(
                                 )
                             }
                         }
+                        Spacer(modifier = Modifier.width(6.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -3922,6 +4073,8 @@ private fun EnterpriseRidersPage(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = if (rider.isOnline) palette.accentEmerald else palette.textSecondary,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
@@ -3953,6 +4106,7 @@ private fun EnterpriseRidersPage(
                             color = palette.accentTeal,
                             modifier = Modifier.weight(1f)
                         )
+                        Spacer(modifier = Modifier.width(6.dp))
                         TextButton(
                             onClick = {
                                 val updated = rider.copy(
@@ -3967,7 +4121,13 @@ private fun EnterpriseRidersPage(
                             },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                         ) {
-                            Text("+₹500 / Clear Debt", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "+₹500 / Clear Debt",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                     }
                 }
@@ -4173,6 +4333,7 @@ private fun EnterpriseCustomersPage(
                                 color = Color(0xFF475569)
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = Color(0xFFF0FDFA),
                             shape = RoundedCornerShape(8.dp),
@@ -4183,6 +4344,8 @@ private fun EnterpriseCustomersPage(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = SidebarDarkTeal,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
@@ -4355,7 +4518,7 @@ private fun EnterpriseKycPage(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "🛡️ ${rider.name} (${rider.riderId})",
                                 style = MaterialTheme.typography.titleSmall,
@@ -4368,6 +4531,7 @@ private fun EnterpriseKycPage(
                                 color = Color(0xFF475569)
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = Color(0xFFECFDF5),
                             shape = RoundedCornerShape(8.dp),
@@ -4378,6 +4542,8 @@ private fun EnterpriseKycPage(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = DashEmerald,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
@@ -4404,9 +4570,17 @@ private fun EnterpriseKycPage(
                                 statusBanner = "✅ Approved all 6 KYC documents & Live Selfie for ${rider.name} (${rider.riderId})"
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = DashEmerald),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("✓ Approve & Verify KYC", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "✓ Approve KYC",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                         OutlinedButton(
                             onClick = {
@@ -4437,9 +4611,17 @@ private fun EnterpriseKycPage(
                                 MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                                 statusBanner = "🔄 Flagged ${rider.name} (${rider.riderId}) for Re-KYC verification and paused duty until re-approved."
                             },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Re-Verify e-KYC", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Re-Verify e-KYC",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
@@ -4642,6 +4824,11 @@ private fun EnterprisePaymentsSettlementsPage(
                     AutomatedFairRiderAssignmentEngine.updateRepositoryRidersList(repository, unlockedFleet)
                     MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                     settlementNotice = "✅ Marked ₹${ledger.unpaidCommissionDueInr.toInt()} COD commission PAID for ${rider.name}. Balance is now ₹0 (🟢 FREE)!"
+                },
+                onReverseSettlement = { settled ->
+                    QuickDeliveryOperationsManager.reverseCodSettlementByAdmin(context, settled.settlementId)
+                    MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                    settlementNotice = "⚠️ Reversed ₹${settled.amountInr.toInt()} auto-cleared UTR (${settled.referenceUtr}) for ${settled.riderName}. Ledger due restored & auto-lock re-applied if ≥ limit!"
                 }
             )
         }
@@ -4726,6 +4913,7 @@ private fun EnterprisePaymentsSettlementsPage(
                                                 )
                                             }
                                         }
+                                        Spacer(modifier = Modifier.width(8.dp))
                                         Surface(
                                             color = when (req.status) {
                                                 WithdrawalStatus.PAID -> Color(0xFFECFDF5)
@@ -4743,6 +4931,8 @@ private fun EnterprisePaymentsSettlementsPage(
                                                     WithdrawalStatus.REJECTED -> DashCrimson
                                                     WithdrawalStatus.PENDING -> DashOrange
                                                 },
+                                                maxLines = 1,
+                                                softWrap = false,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                             )
                                         }
@@ -4761,9 +4951,17 @@ private fun EnterprisePaymentsSettlementsPage(
                                                     settlementNotice = "✅ Approved & marked PAID: ₹${String.format(Locale.US, "%.0f", req.amountInr)} to ${req.riderName} (${req.payoutDestination})"
                                                 },
                                                 colors = ButtonDefaults.buttonColors(containerColor = DashEmerald),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                                 modifier = Modifier.weight(1f)
                                             ) {
-                                                Text("✓ Approve & Mark Paid", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                                Text(
+                                                    text = "✓ Approve & Paid",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
                                             }
                                             OutlinedButton(
                                                 onClick = {
@@ -4777,9 +4975,17 @@ private fun EnterprisePaymentsSettlementsPage(
                                                     settlementNotice = "❌ Rejected withdrawal ${req.requestId} for ${req.riderName}"
                                                 },
                                                 border = BorderStroke(1.dp, DashCrimson),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                                 modifier = Modifier.weight(1f)
                                             ) {
-                                                Text("✕ Reject", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = DashCrimson)
+                                                Text(
+                                                    text = "✕ Reject",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = DashCrimson,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
                                             }
                                         }
                                     }
@@ -4859,15 +5065,23 @@ private fun EnterprisePaymentsSettlementsPage(
                         )
                     }
 
+                    Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
                             repository.setRiderCommissionDebt(rider.riderId, 0.0)
                             MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                             settlementNotice = "✅ Cleared COD commission debt for ${rider.name} (${vault.upiId})"
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal)
+                        colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                     ) {
-                        Text("Mark COD Settled", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Mark Settled",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
             }
@@ -5023,16 +5237,23 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "80% Rider Share (₹${riderEarnings80Inr.toInt()})",
+                                text = "80% Rider (₹${riderEarnings80Inr.toInt()})",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFF6EE7B7)
+                                color = Color(0xFF6EE7B7),
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "20% Company Commission (₹${companyCommission20Inr.toInt()})",
+                                text = "20% Admin (₹${companyCommission20Inr.toInt()})",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFFFDE68A)
+                                color = Color(0xFFFDE68A),
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                         Row(
@@ -5128,12 +5349,18 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
                                 )
                             }
                             if (r.commissionDebtInr > 0.0) {
+                                Spacer(modifier = Modifier.width(8.dp))
                                 OutlinedButton(
                                     onClick = { repository.setRiderCommissionDebt(r.riderId, 0.0) },
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                     modifier = Modifier.height(30.dp)
                                 ) {
-                                    Text("Settle 20% Debt", style = MaterialTheme.typography.labelSmall)
+                                    Text(
+                                        text = "Settle 20% Debt",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
                                 }
                             }
                         }
@@ -5206,6 +5433,7 @@ private fun EnterpriseComplaintsAndSosPage(
                             )
                         }
 
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = if (unresolvedCount > 0) DashCrimson else DashEmerald.copy(alpha = 0.14f),
                             shape = RoundedCornerShape(8.dp)
@@ -5215,6 +5443,8 @@ private fun EnterpriseComplaintsAndSosPage(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = if (unresolvedCount > 0) Color.White else DashEmerald,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                             )
                         }
@@ -5254,21 +5484,31 @@ private fun EnterpriseComplaintsAndSosPage(
                                             color = Color(0xFF475569)
                                         )
                                     }
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     if (!alert.isResolved) {
                                         Button(
                                             onClick = {
                                                 SosSafetySupportManager.resolveSosAlert(context, alert.alertId)
                                             },
-                                            colors = ButtonDefaults.buttonColors(containerColor = DashEmerald)
+                                            colors = ButtonDefaults.buttonColors(containerColor = DashEmerald),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                         ) {
-                                            Text("Resolve SOS", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = "Resolve SOS",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                softWrap = false
+                                            )
                                         }
                                     } else {
                                         Text(
                                             text = "✓ RESOLVED",
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = DashEmerald
+                                            color = DashEmerald,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                 }
@@ -5334,13 +5574,19 @@ private fun EnterpriseComplaintsAndSosPage(
                                             text = "${ticket.ticketId} • ${ticket.senderRole}: ${ticket.senderName}",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = DashNavy
+                                            color = DashNavy,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
                                         )
+                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = if (ticket.isResolved) "✓ RESOLVED" else ticket.category,
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (ticket.isResolved) DashEmerald else DashOrange
+                                            color = if (ticket.isResolved) DashEmerald else DashOrange,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                     if (ticket.orderId.isNotBlank() || ticket.senderPhone.isNotBlank()) {
@@ -5463,24 +5709,21 @@ private fun EnterpriseReportsAndWorkbookPage(
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "📑 Enterprise Reports & Multi-Sheet .xlsx Workbook Generator",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Date Filter: $dateRangeLabel • City: $cityFilterLabel • Exports 5-Sheet OpenXML (.xlsx) Workbook",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SidebarMintText
-                        )
-                    }
+                    Text(
+                        text = "📑 Enterprise Reports & Multi-Sheet .xlsx Workbook Generator",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Date Filter: $dateRangeLabel • City: $cityFilterLabel • Exports 5-Sheet OpenXML (.xlsx) Workbook",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SidebarMintText
+                    )
 
                     Button(
                         onClick = {
@@ -5560,11 +5803,19 @@ private fun EnterpriseReportsAndWorkbookPage(
                             )
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C41)),
-                        modifier = Modifier.testTag("admin_reports_export_master_xlsx_btn")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_reports_export_master_xlsx_btn")
                     ) {
                         Icon(Icons.Default.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Export 5-Sheet .xlsx", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            text = "Export 5-Sheet .xlsx",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
 
@@ -5763,13 +6014,21 @@ private fun EnterpriseNotificationsPage(
                                 broadcastConfirmNote = "Targeted alert dispatched to $resolvedAdminTarget"
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("admin_fcm_send_broadcast_btn")
                         ) {
                             Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Send Targeted Push", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Send Push",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
                         OutlinedButton(
@@ -5783,9 +6042,17 @@ private fun EnterpriseNotificationsPage(
                                     )
                                 }
                             },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Trigger Dual Delivery FCM", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Test Delivery FCM",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
 
@@ -5901,6 +6168,7 @@ private fun EnterpriseSettingsPage(
                                 color = if (liveSyncStatus.isConnected) DashEmerald else DashCrimson
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = if (liveSyncStatus.isConnected) Color(0xFFECFDF5) else Color(0xFFFEF2F2),
                             shape = RoundedCornerShape(8.dp)
@@ -5910,6 +6178,8 @@ private fun EnterpriseSettingsPage(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = if (liveSyncStatus.isConnected) Color(0xFF065F46) else DashCrimson,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }

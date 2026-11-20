@@ -245,8 +245,8 @@ class AllThreeAppsLiveEndToEndTest {
         assertTrue(repository.verifyPickupOtpByRider(raceOrdNow.orderId, raceOrdNow.pickupOtp, "RIDER-101").isSuccess)
         assertTrue(repository.verifyDeliveryOtpByRider(raceOrdNow.orderId, raceOrdNow.deliveryOtp, "RIDER-101").isSuccess)
 
-        // 5. ₹150 COMMISSION DEBT LIMIT ENFORCEMENT IN AUTO-DISCOVERY:
-        repository.setRiderCommissionDebt("RIDER-101", 155.0)
+        // 5. ₹200 COD COMMISSION DEBT LIMIT ENFORCEMENT IN AUTO-DISCOVERY:
+        repository.setRiderCommissionDebt("RIDER-101", 205.0)
         val debtCheckOrder = repository.createCustomerOrder(
             customerId = "CUST-1006",
             customerName = "Pooja Hegde",
@@ -260,7 +260,7 @@ class AllThreeAppsLiveEndToEndTest {
         ).getOrThrow()
         val debtRanked = AutomatedFairRiderAssignmentEngine.rankEligibleRidersForOrder(repository, debtCheckOrder)
         val r101Eval = debtRanked.first { it.rider.riderId == "RIDER-101" }
-        assertFalse("RIDER-101 with ₹155 debt (> ₹150 cap) must be ineligible", r101Eval.isEligible)
+        assertFalse("RIDER-101 with ₹205 debt (>= ₹200 COD cap) must be ineligible", r101Eval.isEligible)
         val debtAssignRes = AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(repository, debtCheckOrder.orderId)
         assertEquals(AssignmentOutcome.ASSIGNED_TO_RIDER, debtAssignRes.outcome)
         assertNotEquals("RIDER-101", debtAssignRes.assignedRider?.riderId)

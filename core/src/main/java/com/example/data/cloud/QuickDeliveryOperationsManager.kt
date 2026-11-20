@@ -206,9 +206,11 @@ data class RiderCodSettlementRecord(
 }
 
 /**
- * Porter-style Rider COD Cash & 20% Company Commission Ledger Snapshot.
- * When unpaidCommissionDueInr reaches codLimitInr (default ₹200), Rider is LOCKED from taking
- * new orders until they transfer the due 20% commission to Admin's account & it resets to ₹0 (FREE).
+ * Unified 100% Automatic Rider Wallet & COD 20% Commission Ledger Snapshot:
+ * - COD Delivered Orders: Rider keeps 80% cash, 20% company commission debits Net Ledger Balance (goes negative).
+ * - Online/Prepaid Delivered Orders: Company keeps 20%, Rider's 80% automatically offsets any negative COD due FIRST,
+ *   and any surplus automatically credits Rider's positive withdrawable wallet balance!
+ * - ₹200 Limit (configurable): Reaching -₹200 automatically locks new orders; valid payment automatically unlocks back to ₹0 (FREE).
  */
 data class RiderCodLedgerSnapshot(
     val riderId: String,
@@ -221,7 +223,15 @@ data class RiderCodLedgerSnapshot(
     val pendingClaimRecord: RiderCodSettlementRecord?,
     val unpaidCommissionDueInr: Double,
     val codLimitInr: Double,
-    val commissionPercent: Int
+    val commissionPercent: Int,
+    val prepaidDeliveredOrdersCount: Int = 0,
+    val totalPrepaidFareInr: Double = 0.0,
+    val prepaidRider80CreditsInr: Double = 0.0,
+    val prepaidAutoOffsetAppliedInr: Double = 0.0,
+    val autoSettledTransfersInr: Double = 0.0,
+    val paidWithdrawalsInr: Double = 0.0,
+    val netLedgerBalanceInr: Double = -unpaidCommissionDueInr,
+    val withdrawableWalletBalanceInr: Double = netLedgerBalanceInr.coerceAtLeast(0.0)
 ) {
     val isLockedAtLimit: Boolean
         get() = unpaidCommissionDueInr >= codLimitInr && codLimitInr > 0.0
@@ -1177,8 +1187,10 @@ object QuickDeliveryOperationsManager {
     }
 
     /**
-     * Rider submits a 20% COD commission transfer claim (UPI UTR or Cash handover) to Admin.
-     * Remains PENDING_ADMIN until Admin verifies & resets the rider's ledger to ₹0 (FREE).
+     * Rider submits a 20% COD commission transfer (UPI UTR or Bank Ref) to Admin.
+     * In Autopilot mode (default), any valid 6+ char UTR/payment ref IMMEDIATELY records status = "AUTO_SETTLED"
+     * so the Rider's ledger resets to ₹0 (FREE) & unlocks automatically without waiting for manual Admin approval!
+     * Admin still sees full audit trail and can click "Reverse & Re-Lock" if a UTR is disputed.
      */
     fun submitRiderCodTransferClaim(
         context: Context,
@@ -1186,25 +1198,40 @@ object QuickDeliveryOperationsManager {
         riderName: String,
         riderPhone: String,
         amountInr: Double,
-        referenceUtr: String
+        referenceUtr: String,
+        autoUnlockImmediately: Boolean = true
     ): RiderCodSettlementRecord? {
         ensureLoaded(context)
         if (riderId.isBlank() || amountInr <= 0.0) return null
         val now = System.currentTimeMillis()
         val label = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date(now))
+        val cleanRef = referenceUtr.trim()
+        val hasValidPaymentRef = cleanRef.count { it.isLetterOrDigit() } >= 6
+        val resolvedStatus = if (autoUnlockImmediately && hasValidPaymentRef) "AUTO_SETTLED" else "PENDING_ADMIN"
         val rec = RiderCodSettlementRecord(
             settlementId = "TRF-${(now % 100000).toString().padStart(5, '0')}",
             riderId = riderId,
             riderName = riderName.ifBlank { "Rider Partner" },
             riderPhone = riderPhone,
             amountInr = amountInr,
-            referenceUtr = referenceUtr.trim().ifBlank { "UPI_TRF_${now % 10000}" },
+            referenceUtr = cleanRef.ifBlank { "UPI_TRF_${now % 10000}" },
             settledAtLabel = label,
-            status = "PENDING_ADMIN",
+            status = resolvedStatus,
             updatedAtEpochMs = now
         )
         synchronized(lock) {
-            _codSettlements.value = listOf(rec) + _codSettlements.value
+            val baseList = if (resolvedStatus == "AUTO_SETTLED") {
+                _codSettlements.value.map { existing ->
+                    if (existing.riderId == riderId && existing.status == "PENDING_ADMIN") {
+                        existing.copy(status = "SUPERSEDED", updatedAtEpochMs = now)
+                    } else {
+                        existing
+                    }
+                }
+            } else {
+                _codSettlements.value
+            }
+            _codSettlements.value = listOf(rec) + baseList
             persist(context)
         }
         MultiPhoneLiveSyncManager.triggerImmediateSync(context)
@@ -1238,29 +1265,68 @@ object QuickDeliveryOperationsManager {
         return verifiedRec
     }
 
+    /**
+     * Admin safety override: reverses an AUTO_SETTLED (or VERIFIED) COD payment if UTR is fake/bounced,
+     * immediately restoring the Rider's unpaid COD due and re-locking if due >= ₹200 limit.
+     */
+    fun reverseCodSettlementByAdmin(
+        context: Context,
+        settlementId: String
+    ): RiderCodSettlementRecord? {
+        ensureLoaded(context)
+        val now = System.currentTimeMillis()
+        var reversedRec: RiderCodSettlementRecord? = null
+        synchronized(lock) {
+            _codSettlements.value = _codSettlements.value.map { rec ->
+                if (rec.settlementId == settlementId) {
+                    rec.copy(status = "REVERSED", updatedAtEpochMs = now).also { reversedRec = it }
+                } else {
+                    rec
+                }
+            }
+            persist(context)
+        }
+        if (reversedRec != null) {
+            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+        }
+        return reversedRec
+    }
+
     fun settledCodAmountForRider(riderId: String): Double {
         return _codSettlements.value
-            .filter { it.riderId == riderId && it.status == "VERIFIED" }
+            .filter { it.riderId == riderId && (it.status == "VERIFIED" || it.status == "AUTO_SETTLED") }
             .sumOf { it.amountInr }
     }
 
     /**
-     * Computes live Porter-style COD Cash & 20% Company Commission Ledger for a Rider.
+     * Computes live 100% Automatic Unified Rider Wallet & Porter-style COD 20% Commission Ledger:
+     * 1) Delivered COD orders: Rider collects cash, keeps 80%, owes 20% to company (debits Net Ledger negative).
+     * 2) Delivered Online/Prepaid orders: Company keeps 20%, credits Rider's 80% directly to Net Ledger —
+     *    AUTOMATICALLY offsetting any negative COD due FIRST (e.g. -₹199 + ₹240 = +₹41 withdrawable, ₹0 due!).
+     * 3) Valid UTR transfers (AUTO_SETTLED or Admin VERIFIED) credit Net Ledger back toward ₹0 (FREE).
+     * 4) Completed PAID withdrawals debit positive wallet surplus cleanly without creating false COD debt.
      */
     fun computeRiderCodLedgerSnapshot(
         riderId: String,
         riderCommissionDebtInr: Double,
         orders: List<CustomerOrder>,
         settlements: List<RiderCodSettlementRecord> = _codSettlements.value,
-        flags: AdminRemoteFeatureFlags = _remoteFeatureFlags.value
+        flags: AdminRemoteFeatureFlags = _remoteFeatureFlags.value,
+        withdrawalRequests: List<RiderWithdrawalRequest> = _withdrawalRequests.value
     ): RiderCodLedgerSnapshot {
         val commissionPct = flags.platformCommissionPercent.coerceIn(0, 40)
         val codLimit = flags.riderCodCommissionLimitInr.coerceIn(50, 5000).toDouble()
-        val riderCodOrders = orders.filter { o ->
+        val deliveredForRider = orders.filter { o ->
             o.orderStatus == com.example.data.model.OrderStatus.DELIVERED &&
-                o.paymentMethod == com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY &&
                 (riderId.isBlank() || o.assignedRiderId == riderId)
         }
+        val riderCodOrders = deliveredForRider.filter { o ->
+            o.paymentMethod == com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY
+        }
+        val riderPrepaidOrders = deliveredForRider.filter { o ->
+            o.paymentMethod != com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY
+        }
+
         var totalCodCash = 0.0
         var grossCompanyComm = 0.0
         riderCodOrders.forEach { o ->
@@ -1271,13 +1337,43 @@ object QuickDeliveryOperationsManager {
             grossCompanyComm += comm
         }
         val rider80Kept = (totalCodCash - grossCompanyComm).coerceAtLeast(0.0)
+
+        var totalPrepaidFare = 0.0
+        var prepaidRider80Credits = 0.0
+        riderPrepaidOrders.forEach { o ->
+            val fare = o.totalAmount.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+            val explicitComm = o.platformCommission.replace("₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+            val comm = if (explicitComm > 0.0) explicitComm else (fare * commissionPct / 100.0)
+            val riderShare = (fare - comm).coerceAtLeast(0.0)
+            totalPrepaidFare += fare
+            prepaidRider80Credits += riderShare
+        }
+
         val verifiedPaid = settlements
-            .filter { it.riderId == riderId && it.status == "VERIFIED" }
+            .filter { it.riderId == riderId && (it.status == "VERIFIED" || it.status == "AUTO_SETTLED") }
+            .sumOf { it.amountInr }
+        val autoSettledPaid = settlements
+            .filter { it.riderId == riderId && it.status == "AUTO_SETTLED" }
             .sumOf { it.amountInr }
         val pendingClaims = settlements.filter { it.riderId == riderId && it.status == "PENDING_ADMIN" }
         val pendingTotal = pendingClaims.sumOf { it.amountInr }
-        val effectiveDue = (maxOf(grossCompanyComm, riderCommissionDebtInr.coerceAtLeast(0.0)) - verifiedPaid)
-            .coerceAtLeast(0.0)
+
+        val paidWithdrawals = withdrawalRequests
+            .filter { (riderId.isBlank() || it.riderId == riderId) && it.status == WithdrawalStatus.PAID }
+            .sumOf { it.amountInr }
+
+        val codDebitBase = if (riderCodOrders.isNotEmpty()) {
+            grossCompanyComm
+        } else {
+            riderCommissionDebtInr.coerceAtLeast(0.0)
+        }
+        val remainingCodAfterTransfers = (codDebitBase - verifiedPaid).coerceAtLeast(0.0)
+        val prepaidAutoOffset = minOf(remainingCodAfterTransfers, prepaidRider80Credits).coerceAtLeast(0.0)
+
+        val effectivePaidWithdrawals = paidWithdrawals.coerceAtMost(prepaidRider80Credits + verifiedPaid)
+        val netLedgerBalance = prepaidRider80Credits + verifiedPaid - effectivePaidWithdrawals - codDebitBase
+        val effectiveDue = (-netLedgerBalance).coerceAtLeast(0.0)
+        val withdrawableWallet = netLedgerBalance.coerceAtLeast(0.0)
 
         return RiderCodLedgerSnapshot(
             riderId = riderId,
@@ -1290,7 +1386,15 @@ object QuickDeliveryOperationsManager {
             pendingClaimRecord = pendingClaims.firstOrNull(),
             unpaidCommissionDueInr = effectiveDue,
             codLimitInr = codLimit,
-            commissionPercent = commissionPct
+            commissionPercent = commissionPct,
+            prepaidDeliveredOrdersCount = riderPrepaidOrders.size,
+            totalPrepaidFareInr = totalPrepaidFare,
+            prepaidRider80CreditsInr = prepaidRider80Credits,
+            prepaidAutoOffsetAppliedInr = prepaidAutoOffset,
+            autoSettledTransfersInr = autoSettledPaid,
+            paidWithdrawalsInr = effectivePaidWithdrawals,
+            netLedgerBalanceInr = netLedgerBalance,
+            withdrawableWalletBalanceInr = withdrawableWallet
         )
     }
 
@@ -1306,9 +1410,10 @@ object QuickDeliveryOperationsManager {
     ): String {
         val dateStr = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
         val statusText = when {
-            ledger.isLockedAtLimit -> "🔴 LOCKED (₹${ledger.unpaidCommissionDueInr.toInt()}/₹${ledger.codLimitInr.toInt()} Due)"
+            ledger.isLockedAtLimit -> "🔴 AUTO-LOCKED (₹${ledger.unpaidCommissionDueInr.toInt()}/₹${ledger.codLimitInr.toInt()} Due)"
+            ledger.withdrawableWalletBalanceInr >= 1.0 -> "🟢 FREE • Wallet +₹${ledger.withdrawableWalletBalanceInr.toInt()}"
             ledger.isFreeZeroDue -> "🟢 FREE (₹0 Due)"
-            else -> "🟡 Active (₹${ledger.unpaidCommissionDueInr.toInt()}/₹${ledger.codLimitInr.toInt()} Due)"
+            else -> "🟡 Active (-₹${ledger.unpaidCommissionDueInr.toInt()}/₹${ledger.codLimitInr.toInt()} Due)"
         }
         return buildString {
             appendLine("🧾 *PARTNER QUICK DELIVERY — DAILY SHIFT SLIP*")
@@ -1318,8 +1423,15 @@ object QuickDeliveryOperationsManager {
             appendLine("━━━━━━━━━━━━━━━━━━━━━━")
             appendLine("📦 Today's Completed Trips: *$todayTripsCount*")
             appendLine("💵 COD Cash Collected: *₹${ledger.totalCodCashCollectedInr.toInt()}*")
+            if (ledger.prepaidRider80CreditsInr >= 1.0) {
+                appendLine("📲 Online Orders (${100 - ledger.commissionPercent}% Credit): *+₹${ledger.prepaidRider80CreditsInr.toInt()}*")
+            }
+            if (ledger.prepaidAutoOffsetAppliedInr >= 1.0) {
+                appendLine("⚡ Auto-Adjusted COD Due: *₹${ledger.prepaidAutoOffsetAppliedInr.toInt()}*")
+            }
             appendLine("💰 Your ${100 - ledger.commissionPercent}% Net Earning: *₹$todayNetEarningInr*")
             appendLine("🏦 Company ${ledger.commissionPercent}% Commission Paid: ₹${ledger.verifiedPaidToAdminInr.toInt()}")
+            appendLine("👛 Withdrawable Wallet: *₹${ledger.withdrawableWalletBalanceInr.toInt()}*")
             appendLine("📒 Current Ledger Due: *₹${ledger.unpaidCommissionDueInr.toInt()} / ₹${ledger.codLimitInr.toInt()}*")
             appendLine("📌 Account Status: $statusText")
             appendLine("━━━━━━━━━━━━━━━━━━━━━━")

@@ -1030,7 +1030,16 @@ object AutomatedFairRiderAssignmentEngine {
                 rider.currentLng in -180.0..180.0 &&
                 (rider.currentLat != 0.0 || rider.currentLng != 0.0)
 
-            val projectedTotalDebt = rider.commissionDebtInr + projectedCommissionInr
+            val configuredCodLimit = com.example.data.cloud.QuickDeliveryOperationsManager.remoteFeatureFlags.value
+                .riderCodCommissionLimitInr.coerceIn(50, 5000).toDouble()
+            val effectiveDebtLimit = maxOf(autoConfig.maxRiderCommissionDebtInr, configuredCodLimit)
+            val isIncomingCodOrder = order.paymentMethod == com.example.data.model.CustomerPaymentMethod.CASH_ON_DELIVERY
+            val projectedTotalDebt = if (isIncomingCodOrder) {
+                rider.commissionDebtInr + projectedCommissionInr
+            } else {
+                // Online/Prepaid orders CREDIT Rider's 80% share and automatically reduce/offset COD due!
+                rider.commissionDebtInr
+            }
             val maxCapKg = maxCargoKgForVehicle(rider.vehicleType)
             val exactVehicleMatch = isVehicleCompatible(
                 orderVehicle = order.vehicleType,
@@ -1051,9 +1060,9 @@ object AutomatedFairRiderAssignmentEngine {
                 !rider.accountStatus.equals("ACTIVE", ignoreCase = true) -> "Account status is ${rider.accountStatus}"
                 !rider.isOnline || rider.shiftStatus != RiderShiftStatus.ON_ACTIVE_SHIFT -> "Rider is Offline (${rider.shiftStatus})"
                 activeForRider > 0 -> "Busy on active delivery ($activeForRider active order) — active delivery cannot be interrupted"
-                rider.commissionDebtInr > autoConfig.maxRiderCommissionDebtInr ||
-                    projectedTotalDebt > autoConfig.maxRiderCommissionDebtInr ->
-                    "Commission debt ₹${String.format(Locale.US, "%.0f", projectedTotalDebt)} exceeds ₹${String.format(Locale.US, "%.0f", autoConfig.maxRiderCommissionDebtInr)} limit"
+                rider.commissionDebtInr >= effectiveDebtLimit ||
+                    (isIncomingCodOrder && projectedTotalDebt > effectiveDebtLimit && rider.commissionDebtInr > 0.0) ->
+                    "Commission debt ₹${String.format(Locale.US, "%.0f", rider.commissionDebtInr)} reached ₹${String.format(Locale.US, "%.0f", effectiveDebtLimit)} COD limit"
                 rider.walletBalanceInr < autoConfig.minRiderWalletBalanceInr ->
                     "Wallet balance below minimum ₹${autoConfig.minRiderWalletBalanceInr}"
                 !hasValidCoords -> "Missing GPS location"

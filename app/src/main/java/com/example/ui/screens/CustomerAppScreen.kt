@@ -1092,7 +1092,53 @@ fun CustomerAppScreen(
             )
 
             bookingResult.fold(
-                onSuccess = { newOrder ->
+                onSuccess = { createdOrder ->
+                    var newOrder = createdOrder
+                    if (newOrder.paymentMethod.isCompanyCollectedGateway &&
+                        newOrder.paymentStatus != com.example.data.model.PaymentVerificationStatus.VERIFIED_PAID_TO_COMPANY &&
+                        gatewayOrderToUse?.status == GatewayCallbackStatus.SUCCESS
+                    ) {
+                        val exactOrderFareInr = newOrder.totalAmount
+                            .replace("₹", "")
+                            .replace(",", "")
+                            .trim()
+                            .toDoubleOrNull()
+                            ?.takeIf { it > 0.0 }
+                            ?: liveFareAmountInr
+                        val boundGw = repository.initiateGatewayPaymentOrder(
+                            purpose = "CUSTOMER_ORDER",
+                            referenceId = newOrder.orderId,
+                            amountInr = exactOrderFareInr,
+                            paymentMethod = newOrder.paymentMethod,
+                            selectedUpiApp = if (newOrder.paymentMethod == CustomerPaymentMethod.GATEWAY_UPI) {
+                                selectedUpiApp
+                            } else {
+                                null
+                            },
+                            instrumentDetailsLabel = gatewayOrderToUse?.instrumentDetailsLabel
+                                ?: newOrder.paymentMethod.shortBadge
+                        ).getOrNull()
+                        if (boundGw != null) {
+                            val payId = gatewayOrderToUse?.gatewayPaymentId?.takeIf { it.isNotBlank() }
+                                ?: "pay_${System.currentTimeMillis()}"
+                            val sig = repository.signGatewayCallback(
+                                gatewayOrderId = boundGw.gatewayOrderId,
+                                gatewayPaymentId = payId,
+                                callbackStatus = GatewayCallbackStatus.SUCCESS
+                            ).getOrNull()
+                            if (sig != null) {
+                                repository.verifyAndProcessGatewayCallback(
+                                    gatewayOrderId = boundGw.gatewayOrderId,
+                                    gatewayPaymentId = payId,
+                                    callbackStatus = GatewayCallbackStatus.SUCCESS,
+                                    providedSignature = sig
+                                )
+                                repository.orders.value.firstOrNull { it.orderId == newOrder.orderId }?.let { verified ->
+                                    newOrder = verified
+                                }
+                            }
+                        }
+                    }
                     // Auto-save real Pickup & Drop addresses under the chosen Home/Office/Shop label for 1-tap future bookings
                     if (pickupAddressText.isNotBlank() && pickupPinCode.length == 6) {
                         runCatching {
@@ -2645,12 +2691,19 @@ fun CustomerAppScreen(
                                         color = if (isDeclinedReSearching) Color(0xFFB45309) else SlateMuted
                                     )
                                 }
+                                Spacer(modifier = Modifier.width(8.dp))
                                 OutlinedButton(
                                     onClick = { currentStep = 3 },
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                     modifier = Modifier.testTag("customer_main_open_live_map_btn")
                                 ) {
-                                    Text(uiStrings.liveTrackArrow, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = uiStrings.liveTrackArrow,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
                                 }
                             }
                             if (!activeOrder.assignedRiderName.isNullOrBlank()) {
@@ -2708,6 +2761,7 @@ fun CustomerAppScreen(
                                         color = Color.White.copy(alpha = 0.88f)
                                     )
                                 }
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
                                     color = BrandOrange,
                                     shape = RoundedCornerShape(10.dp)
@@ -2727,7 +2781,9 @@ fun CustomerAppScreen(
                                             text = "${selectedVehicle.etaMinutes} ${uiStrings.minPickupSuffix}",
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = Color.White
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                 }
@@ -3606,6 +3662,7 @@ fun CustomerAppScreen(
                                                 color = SlateMuted
                                             )
                                         }
+                                        Spacer(modifier = Modifier.width(8.dp))
                                         Surface(
                                             color = SoftTealSurface,
                                             shape = RoundedCornerShape(8.dp)
@@ -3615,6 +3672,8 @@ fun CustomerAppScreen(
                                                 style = MaterialTheme.typography.labelMedium,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = PrimaryTeal,
+                                                maxLines = 1,
+                                                softWrap = false,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                             )
                                         }
@@ -3728,7 +3787,8 @@ fun CustomerAppScreen(
                                                                 isSelected -> BrandOrange
                                                                 else -> SoftBg
                                                             },
-                                                            shape = RoundedCornerShape(6.dp)
+                                                            shape = RoundedCornerShape(6.dp),
+                                                            modifier = Modifier.weight(1f, fill = false)
                                                         ) {
                                                             Text(
                                                                 text = "${index + 1}. $vehicleTagline",
@@ -3736,10 +3796,13 @@ fun CustomerAppScreen(
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = if (isSelected && isVehicleEnabled) Color.White else SlateMuted,
                                                                 maxLines = 1,
+                                                                softWrap = false,
+                                                                overflow = TextOverflow.Ellipsis,
                                                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                                             )
                                                         }
                                                         if (isSelected && isVehicleEnabled) {
+                                                            Spacer(modifier = Modifier.width(4.dp))
                                                             Icon(
                                                                 imageVector = Icons.Default.CheckCircle,
                                                                 contentDescription = "Selected",
@@ -3789,7 +3852,9 @@ fun CustomerAppScreen(
                                                         style = MaterialTheme.typography.titleSmall,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         color = if (isVehicleEnabled) DeepNavy else SlateMuted,
-                                                        maxLines = 1
+                                                        maxLines = 1,
+                                                        softWrap = false,
+                                                        overflow = TextOverflow.Ellipsis
                                                     )
 
                                                     // Base + Per-KM Rate from Live Admin Config
@@ -3799,6 +3864,7 @@ fun CustomerAppScreen(
                                                         fontWeight = FontWeight.Bold,
                                                         color = if (isSelected && isVehicleEnabled) PrimaryTeal else SlateMuted,
                                                         maxLines = 1,
+                                                        softWrap = false,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
 
@@ -3843,7 +3909,9 @@ fun CustomerAppScreen(
                                                                 style = MaterialTheme.typography.labelMedium,
                                                                 fontWeight = FontWeight.ExtraBold,
                                                                 color = Color.White,
-                                                                maxLines = 1
+                                                                maxLines = 1,
+                                                                softWrap = false,
+                                                                overflow = TextOverflow.Ellipsis
                                                             )
                                                         }
                                                     }
@@ -3889,7 +3957,9 @@ fun CustomerAppScreen(
                                                 label = {
                                                     Text(
                                                         text = pkg.title,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                        maxLines = 1,
+                                                        softWrap = false
                                                     )
                                                 },
                                                 colors = FilterChipDefaults.filterChipColors(
@@ -3903,7 +3973,9 @@ fun CustomerAppScreen(
 
                                     // Weight Bracket Selector Pills (Up to 5kg, 5-15kg, 15-20kg)
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         listOf(
@@ -3922,14 +3994,15 @@ fun CustomerAppScreen(
                                                     Text(
                                                         text = bracket,
                                                         style = MaterialTheme.typography.labelSmall,
-                                                        fontWeight = FontWeight.Bold
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1,
+                                                        softWrap = false
                                                     )
                                                 },
                                                 colors = FilterChipDefaults.filterChipColors(
                                                     selectedContainerColor = PrimaryTeal,
                                                     selectedLabelColor = Color.White
-                                                ),
-                                                modifier = Modifier.weight(1f)
+                                                )
                                             )
                                         }
                                     }
@@ -4059,7 +4132,9 @@ fun CustomerAppScreen(
                                                         Text(
                                                             text = if (isChosen) "✓ $preset" else preset,
                                                             style = MaterialTheme.typography.labelSmall,
-                                                            fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Medium
+                                                            fontWeight = if (isChosen) FontWeight.Bold else FontWeight.Medium,
+                                                            maxLines = 1,
+                                                            softWrap = false
                                                         )
                                                     },
                                                     colors = FilterChipDefaults.filterChipColors(
@@ -4217,6 +4292,9 @@ fun CustomerAppScreen(
                                                             style = MaterialTheme.typography.labelSmall,
                                                             fontWeight = FontWeight.ExtraBold,
                                                             color = BrightTeal,
+                                                            maxLines = 1,
+                                                            softWrap = false,
+                                                            overflow = TextOverflow.Ellipsis,
                                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                         )
                                                     }
@@ -4231,6 +4309,8 @@ fun CustomerAppScreen(
                                                                 style = MaterialTheme.typography.labelSmall,
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = BrandOrange,
+                                                                maxLines = 1,
+                                                                softWrap = false,
                                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                             )
                                                         }
@@ -4244,6 +4324,7 @@ fun CustomerAppScreen(
                                                     color = Color.White
                                                 )
                                             }
+                                            Spacer(modifier = Modifier.width(8.dp))
                                             Surface(
                                                 color = BrandOrange,
                                                 shape = RoundedCornerShape(14.dp)
@@ -4253,6 +4334,8 @@ fun CustomerAppScreen(
                                                     style = MaterialTheme.typography.titleLarge,
                                                     fontWeight = FontWeight.ExtraBold,
                                                     color = Color.White,
+                                                    maxLines = 1,
+                                                    softWrap = false,
                                                     modifier = Modifier
                                                         .padding(horizontal = 14.dp, vertical = 8.dp)
                                                         .testTag("customer_live_fare_total")
@@ -4331,9 +4414,15 @@ fun CustomerAppScreen(
                                                             promoFeedbackMessage = null
                                                         },
                                                         border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
-                                                        shape = RoundedCornerShape(10.dp)
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                                                     ) {
-                                                        Text(uiStrings.removeBtn, color = Color(0xFFFECACA), fontWeight = FontWeight.Bold)
+                                                        Text(
+                                                            text = uiStrings.removeBtn,
+                                                            color = Color(0xFFFECACA),
+                                                            fontWeight = FontWeight.Bold,
+                                                            maxLines = 1,
+                                                            softWrap = false
+                                                        )
                                                     }
                                                 } else {
                                                     Button(
@@ -4350,9 +4439,16 @@ fun CustomerAppScreen(
                                                         enabled = promoCodeInput.length >= 3,
                                                         colors = ButtonDefaults.buttonColors(containerColor = BrightTeal),
                                                         shape = RoundedCornerShape(10.dp),
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                                                         modifier = Modifier.testTag("customer_apply_promo_btn")
                                                     ) {
-                                                        Text(uiStrings.applyBtn, fontWeight = FontWeight.Bold, color = Color.White)
+                                                        Text(
+                                                            text = uiStrings.applyBtn,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White,
+                                                            maxLines = 1,
+                                                            softWrap = false
+                                                        )
                                                     }
                                                 }
                                             }
@@ -4607,7 +4703,10 @@ fun CustomerAppScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
                                         IconButton(
                                             onClick = { currentStep = 1 },
                                             modifier = Modifier.size(32.dp)
@@ -4633,6 +4732,7 @@ fun CustomerAppScreen(
                                             )
                                         }
                                     }
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Surface(
                                         color = BrandOrange,
                                         shape = RoundedCornerShape(8.dp)
@@ -4642,6 +4742,8 @@ fun CustomerAppScreen(
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.ExtraBold,
                                             color = Color.White,
+                                            maxLines = 1,
+                                            softWrap = false,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                         )
                                     }
@@ -4693,11 +4795,14 @@ fun CustomerAppScreen(
                                                 )
                                             }
                                         }
+                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = liveQuote.totalAmount,
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = BrandOrange
+                                            color = BrandOrange,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                 }
@@ -4849,7 +4954,7 @@ fun CustomerAppScreen(
                                                     selected = selectedPaymentMethod == method,
                                                     enabled = isChoiceEnabled,
                                                     onClick = { selectedPaymentMethod = method },
-                                                    label = { Text(label, fontWeight = FontWeight.Bold) },
+                                                    label = { Text(label, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) },
                                                     modifier = Modifier.testTag("customer_pay_method_${method.name}")
                                                 )
                                             }
@@ -4884,7 +4989,7 @@ fun CustomerAppScreen(
                                                     FilterChip(
                                                         selected = selectedUpiApp == upiOption,
                                                         onClick = { selectedUpiApp = upiOption },
-                                                        label = { Text(upiOption.displayName) },
+                                                        label = { Text(upiOption.displayName, maxLines = 1, softWrap = false) },
                                                         modifier = Modifier.testTag("customer_upi_app_${upiOption.name}")
                                                     )
                                                 }
@@ -4910,7 +5015,9 @@ fun CustomerAppScreen(
                                                         } else {
                                                             "🏢 B2B Credit Low (Avail ₹${approvedB2bAccount.availableCreditInr.toInt()})"
                                                         },
-                                                        fontWeight = FontWeight.Bold
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
                                                     )
                                                 },
                                                 modifier = Modifier.testTag("customer_b2b_postpaid_chip")
@@ -4935,7 +5042,9 @@ fun CustomerAppScreen(
                                             )
                                         }
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             listOf(0, 20, 30, 50).forEach { tipVal ->
@@ -4945,7 +5054,9 @@ fun CustomerAppScreen(
                                                     label = {
                                                         Text(
                                                             text = if (tipVal == 0) uiStrings.noTipLabel else "+₹$tipVal",
-                                                            fontWeight = FontWeight.Bold
+                                                            fontWeight = FontWeight.Bold,
+                                                            maxLines = 1,
+                                                            softWrap = false
                                                         )
                                                     },
                                                     modifier = Modifier.testTag("customer_tip_chip_$tipVal")
@@ -5168,17 +5279,21 @@ fun CustomerAppScreen(
                                                 color = BrightTeal
                                             )
                                         }
+                                        Spacer(modifier = Modifier.width(8.dp))
                                         Button(
                                             onClick = { showGstInvoiceDialogForOrder = activeOrder },
                                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryTeal),
                                             shape = RoundedCornerShape(10.dp),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                             modifier = Modifier.testTag("customer_download_gst_invoice_btn")
                                         ) {
                                             Text(
                                                 text = uiStrings.viewGstInvoiceBtn,
                                                 style = MaterialTheme.typography.labelMedium,
                                                 fontWeight = FontWeight.ExtraBold,
-                                                color = Color.White
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                softWrap = false
                                             )
                                         }
                                     }
@@ -5443,6 +5558,8 @@ private fun CustomerWizardProgressHeader(
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
                             color = when {
                                 isSelected -> Color.White
                                 isCompleted -> PrimaryTeal
@@ -5470,13 +5587,19 @@ private fun CustomerFareLineRow(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.85f)
+            color = Color.White.copy(alpha = 0.85f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
         )
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
-            color = Color.White
+            color = Color.White,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -5494,13 +5617,19 @@ private fun CustomerLightFareRow(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = SlateMuted
+            color = SlateMuted,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
         )
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
-            color = DeepNavy
+            color = DeepNavy,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }

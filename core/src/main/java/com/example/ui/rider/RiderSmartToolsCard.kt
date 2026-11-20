@@ -227,8 +227,12 @@ fun RiderRemoteAlertsAndMissionCard(
                             text = if (completed) "🎉 Daily Mission Unlocked!" else "🎯 Today's Partner Mission",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.ExtraBold,
-                            color = if (completed) SmartEmerald else headingColor
+                            color = if (completed) SmartEmerald else headingColor,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = if (completed) SmartEmerald.copy(alpha = 0.14f) else SmartOrange.copy(alpha = 0.14f),
                             shape = RoundedCornerShape(8.dp)
@@ -238,6 +242,8 @@ fun RiderRemoteAlertsAndMissionCard(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = if (completed) Color(0xFF047857) else SmartOrange,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
@@ -331,7 +337,13 @@ fun RiderRemoteAlertsAndMissionCard(
                     ) {
                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(5.dp))
-                        Text("Invite", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Invite",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                 }
             }
@@ -397,7 +409,8 @@ fun RiderShiftAndSmartFilterCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Tune,
@@ -409,9 +422,12 @@ fun RiderShiftAndSmartFilterCard(
                         text = "Today's Shift • ${riderSharePercent}% Share",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = headingColor
+                        color = headingColor,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 Surface(
                     color = if (hasActiveFilter) SmartOrange.copy(alpha = 0.14f) else SmartEmerald.copy(alpha = 0.12f),
                     shape = RoundedCornerShape(8.dp)
@@ -424,7 +440,9 @@ fun RiderShiftAndSmartFilterCard(
                             text = if (hasActiveFilter) "Filters Active" else "Filters & Voice",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = if (hasActiveFilter) SmartOrange else Color(0xFF047857)
+                            color = if (hasActiveFilter) SmartOrange else Color(0xFF047857),
+                            maxLines = 1,
+                            softWrap = false
                         )
                         Spacer(modifier = Modifier.width(2.dp))
                         Icon(
@@ -608,9 +626,13 @@ fun RiderShiftAndSmartFilterCard(
                             text = "🔥 High-Demand Hotspots (Tap to filter)",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = SmartOrange
+                            color = SmartOrange,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
                         if (effectiveSurge > 1.01) {
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 color = Color(0xFFFFF7ED),
                                 shape = RoundedCornerShape(6.dp),
@@ -621,6 +643,8 @@ fun RiderShiftAndSmartFilterCard(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = Color(0xFF9A3412),
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }

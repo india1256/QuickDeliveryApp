@@ -529,14 +529,16 @@ fun AdminRemoteFeatureSwitchesCard(
                     )
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf("ALL" to "All Apps", "CUSTOMER" to "Customers", "RIDER" to "Riders").forEach { (key, label) ->
                         FilterChip(
                             selected = broadcastTarget == key,
                             onClick = { broadcastTarget = key },
-                            label = { Text(label, fontWeight = FontWeight.Bold) }
+                            label = { Text(label, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                         )
                     }
                 }
@@ -591,7 +593,14 @@ fun AdminRemoteFeatureSwitchesCard(
                             .height(48.dp)
                             .testTag("admin_send_broadcast_btn")
                     ) {
-                        Text("Broadcast Now", fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(
+                            text = "Broadcast Now",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
                     }
                     OutlinedButton(
                         onClick = {
@@ -605,9 +614,10 @@ fun AdminRemoteFeatureSwitchesCard(
                             feedbackNote = "Broadcast cleared"
                         },
                         shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         modifier = Modifier.height(48.dp)
                     ) {
-                        Text("Clear", fontWeight = FontWeight.Bold)
+                        Text("Clear", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -662,6 +672,7 @@ fun AdminRemoteFeatureSwitchesCard(
                             }
                         }
                         if (adminCreds.isConfigured) {
+                            Spacer(modifier = Modifier.width(8.dp))
                             OutlinedButton(
                                 onClick = {
                                     showCredentialEditor = !showCredentialEditor
@@ -676,7 +687,9 @@ fun AdminRemoteFeatureSwitchesCard(
                                 Text(
                                     text = if (showCredentialEditor) "Close" else "Change",
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -1224,7 +1237,12 @@ fun AdminStuckOrderAlertAndHeatmapCards(
                         ) {
                             Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Auto-Assign", fontWeight = FontWeight.ExtraBold)
+                            Text(
+                                text = "Auto-Assign",
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                     }
                 }
@@ -1289,6 +1307,7 @@ fun AdminStuckOrderAlertAndHeatmapCards(
                             color = if (waitingOrders.size > onlineRidersCount) CtrlCrimson else CtrlTeal
                         )
                     }
+                    Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
                             val topZone = zoneDemandStats.firstOrNull()?.first ?: "ALL"
@@ -1322,7 +1341,9 @@ fun AdminStuckOrderAlertAndHeatmapCards(
                         Text(
                             text = if (flags.surgePricingEnabled) "Surge ON ✓" else "Surge Zone",
                             style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -1341,19 +1362,26 @@ fun AdminStuckOrderAlertAndHeatmapCards(
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = if (isUnderserved) "🔥 Zone $zone (Low Rider Supply)" else "Zone $zone",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isUnderserved) CtrlCrimson else CtrlNavy
+                                    color = if (isUnderserved) CtrlCrimson else CtrlNavy,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "$count orders ($waitingInZone waiting) • ₹${gmv.toInt()}",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (isUnderserved) CtrlOrange else CtrlTeal
+                                    color = if (isUnderserved) CtrlOrange else CtrlTeal,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                             LinearProgressIndicator(

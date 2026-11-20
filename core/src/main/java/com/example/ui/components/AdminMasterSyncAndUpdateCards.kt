@@ -453,12 +453,20 @@ fun AdminMasterSyncAndAppUpdateCard(
                     enabled = versionNameDraft.isNotBlank() || (versionCodeDraft.toIntOrNull() ?: 0) > 0,
                     colors = ButtonDefaults.buttonColors(containerColor = SyncTeal),
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
                         .testTag("admin_push_update_alert_btn")
                 ) {
-                    Text("Push Update Alert", fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(
+                        text = "Push Update Alert",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
                 }
                 OutlinedButton(
                     onClick = {
@@ -478,9 +486,15 @@ fun AdminMasterSyncAndAppUpdateCard(
                         )
                     },
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                     modifier = Modifier.height(48.dp)
                 ) {
-                    Text("Clear", fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Clear",
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
@@ -502,7 +516,9 @@ fun AdminMasterSyncAndAppUpdateCard(
                 color = SyncNavy
             )
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
@@ -515,7 +531,7 @@ fun AdminMasterSyncAndAppUpdateCard(
                             pushFlags({ it.copy(bikeEnabled = nextBike) }, "Bike ${if (nextBike) "ENABLED" else "HIDDEN"} live")
                         }
                     },
-                    label = { Text("Bike", fontWeight = FontWeight.Bold) },
+                    label = { Text("Bike", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) },
                     modifier = Modifier.testTag("admin_vehicle_chip_bike")
                 )
                 FilterChip(
@@ -528,7 +544,7 @@ fun AdminMasterSyncAndAppUpdateCard(
                             pushFlags({ it.copy(scooterEnabled = nextScooter) }, "Scooter ${if (nextScooter) "ENABLED" else "HIDDEN"} live")
                         }
                     },
-                    label = { Text("Scooter", fontWeight = FontWeight.Bold) },
+                    label = { Text("Scooter", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) },
                     modifier = Modifier.testTag("admin_vehicle_chip_scooter")
                 )
                 FilterChip(
@@ -541,7 +557,7 @@ fun AdminMasterSyncAndAppUpdateCard(
                             pushFlags({ it.copy(autoEnabled = nextAuto) }, "Auto ${if (nextAuto) "ENABLED" else "HIDDEN"} live")
                         }
                     },
-                    label = { Text("Auto", fontWeight = FontWeight.Bold) },
+                    label = { Text("Auto", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) },
                     modifier = Modifier.testTag("admin_vehicle_chip_auto")
                 )
             }
@@ -928,11 +944,12 @@ fun AdminMasterSyncAndAppUpdateCard(
                     enabled = blockPhoneDraft.length == 10,
                     colors = ButtonDefaults.buttonColors(containerColor = SyncCrimson),
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                     modifier = Modifier
                         .height(54.dp)
                         .testTag("admin_block_customer_phone_btn")
                 ) {
-                    Text("Block", fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("Block", fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false)
                 }
             }
             blockPhoneError?.let { err ->
@@ -1027,7 +1044,7 @@ fun AdminMasterSyncAndAppUpdateCard(
                         ) {
                             Icon(Icons.Default.ContentCopy, contentDescription = "Copy $label", modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Copy", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text("Copy", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -1072,19 +1089,25 @@ private fun SummaryMiniTile(label: String, value: String, modifier: Modifier = M
         modifier = modifier
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
                 text = value,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color.White
+                color = Color.White,
+                maxLines = 1,
+                softWrap = false,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFFCCFBF1)
+                color = Color(0xFFCCFBF1),
+                maxLines = 1,
+                softWrap = false,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
         }
     }

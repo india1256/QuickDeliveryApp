@@ -66,10 +66,10 @@ object MultiPhoneLiveSyncManager {
 
     private val LIVE_SYNC_ENDPOINTS = listOf(
         QuickDeliveryBrandLinks.LIVE_SYNC_API_URL,
-        "https://quickdeliveryapp-1wll.onrender.com/api/live-sync",
-        "https://ais-dev-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/api/live-sync",
-        "https://ais-pre-l6kwxrdc54lqesfozowtv2-809441526823.asia-southeast1.run.app/api/live-sync"
+        "https://quickdeliveryapp-1wll.onrender.com/api/live-sync"
     )
+
+    fun getConfiguredSyncEndpoints(): List<String> = LIVE_SYNC_ENDPOINTS
 
     @Volatile
     private var lastWorkingEndpoint: String? = null
@@ -316,6 +316,7 @@ object MultiPhoneLiveSyncManager {
             }
             put("orders", ordersArray)
             put("riderRegistrations", RiderRegistrationApprovalManager.exportAllToJsonArray())
+            put("registeredCustomers", com.example.ui.components.MotivationAndPromoManager.exportRegisteredCustomersToJsonArray(context))
             val opsJson = QuickDeliveryOperationsManager.exportOpsPayloadJson()
             put("promoCoupons", opsJson.optJSONArray("promoCoupons"))
             put("withdrawalRequests", opsJson.optJSONArray("withdrawalRequests"))
@@ -386,7 +387,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.0")
                     setRequestProperty("X-QD-App-Role", activeRole)
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
                     setRequestProperty("X-QD-Sync-Sig", syncSig)
@@ -440,6 +441,10 @@ object MultiPhoneLiveSyncManager {
             context,
             root.optJSONArray("riderRegistrations")
         )
+        com.example.ui.components.MotivationAndPromoManager.mergeRegisteredCustomersFromServer(
+            context,
+            root.optJSONArray("registeredCustomers")
+        )
         QuickDeliveryOperationsManager.mergeFromServerPayload(context, root)
         com.example.ui.components.RiderFeedbackManager.mergeRatingsAndTipsFromJsonArray(
             context,
@@ -485,11 +490,16 @@ object MultiPhoneLiveSyncManager {
                 val existingLocal = currentById[orderId]
                 val myRiderId = repo.riders.value.firstOrNull()?.riderId
 
+                val effectiveRole = _lockedPhoneRole.value
+                val isLegacyAutoTimeout = remoteOrder.latestRiderQuickNote
+                    ?.contains("30s Offer Countdown Expired", ignoreCase = true) == true
+                val alreadyRejectedByMe = myRiderId != null &&
+                    !isLegacyAutoTimeout &&
+                    myRiderId in remoteOrder.rejectedByRiderIds
+
                 if (existingLocal == null) {
                     currentById[orderId] = remoteOrder
                     listChanged = true
-                    val effectiveRole = _lockedPhoneRole.value
-                    val alreadyRejectedByMe = myRiderId != null && myRiderId in remoteOrder.rejectedByRiderIds
                     if ((effectiveRole == "RIDER" || activeRole == "RIDER") &&
                         remoteOrder.orderStatus == OrderStatus.SEARCHING_RIDER &&
                         !alreadyRejectedByMe &&
@@ -527,7 +537,16 @@ object MultiPhoneLiveSyncManager {
                                 rejectedByRiderIds = mergedRejectedIds,
                                 latestRiderQuickNote = remoteOrder.latestRiderQuickNote ?: existingLocal.latestRiderQuickNote,
                                 pickupOtp = remoteOrder.pickupOtp.ifBlank { existingLocal.pickupOtp },
-                                deliveryOtp = remoteOrder.deliveryOtp.ifBlank { existingLocal.deliveryOtp }
+                                deliveryOtp = remoteOrder.deliveryOtp.ifBlank { existingLocal.deliveryOtp },
+                                paymentStatus = remoteOrder.paymentStatus,
+                                isPaidToCompany = remoteOrder.isPaidToCompany ||
+                                    remoteOrder.paymentStatus == PaymentVerificationStatus.VERIFIED_PAID_TO_COMPANY ||
+                                    existingLocal.isPaidToCompany,
+                                gatewayOrderId = remoteOrder.gatewayOrderId ?: existingLocal.gatewayOrderId,
+                                gatewayPaymentId = remoteOrder.gatewayPaymentId ?: existingLocal.gatewayPaymentId,
+                                totalAmount = remoteOrder.totalAmount.ifBlank { existingLocal.totalAmount },
+                                platformCommission = remoteOrder.platformCommission.ifBlank { existingLocal.platformCommission },
+                                riderEarning = remoteOrder.riderEarning.ifBlank { existingLocal.riderEarning }
                             )
                         )
                         currentById[orderId] = mergedRollback
@@ -538,8 +557,12 @@ object MultiPhoneLiveSyncManager {
                         val noteChanged = existingLocal.latestRiderQuickNote != remoteOrder.latestRiderQuickNote &&
                             !remoteOrder.latestRiderQuickNote.isNullOrBlank()
                         val rejectListGrew = mergedRejectedIds.size > existingLocal.rejectedByRiderIds.size
+                        val paymentOrFareUpdated = existingLocal.paymentStatus != remoteOrder.paymentStatus ||
+                            existingLocal.isPaidToCompany != remoteOrder.isPaidToCompany ||
+                            (remoteOrder.totalAmount.isNotBlank() && existingLocal.totalAmount != remoteOrder.totalAmount) ||
+                            (remoteOrder.riderEarning.isNotBlank() && existingLocal.riderEarning != remoteOrder.riderEarning)
 
-                        if (remoteRank > localRank || riderJustAssigned || noteChanged || rejectListGrew) {
+                        if (remoteRank > localRank || riderJustAssigned || noteChanged || rejectListGrew || paymentOrFareUpdated) {
                             val mergedOrder = ensureValidLocalFareSeal(
                                 existingLocal.copy(
                                     orderStatus = if (remoteRank >= localRank) remoteOrder.orderStatus else existingLocal.orderStatus,
@@ -550,7 +573,16 @@ object MultiPhoneLiveSyncManager {
                                     rejectedByRiderIds = mergedRejectedIds,
                                     latestRiderQuickNote = remoteOrder.latestRiderQuickNote ?: existingLocal.latestRiderQuickNote,
                                     pickupOtp = remoteOrder.pickupOtp.ifBlank { existingLocal.pickupOtp },
-                                    deliveryOtp = remoteOrder.deliveryOtp.ifBlank { existingLocal.deliveryOtp }
+                                    deliveryOtp = remoteOrder.deliveryOtp.ifBlank { existingLocal.deliveryOtp },
+                                    paymentStatus = remoteOrder.paymentStatus,
+                                    isPaidToCompany = remoteOrder.isPaidToCompany ||
+                                        remoteOrder.paymentStatus == PaymentVerificationStatus.VERIFIED_PAID_TO_COMPANY ||
+                                        existingLocal.isPaidToCompany,
+                                    gatewayOrderId = remoteOrder.gatewayOrderId ?: existingLocal.gatewayOrderId,
+                                    gatewayPaymentId = remoteOrder.gatewayPaymentId ?: existingLocal.gatewayPaymentId,
+                                    totalAmount = remoteOrder.totalAmount.ifBlank { existingLocal.totalAmount },
+                                    platformCommission = remoteOrder.platformCommission.ifBlank { existingLocal.platformCommission },
+                                    riderEarning = remoteOrder.riderEarning.ifBlank { existingLocal.riderEarning }
                                 )
                             )
                             currentById[orderId] = mergedOrder
@@ -561,6 +593,18 @@ object MultiPhoneLiveSyncManager {
                                 currentById[orderId] = sealedLocal
                                 listChanged = true
                             }
+                        }
+                    }
+
+                    val latestMerged = currentById[orderId]
+                    if ((effectiveRole == "RIDER" || activeRole == "RIDER") &&
+                        latestMerged?.orderStatus == OrderStatus.SEARCHING_RIDER &&
+                        !alreadyRejectedByMe &&
+                        OrderAlertSoundManager.shouldAlertForOrder(orderId) &&
+                        alertedOrderIds.add(orderId)
+                    ) {
+                        runCatching {
+                            OrderAlertSoundManager.startLoudOrderAlert(context, orderId)
                         }
                     }
                 }
@@ -659,6 +703,9 @@ object MultiPhoneLiveSyncManager {
             put("latestRiderQuickNote", order.latestRiderQuickNote ?: "")
             put("paymentMethod", order.paymentMethod.name)
             put("paymentStatus", order.paymentStatus.name)
+            put("isPaidToCompany", order.isPaidToCompany || order.paymentStatus == PaymentVerificationStatus.VERIFIED_PAID_TO_COMPANY)
+            put("gatewayOrderId", order.gatewayOrderId ?: "")
+            put("gatewayPaymentId", order.gatewayPaymentId ?: "")
             put("createdAt", order.createdAt)
             if (pickupProof != null) {
                 put("pickupProof", JSONObject().apply {
@@ -740,6 +787,13 @@ object MultiPhoneLiveSyncManager {
             }
         }
 
+        val resolvedPaidToCompany = obj.optBoolean(
+            "isPaidToCompany",
+            payStatus == PaymentVerificationStatus.VERIFIED_PAID_TO_COMPANY
+        ) || payStatus == PaymentVerificationStatus.VERIFIED_PAID_TO_COMPANY
+        val gatewayOrderId = obj.optString("gatewayOrderId", "").ifBlank { null }
+        val gatewayPaymentId = obj.optString("gatewayPaymentId", "").ifBlank { null }
+
         ensureValidLocalFareSeal(
             CustomerOrder(
                 orderId = obj.optString("orderId", "QD-1001"),
@@ -765,6 +819,9 @@ object MultiPhoneLiveSyncManager {
                 latestRiderQuickNote = latestNote,
                 paymentMethod = payMethod,
                 paymentStatus = payStatus,
+                gatewayOrderId = gatewayOrderId,
+                gatewayPaymentId = gatewayPaymentId,
+                isPaidToCompany = resolvedPaidToCompany,
                 createdAt = obj.optString("createdAt", "Live Sync")
             )
         )
@@ -922,6 +979,73 @@ object MultiPhoneLiveSyncManager {
         }
     }
 
+    /**
+     * Permanently registers a Customer or Rider account on the live Quick Delivery cloud server
+     * during New User Sign Up (or Google Sign-In) so Existing Sign In works across reinstalls/phones.
+     */
+    suspend fun registerAccountOnServer(
+        context: Context,
+        role: String,
+        name: String,
+        phone: String,
+        email: String
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        val cleanRole = role.trim().uppercase().ifBlank { "CUSTOMER" }
+        postSignedAuthJsonRaw(
+            context = context,
+            apiPath = "/api/auth/register-account",
+            role = cleanRole,
+            bodyJson = JSONObject().apply {
+                put("deviceId", getOrInitDeviceId(context))
+                put("role", cleanRole)
+                put("name", name.trim().take(80))
+                put("phone", phone.filter(Char::isDigit).takeLast(10))
+                put("email", email.trim().lowercase())
+            }
+        ).map { json ->
+            json.optBoolean("registered", true)
+        }
+    }
+
+    /**
+     * Strictly verifies whether a Mobile Number or Email is ALREADY registered on the cloud server
+     * for Existing User Sign In. Returns Result.success(RegisteredAccountLookup) if registered,
+     * Result.success(null) if NOT registered, or Result.failure on network error (fail-closed).
+     */
+    suspend fun verifyExistingAccountOnServer(
+        context: Context,
+        role: String,
+        identifier: String
+    ): Result<RegisteredAccountLookup?> = withContext(Dispatchers.IO) {
+        val cleanRole = role.trim().uppercase().ifBlank { "CUSTOMER" }
+        postSignedAuthJsonRaw(
+            context = context,
+            apiPath = "/api/auth/check-existing-account",
+            role = cleanRole,
+            bodyJson = JSONObject().apply {
+                put("deviceId", getOrInitDeviceId(context))
+                put("role", cleanRole)
+                put("identifier", identifier.trim())
+            }
+        ).map { json ->
+            if (json.optBoolean("exists", false)) {
+                val acc = json.optJSONObject("account")
+                if (acc != null) {
+                    RegisteredAccountLookup(
+                        role = acc.optString("role", cleanRole).uppercase(),
+                        name = acc.optString("name", ""),
+                        phone = acc.optString("phone", ""),
+                        email = acc.optString("email", "")
+                    )
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        }
+    }
+
     private fun postSignedAuthJson(
         context: Context,
         apiPath: String,
@@ -965,7 +1089,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.0")
                     setRequestProperty("X-QD-App-Role", cleanRole)
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
                     setRequestProperty("X-QD-Sync-Sig", syncSig)
@@ -1021,7 +1145,7 @@ object MultiPhoneLiveSyncManager {
                     connectTimeout = if (isPrimary) 12_000 else 3_000
                     readTimeout = if (isPrimary) 18_000 else 3_500
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.0")
                 }
                 val code = conn.responseCode
                 val latency = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
@@ -1035,7 +1159,7 @@ object MultiPhoneLiveSyncManager {
                             isOnline = true,
                             isWakingUp = false,
                             latencyMs = latency,
-                            serverVersion = json.optString("version", "6.5.0"),
+                            serverVersion = json.optString("version", "6.7.0"),
                             totalOrders = json.optInt("totalOrders", 0),
                             searchingOrders = json.optInt("activeSearchingOrders", 0),
                             registeredRiders = json.optInt("registeredRiders", 0),
@@ -1097,7 +1221,7 @@ object MultiPhoneLiveSyncManager {
                     connectTimeout = if (isPrimary) 12_000 else 3_000
                     readTimeout = if (isPrimary) 25_000 else 5_000
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.0")
                     setRequestProperty("X-QD-Device-Id", deviceId)
                     setRequestProperty("X-QD-App-Role", "ADMIN")
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
@@ -1156,7 +1280,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.0")
                     setRequestProperty("X-QD-Device-Id", deviceId)
                     setRequestProperty("X-QD-App-Role", "ADMIN")
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
@@ -1216,7 +1340,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.5.0")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.0")
                     setRequestProperty("X-QD-Device-Id", deviceId)
                     setRequestProperty("X-QD-App-Role", "ADMIN")
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
@@ -1256,4 +1380,11 @@ data class ServerHealthSnapshot(
     val errorMessage: String,
     val permanentCloudProvider: String = "",
     val lastEmailBackupIso: String = ""
+)
+
+data class RegisteredAccountLookup(
+    val role: String,
+    val name: String,
+    val phone: String,
+    val email: String
 )

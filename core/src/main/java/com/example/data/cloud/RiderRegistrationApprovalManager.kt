@@ -330,10 +330,11 @@ object RiderRegistrationApprovalManager {
         val key = buildRiderKey(phone, email).ifBlank { "phone_${System.currentTimeMillis()}" }
         val now = System.currentTimeMillis()
         val label = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date(now))
-        synchronized(lock) {
+        val shouldAutoApprove = autoKycVerified && QuickDeliveryOperationsManager.remoteFeatureFlags.value.autoKycApiEnabled
+        val updated = synchronized(lock) {
             val existing = _registrationsByKey.value[key]
             val suffix = key.filter(Char::isDigit).takeLast(4).ifBlank { (now % 10000).toString() }
-            val updated = RiderRegistrationRecord(
+            val next = RiderRegistrationRecord(
                 riderKey = key,
                 riderId = existing?.riderId ?: "RIDER-KYC-$suffix",
                 name = name.trim().ifBlank { existing?.name ?: "Rider Partner" },
@@ -353,13 +354,17 @@ object RiderRegistrationApprovalManager {
                 autoKycVerified = autoKycVerified,
                 autoVerificationReport = autoVerificationReport,
                 clarityScoresSummary = clarityScoresSummary,
-                approvalStatus = RiderApprovalWorkflowStatus.PENDING_APPROVAL,
+                approvalStatus = if (shouldAutoApprove) {
+                    RiderApprovalWorkflowStatus.APPROVED
+                } else {
+                    RiderApprovalWorkflowStatus.PENDING_APPROVAL
+                },
                 rejectionReason = "",
                 rejectedDocFields = emptyList(),
                 submittedAtEpochMs = now,
                 submittedAtLabel = label,
-                approvedAtEpochMs = 0L,
-                reLoggedInAfterApproval = false,
+                approvedAtEpochMs = if (shouldAutoApprove) now else 0L,
+                reLoggedInAfterApproval = shouldAutoApprove,
                 bankAccountHolderName = existing?.bankAccountHolderName.orEmpty(),
                 bankName = existing?.bankName.orEmpty(),
                 bankAccountNumber = existing?.bankAccountNumber.orEmpty(),
@@ -368,10 +373,14 @@ object RiderRegistrationApprovalManager {
                 bankDetailsUpdatedAtEpochMs = existing?.bankDetailsUpdatedAtEpochMs ?: 0L,
                 updatedAtEpochMs = now
             )
-            _registrationsByKey.value = _registrationsByKey.value + (key to updated)
+            _registrationsByKey.value = _registrationsByKey.value + (key to next)
             persist(context)
-            return updated
+            next
         }
+        if (shouldAutoApprove) {
+            ensureRiderProfileInRepository(SharedOrderRepository.getInstance(context), updated)
+        }
+        return updated
     }
 
     /**
@@ -451,6 +460,11 @@ object RiderRegistrationApprovalManager {
         val existingIdx = currentList.indexOfFirst {
             it.riderId == rec.riderId || (rec.phone.isNotBlank() && it.mobile.filter(Char::isDigit).takeLast(10) == rec.phone)
         }
+        val resolvedOnline = if (existingIdx >= 0) {
+            currentList[existingIdx].isOnline
+        } else {
+            rec.approvalStatus == RiderApprovalWorkflowStatus.APPROVED
+        }
         val profile = RiderProfile(
             riderId = rec.riderId,
             name = rec.name,
@@ -467,13 +481,13 @@ object RiderRegistrationApprovalManager {
                 RiderVerificationStatus.PENDING
             },
             accountStatus = "ACTIVE",
-            isOnline = if (existingIdx >= 0) currentList[existingIdx].isOnline else false,
+            isOnline = resolvedOnline,
             walletBalanceInr = if (existingIdx >= 0) currentList[existingIdx].walletBalanceInr else 0.0,
             commissionDebtInr = if (existingIdx >= 0) currentList[existingIdx].commissionDebtInr else 0.0,
             totalDeliveries = if (existingIdx >= 0) currentList[existingIdx].totalDeliveries else 0,
             adminApprovalNote = "Admin Approved KYC Verified",
             workMode = RiderWorkMode.FULL_TIME,
-            shiftStatus = if (existingIdx >= 0 && currentList[existingIdx].isOnline) {
+            shiftStatus = if (resolvedOnline) {
                 RiderShiftStatus.ON_ACTIVE_SHIFT
             } else {
                 RiderShiftStatus.ENDED_AT_HOME

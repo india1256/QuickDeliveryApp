@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -97,9 +98,10 @@ fun RiderLedgerBalanceCard(
         else -> LedgerAmber
     }
     val statusBadgeText = when {
-        ledger.isLockedAtLimit -> "🔴 LOCKED • Pay ₹${ledger.unpaidCommissionDueInr.toInt()}"
+        ledger.isLockedAtLimit -> "🔴 AUTO-LOCKED • Pay ₹${ledger.unpaidCommissionDueInr.toInt()}"
+        ledger.withdrawableWalletBalanceInr >= 1.0 -> "🟢 FREE • Wallet +₹${ledger.withdrawableWalletBalanceInr.toInt()}"
         ledger.isFreeZeroDue -> "🟢 FREE • ₹0 Due"
-        else -> "🟡 Due ₹${ledger.unpaidCommissionDueInr.toInt()} / ₹${ledger.codLimitInr.toInt()}"
+        else -> "🟡 Due -₹${ledger.unpaidCommissionDueInr.toInt()} / ₹${ledger.codLimitInr.toInt()}"
     }
     val cardBg = when {
         ledger.isLockedAtLimit -> if (isDarkMode) Color(0xFF2B1215) else Color(0xFFFEF2F2)
@@ -131,7 +133,7 @@ fun RiderLedgerBalanceCard(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Send your pending ₹${ledger.unpaidCommissionDueInr.toInt()} company commission to Admin's account. Once Admin verifies, your Ledger resets to ₹0 (🟢 FREE).",
+                        text = "Send ₹${ledger.unpaidCommissionDueInr.toInt()} company commission to Admin's account & enter your 6+ character UPI UTR / Payment Ref. Your Ledger resets to ₹0 (🟢 FREE) & AUTO-UNLOCKS immediately — no manual Admin wait!",
                         style = MaterialTheme.typography.bodySmall,
                         color = LedgerSlate
                     )
@@ -223,11 +225,24 @@ fun RiderLedgerBalanceCard(
                             .fillMaxWidth()
                             .testTag("rider_cod_transfer_amount_input")
                     )
+                    val hasValidUtrRef = utrDraft.trim().count { it.isLetterOrDigit() } >= 6
                     OutlinedTextField(
                         value = utrDraft,
                         onValueChange = { utrDraft = it.take(40) },
-                        label = { Text("UPI UTR / Reference / Cash Note") },
-                        placeholder = { Text("e.g., UTR 432198765432 or Cash Handover") },
+                        label = { Text("UPI UTR / Transaction Ref ID *") },
+                        placeholder = { Text("e.g., 432198765432 (min 6 chars)") },
+                        isError = utrDraft.isNotBlank() && !hasValidUtrRef,
+                        supportingText = {
+                            Text(
+                                text = if (hasValidUtrRef) {
+                                    "⚡ Valid Ref ID — Account will AUTO-UNLOCK instantly!"
+                                } else {
+                                    "Enter 6+ char UPI UTR / Ref ID for instant Auto-Unlock"
+                                },
+                                color = if (hasValidUtrRef) LedgerEmerald else LedgerSlate,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -236,23 +251,24 @@ fun RiderLedgerBalanceCard(
                 }
             },
             confirmButton = {
+                val hasValidUtrRef = utrDraft.trim().count { it.isLetterOrDigit() } >= 6
                 Button(
                     onClick = {
                         val finalAmt = amountDraft.toDoubleOrNull() ?: ledger.unpaidCommissionDueInr
-                        if (finalAmt > 0.0) {
-                            onSubmitTransferClaim(finalAmt, utrDraft.trim().ifBlank { "UPI_TRANSFER" })
+                        if (finalAmt > 0.0 && hasValidUtrRef) {
+                            onSubmitTransferClaim(finalAmt, utrDraft.trim())
                             utrDraft = ""
                             showTransferDialog = false
                         }
                     },
-                    enabled = (amountDraft.toDoubleOrNull() ?: 0.0) > 0.0,
+                    enabled = (amountDraft.toDoubleOrNull() ?: 0.0) > 0.0 && hasValidUtrRef,
                     colors = ButtonDefaults.buttonColors(containerColor = LedgerEmerald),
                     modifier = Modifier
                         .height(48.dp)
                         .testTag("rider_cod_submit_transfer_claim_btn")
                 ) {
                     Text(
-                        text = "Submit to Admin",
+                        text = "Pay & Auto-Unlock",
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
                         maxLines = 1,
@@ -298,7 +314,7 @@ fun RiderLedgerBalanceCard(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Ledger Balance (COD ${ledger.commissionPercent}%)",
+                            text = "Unified Wallet & COD Ledger (${ledger.commissionPercent}%)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = headingColor,
@@ -306,7 +322,7 @@ fun RiderLedgerBalanceCard(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Limit ₹${ledger.codLimitInr.toInt()} • Keep ${100 - ledger.commissionPercent}% cash, pay ${ledger.commissionPercent}% to Admin",
+                            text = "Auto-locks at -₹${ledger.codLimitInr.toInt()} • Online orders auto-clear COD due first",
                             style = MaterialTheme.typography.labelSmall,
                             color = subColor,
                             maxLines = 1,
@@ -348,7 +364,11 @@ fun RiderLedgerBalanceCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Commission Due: ₹${ledger.unpaidCommissionDueInr.toInt()} / ₹${ledger.codLimitInr.toInt()}",
+                        text = if (ledger.withdrawableWalletBalanceInr >= 1.0) {
+                            "Net Balance: +₹${ledger.withdrawableWalletBalanceInr.toInt()} (COD Due ₹0)"
+                        } else {
+                            "Commission Due: -₹${ledger.unpaidCommissionDueInr.toInt()} / ₹${ledger.codLimitInr.toInt()}"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = statusColor,
@@ -357,7 +377,11 @@ fun RiderLedgerBalanceCard(
                         modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = if (ledger.isLockedAtLimit) "LOCKED" else "₹${ledger.remainingBeforeLockInr.toInt()} left",
+                        text = when {
+                            ledger.isLockedAtLimit -> "AUTO-LOCKED"
+                            ledger.isFreeZeroDue -> "FREE"
+                            else -> "₹${ledger.remainingBeforeLockInr.toInt()} left"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = statusColor,
@@ -367,7 +391,32 @@ fun RiderLedgerBalanceCard(
                 }
             }
 
-            // 3 compact tiles: COD Collected | 80% Kept | Paid to Admin
+            // Automatic Online/Prepaid -> COD Offset Banner
+            if (ledger.prepaidAutoOffsetAppliedInr >= 1.0) {
+                Surface(
+                    color = LedgerEmerald.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, LedgerEmerald.copy(alpha = 0.55f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rider_cod_prepaid_auto_offset_banner")
+                ) {
+                    val extraWalletText = if (ledger.withdrawableWalletBalanceInr >= 1.0) {
+                        " • +₹${ledger.withdrawableWalletBalanceInr.toInt()} credited to Wallet!"
+                    } else {
+                        "!"
+                    }
+                    Text(
+                        text = "⚡ Auto-Adjusted: ₹${ledger.prepaidAutoOffsetAppliedInr.toInt()} COD due automatically cleared from Online order ${100 - ledger.commissionPercent}% earnings$extraWalletText",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isDarkMode) Color(0xFF6EE7B7) else Color(0xFF065F46),
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
+
+            // 3 compact tiles: COD Cash | Online 80% (or Your 80%) | Wallet / Paid
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -380,16 +429,28 @@ fun RiderLedgerBalanceCard(
                     modifier = Modifier.weight(1f)
                 )
                 LedgerMiniMetric(
-                    label = "Your ${100 - ledger.commissionPercent}%",
-                    value = "₹${ledger.rider80ShareKeptInr.toInt()}",
+                    label = if (ledger.prepaidRider80CreditsInr >= 1.0) {
+                        "Online ${100 - ledger.commissionPercent}%"
+                    } else {
+                        "Your ${100 - ledger.commissionPercent}%"
+                    },
+                    value = if (ledger.prepaidRider80CreditsInr >= 1.0) {
+                        "+₹${ledger.prepaidRider80CreditsInr.toInt()}"
+                    } else {
+                        "₹${ledger.rider80ShareKeptInr.toInt()}"
+                    },
                     valueColor = LedgerEmerald,
                     isDarkMode = isDarkMode,
                     modifier = Modifier.weight(1f)
                 )
                 LedgerMiniMetric(
-                    label = "Paid Admin",
-                    value = "₹${ledger.verifiedPaidToAdminInr.toInt()}",
-                    valueColor = LedgerTeal,
+                    label = if (ledger.withdrawableWalletBalanceInr >= 1.0) "Wallet Bal" else "Paid Admin",
+                    value = if (ledger.withdrawableWalletBalanceInr >= 1.0) {
+                        "+₹${ledger.withdrawableWalletBalanceInr.toInt()}"
+                    } else {
+                        "₹${ledger.verifiedPaidToAdminInr.toInt()}"
+                    },
+                    valueColor = if (ledger.withdrawableWalletBalanceInr >= 1.0) LedgerEmerald else LedgerTeal,
                     isDarkMode = isDarkMode,
                     modifier = Modifier.weight(1f)
                 )
@@ -411,12 +472,12 @@ fun RiderLedgerBalanceCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Warning,
-                            contentDescription = "Account Locked",
+                            contentDescription = "Account Auto-Locked",
                             tint = LedgerCrimson,
                             modifier = Modifier.size(20.dp)
                         )
                         Text(
-                            text = "⛔ ₹${ledger.codLimitInr.toInt()} COD Limit Complete! New orders are LOCKED until you transfer ₹${ledger.unpaidCommissionDueInr.toInt()} to Admin's account & balance resets to ₹0 (FREE).",
+                            text = "⛔ -₹${ledger.codLimitInr.toInt()} COD Limit Complete! Account is AUTO-LOCKED. Transfer ₹${ledger.unpaidCommissionDueInr.toInt()} via UPI & enter UTR to AUTO-UNLOCK immediately back to ₹0 (🟢 FREE)!",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = LedgerCrimson
@@ -435,7 +496,7 @@ fun RiderLedgerBalanceCard(
                         .testTag("rider_cod_pending_claim_banner")
                 ) {
                     Text(
-                        text = "⏳ Transfer Claim Submitted: ₹${claim.amountInr.toInt()} (Ref: ${claim.referenceUtr}) • Waiting for Admin verification to reset ₹0 FREE.",
+                        text = "⏳ Transfer Claim Submitted: ₹${claim.amountInr.toInt()} (Ref: ${claim.referenceUtr}) • Waiting for verification.",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = if (isDarkMode) Color(0xFFFCD34D) else Color(0xFF92400E),
@@ -461,13 +522,13 @@ fun RiderLedgerBalanceCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Payment,
-                        contentDescription = "Transfer to Admin",
+                        contentDescription = "Pay and Auto-Unlock",
                         tint = Color.White,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Transfer ₹${ledger.unpaidCommissionDueInr.toInt()} to Admin Account",
+                        text = "Pay ₹${ledger.unpaidCommissionDueInr.toInt()} & Auto-Unlock Instantly",
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White,
                         maxLines = 1,
@@ -633,6 +694,7 @@ fun AdminCodPendingAlertBanner(
     onOpenPaymentsPage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val withdrawalRequests by QuickDeliveryOperationsManager.withdrawalRequests.collectAsState()
     val pendingClaimsCount = settlements.count { it.status == "PENDING_ADMIN" }
     val lockedRidersCount = riders.count { rider ->
         QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
@@ -640,7 +702,8 @@ fun AdminCodPendingAlertBanner(
             riderCommissionDebtInr = rider.commissionDebtInr,
             orders = orders,
             settlements = settlements,
-            flags = flags
+            flags = flags,
+            withdrawalRequests = withdrawalRequests
         ).isLockedAtLimit
     }
     if (pendingClaimsCount == 0 && lockedRidersCount == 0) return
@@ -708,19 +771,25 @@ fun AdminCodCashHandoverLedgerCard(
     flags: AdminRemoteFeatureFlags,
     onVerifyClaim: (RiderCodSettlementRecord) -> Unit,
     onMarkFullPaidResetZero: (RiderProfile, RiderCodLedgerSnapshot) -> Unit,
+    onReverseSettlement: ((RiderCodSettlementRecord) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val withdrawalRequests by QuickDeliveryOperationsManager.withdrawalRequests.collectAsState()
     val pendingClaims = remember(settlements) {
         settlements.filter { it.status == "PENDING_ADMIN" }
     }
-    val riderLedgers = remember(riders, orders, settlements, flags) {
+    val autoSettledAuditList = remember(settlements) {
+        settlements.filter { it.status == "AUTO_SETTLED" }.take(5)
+    }
+    val riderLedgers = remember(riders, orders, settlements, flags, withdrawalRequests) {
         riders.map { rider ->
             rider to QuickDeliveryOperationsManager.computeRiderCodLedgerSnapshot(
                 riderId = rider.riderId,
                 riderCommissionDebtInr = rider.commissionDebtInr,
                 orders = orders,
                 settlements = settlements,
-                flags = flags
+                flags = flags,
+                withdrawalRequests = withdrawalRequests
             )
         }
     }
@@ -744,13 +813,13 @@ fun AdminCodCashHandoverLedgerCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "💵 Rider COD Commission Ledger (₹${flags.riderCodCommissionLimitInr} Lock Limit)",
+                        text = "⚡ Autopilot COD & Wallet Ledger (₹${flags.riderCodCommissionLimitInr} Lock)",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = LedgerNavy
                     )
                     Text(
-                        text = "Verify ${flags.platformCommissionPercent}% commission transfers to unlock Riders back to ₹0 (FREE)",
+                        text = "Auto-locks at -₹${flags.riderCodCommissionLimitInr}, auto-offsets via Online orders & auto-unlocks on valid UTR",
                         style = MaterialTheme.typography.labelSmall,
                         color = LedgerSlate
                     )
@@ -760,7 +829,7 @@ fun AdminCodCashHandoverLedgerCard(
                     shape = RoundedCornerShape(999.dp)
                 ) {
                     Text(
-                        text = if (pendingClaims.isNotEmpty()) "${pendingClaims.size} Pending" else "All Clear",
+                        text = if (pendingClaims.isNotEmpty()) "${pendingClaims.size} Pending" else "Autopilot ON",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = if (pendingClaims.isNotEmpty()) LedgerAmber else LedgerEmerald,
@@ -848,9 +917,87 @@ fun AdminCodCashHandoverLedgerCard(
                 HorizontalDivider()
             }
 
+            if (autoSettledAuditList.isNotEmpty()) {
+                Text(
+                    text = "⚡ Recent Auto-Cleared Payments (Autopilot Audit Trail)",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = LedgerEmerald
+                )
+                autoSettledAuditList.forEach { rec ->
+                    Surface(
+                        color = Color(0xFFF0FDF4),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, LedgerEmerald.copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_auto_settled_cod_${rec.settlementId}")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${rec.riderName} (${rec.riderId}) • ₹${rec.amountInr.toInt()}",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = LedgerNavy
+                                    )
+                                    Text(
+                                        text = "UTR: ${rec.referenceUtr} • ${rec.settledAtLabel}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = LedgerSlate
+                                    )
+                                }
+                                Surface(
+                                    color = LedgerEmerald.copy(alpha = 0.16f),
+                                    shape = RoundedCornerShape(999.dp)
+                                ) {
+                                    Text(
+                                        text = "⚡ Auto-Cleared",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = LedgerEmerald,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                            if (onReverseSettlement != null) {
+                                OutlinedButton(
+                                    onClick = { onReverseSettlement(rec) },
+                                    border = BorderStroke(1.dp, LedgerCrimson),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("admin_reverse_cod_settlement_btn_${rec.settlementId}")
+                                ) {
+                                    Text(
+                                        text = "Reverse & Re-Lock (Disputed UTR)",
+                                        fontWeight = FontWeight.Bold,
+                                        color = LedgerCrimson,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider()
+            }
+
             if (riderLedgers.isEmpty()) {
                 Text(
-                    text = "No active fleet riders yet. Once riders deliver COD orders, their 80/20 ledger appears live here.",
+                    text = "No active fleet riders yet. Once riders deliver COD or Online orders, their unified automatic 80/20 ledger appears live here.",
                     style = MaterialTheme.typography.bodySmall,
                     color = LedgerSlate
                 )
@@ -886,7 +1033,16 @@ fun AdminCodCashHandoverLedgerCard(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "COD Cash: ₹${ledger.totalCodCashCollectedInr.toInt()} • 80% Rider: ₹${ledger.rider80ShareKeptInr.toInt()} • Paid: ₹${ledger.verifiedPaidToAdminInr.toInt()}",
+                                        text = buildString {
+                                            append("COD: ₹${ledger.totalCodCashCollectedInr.toInt()}")
+                                            if (ledger.prepaidRider80CreditsInr >= 1.0) {
+                                                append(" • Online 80%: +₹${ledger.prepaidRider80CreditsInr.toInt()}")
+                                            }
+                                            if (ledger.prepaidAutoOffsetAppliedInr >= 1.0) {
+                                                append(" • Auto-Offset: ₹${ledger.prepaidAutoOffsetAppliedInr.toInt()}")
+                                            }
+                                            append(" • Paid: ₹${ledger.verifiedPaidToAdminInr.toInt()}")
+                                        },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = LedgerSlate
                                     )
@@ -898,9 +1054,10 @@ fun AdminCodCashHandoverLedgerCard(
                                 ) {
                                     Text(
                                         text = when {
-                                            ledger.isLockedAtLimit -> "🔴 LOCKED ₹${ledger.unpaidCommissionDueInr.toInt()}"
+                                            ledger.isLockedAtLimit -> "🔴 LOCKED -₹${ledger.unpaidCommissionDueInr.toInt()}"
+                                            ledger.withdrawableWalletBalanceInr >= 1.0 -> "🟢 +₹${ledger.withdrawableWalletBalanceInr.toInt()} Wallet"
                                             ledger.isFreeZeroDue -> "🟢 FREE ₹0"
-                                            else -> "🟡 Due ₹${ledger.unpaidCommissionDueInr.toInt()}"
+                                            else -> "🟡 Due -₹${ledger.unpaidCommissionDueInr.toInt()}"
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.ExtraBold,

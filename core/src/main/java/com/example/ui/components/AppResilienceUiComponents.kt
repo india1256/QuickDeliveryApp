@@ -10,6 +10,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -314,6 +315,7 @@ fun CustomerSearchingCountdownCard(
                         color = ResSlate
                     )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 Surface(
                     color = if (isHighWait) ResCrimson else ResAmber,
                     shape = RoundedCornerShape(10.dp)
@@ -323,6 +325,8 @@ fun CustomerSearchingCountdownCard(
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
                 }
@@ -348,6 +352,7 @@ fun CustomerSearchingCountdownCard(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = ResTeal),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
@@ -359,14 +364,22 @@ fun CustomerSearchingCountdownCard(
                         tint = Color.White,
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Retry Search", fontWeight = FontWeight.Bold, color = Color.White)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "Retry Search",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 OutlinedButton(
                     onClick = onCancelFree,
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, ResCrimson),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
@@ -375,7 +388,10 @@ fun CustomerSearchingCountdownCard(
                     Text(
                         text = "Cancel Free (₹0)",
                         fontWeight = FontWeight.Bold,
-                        color = ResCrimson
+                        color = ResCrimson,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -597,10 +613,12 @@ fun AdminServerHealthAndBackupCard(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 OutlinedButton(
                     onClick = { runHealthPing() },
                     enabled = !isPinging,
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     modifier = Modifier
                         .height(48.dp)
                         .testTag("admin_ping_server_health_btn")
@@ -657,6 +675,7 @@ fun AdminServerHealthAndBackupCard(
                         )
                         if (h.permanentCloudProvider.isNotBlank()) {
                             val cloudLabel = when (h.permanentCloudProvider) {
+                                "PERSISTENT_DISK" -> "☁️ Permanent Cloud: Render/Server Persistent Disk Active (All-in-One ON)"
                                 "SUPABASE_REST" -> "☁️ Permanent Cloud: Supabase Connected (Auto-Save ON)"
                                 "UPSTASH_REDIS" -> "☁️ Permanent Cloud: Upstash Redis Connected (Auto-Save ON)"
                                 "FIREBASE_RTDB" -> "☁️ Permanent Cloud: Firebase RTDB Connected (Auto-Save ON)"
@@ -712,6 +731,7 @@ fun AdminServerHealthAndBackupCard(
                     enabled = !isExporting && !isRestoring,
                     colors = ButtonDefaults.buttonColors(containerColor = ResTeal),
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
@@ -731,7 +751,7 @@ fun AdminServerHealthAndBackupCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Save Backup", fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false)
+                        Text("Save Backup", fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
                 }
 
@@ -740,6 +760,7 @@ fun AdminServerHealthAndBackupCard(
                     enabled = hasLocalBackup && !isRestoring && !isExporting,
                     shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, if (hasLocalBackup) ResAmber else Color(0xFFCBD5E1)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)

@@ -13,7 +13,7 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
-const APP_SUITE_VERSION = '6.5.0';
+const APP_SUITE_VERSION = '6.7.0';
 const ADMIN_ALLOWLIST_EMAILS = new Set([
   'ravindergupta141@gmail.com',
   'admin@quickdelivery.co.in',
@@ -35,8 +35,47 @@ function maskEmailForHint(email) {
   return `${clean.slice(0, 2)}***${clean.slice(at)}`;
 }
 const OTP_FROM_EMAIL = (process.env.OTP_FROM_EMAIL || process.env.SUPPORT_FROM_EMAIL || BRAND_SUPPORT_EMAIL).trim();
-const SYNC_STATE_FILE = process.env.SYNC_STATE_FILE || '/tmp/quickdelivery-live-sync.json';
-const BACKUP_DIR = path.join(ROOT, 'data', 'backups');
+
+function resolvePersistentStoragePaths() {
+  const explicitFile = String(process.env.SYNC_STATE_FILE || '').trim();
+  if (explicitFile) {
+    const dir = path.dirname(explicitFile);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {}
+    return {
+      syncFile: explicitFile,
+      backupDir: path.join(dir, 'backups'),
+      isPersistentDisk: !explicitFile.startsWith('/tmp'),
+      diskPath: dir,
+    };
+  }
+  for (const candidateDir of ['/var/data', '/data']) {
+    try {
+      if (fs.existsSync(candidateDir) && fs.statSync(candidateDir).isDirectory()) {
+        fs.accessSync(candidateDir, fs.constants.W_OK);
+        const bDir = path.join(candidateDir, 'backups');
+        fs.mkdirSync(bDir, { recursive: true });
+        return {
+          syncFile: path.join(candidateDir, 'quickdelivery-live-sync.json'),
+          backupDir: bDir,
+          isPersistentDisk: true,
+          diskPath: candidateDir,
+        };
+      }
+    } catch {}
+  }
+  return {
+    syncFile: '/tmp/quickdelivery-live-sync.json',
+    backupDir: path.join(ROOT, 'data', 'backups'),
+    isPersistentDisk: false,
+    diskPath: '',
+  };
+}
+
+const STORAGE_PATHS = resolvePersistentStoragePaths();
+const SYNC_STATE_FILE = STORAGE_PATHS.syncFile;
+const BACKUP_DIR = STORAGE_PATHS.backupDir;
 const CLOUD_RUN_MAX_SAFE_APK_BYTES = 33000000; // < 31.5 MiB (well below Cloud Run's 32 MiB = 33,554,432 limit)
 
 const APK_FILE_NAMES = [
@@ -182,6 +221,7 @@ function loadSyncState() {
           devicesById: parsed.devicesById || {},
           fcmTokensByDevice: parsed.fcmTokensByDevice || {},
           riderRegistrationsByKey: parsed.riderRegistrationsByKey || {},
+          customerAccountsByKey: parsed.customerAccountsByKey || {},
           promoCouponsByCode: parsed.promoCouponsByCode || {},
           withdrawalRequestsById: parsed.withdrawalRequestsById || {},
           supportTicketsById: parsed.supportTicketsById || {},
@@ -217,6 +257,7 @@ function loadSyncState() {
     devicesById: {},
     fcmTokensByDevice: {},
     riderRegistrationsByKey: {},
+    customerAccountsByKey: {},
     promoCouponsByCode: {},
     withdrawalRequestsById: {},
     supportTicketsById: {},
@@ -258,7 +299,7 @@ let permanentCloudHydrated = false;
 // ============================================================================
 const SYNC_HMAC_SECRET = 'QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in';
 const MAX_SYNC_BODY_BYTES = 4 * 1024 * 1024; // 4 MB payload ceiling
-const MAX_SYNC_REQ_PER_MIN_PER_IP = 180; // supports multiple phones behind shared Wi-Fi NAT polling ~1.8s
+const MAX_SYNC_REQ_PER_MIN_PER_IP = 420; // supports 3+ phones behind shared Wi-Fi NAT polling ~1.8s plus bursts
 const MAX_HEAVY_REQ_PER_MIN_PER_IP = 30;
 const MAX_ACTIVE_PENDING_ORDERS_PER_ACTOR = 25;
 const MAX_NEW_ORDERS_PER_MIN_PER_ACTOR = 8;
@@ -483,7 +524,102 @@ function detectPermanentCloudProvider() {
   if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) return 'UPSTASH_REDIS';
   if (process.env.FIREBASE_RTDB_URL) return 'FIREBASE_RTDB';
   if (process.env.MONGODB_DATA_API_URL && process.env.MONGODB_DATA_API_KEY) return 'MONGODB_DATA_API';
+  if (STORAGE_PATHS.isPersistentDisk) return 'PERSISTENT_DISK';
   return 'RENDER_LOCAL_PLUS_GMAIL_BACKUP';
+}
+
+function normalizePhone10(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : '';
+}
+
+function normalizeEmailLower(raw) {
+  const clean = String(raw || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean) ? clean : '';
+}
+
+function buildAccountKey(phone10, emailLower) {
+  if (phone10 && phone10.length === 10) return `phone_${phone10}`;
+  if (emailLower) return `email_${emailLower}`;
+  return '';
+}
+
+function registerCustomerAccountInState({ name, phone, email, now = Date.now() }) {
+  const cleanPhone = normalizePhone10(phone);
+  const cleanEmail = normalizeEmailLower(email);
+  const key = buildAccountKey(cleanPhone, cleanEmail);
+  if (!key) return null;
+  if (!syncState.customerAccountsByKey || typeof syncState.customerAccountsByKey !== 'object') {
+    syncState.customerAccountsByKey = {};
+  }
+  const existing = syncState.customerAccountsByKey[key] || {};
+  const record = {
+    accountKey: key,
+    role: 'CUSTOMER',
+    name: String(name || existing.name || 'Customer').trim().slice(0, 80),
+    phone: cleanPhone || String(existing.phone || ''),
+    email: cleanEmail || String(existing.email || ''),
+    registeredAtEpochMs: Number(existing.registeredAtEpochMs || now),
+    updatedAtEpochMs: now,
+  };
+  syncState.customerAccountsByKey[key] = record;
+  return record;
+}
+
+function findRegisteredAccountInState(roleUpper, identifierRaw) {
+  const cleanIdent = String(identifierRaw || '').trim();
+  const isEmail = cleanIdent.includes('@');
+  const phone10 = isEmail ? '' : normalizePhone10(cleanIdent);
+  const emailLower = isEmail ? normalizeEmailLower(cleanIdent) : '';
+  if (!phone10 && !emailLower) return null;
+
+  if (roleUpper === 'RIDER') {
+    const map = syncState.riderRegistrationsByKey || {};
+    for (const rec of Object.values(map)) {
+      if (!rec || typeof rec !== 'object') continue;
+      const rPhone = normalizePhone10(rec.phone);
+      const rEmail = normalizeEmailLower(rec.email);
+      if ((phone10 && rPhone === phone10) || (emailLower && rEmail === emailLower)) {
+        return {
+          role: 'RIDER',
+          name: String(rec.name || 'Rider Partner'),
+          phone: rPhone,
+          email: rEmail,
+        };
+      }
+    }
+    return null;
+  }
+
+  const custMap = syncState.customerAccountsByKey || {};
+  for (const rec of Object.values(custMap)) {
+    if (!rec || typeof rec !== 'object') continue;
+    const cPhone = normalizePhone10(rec.phone);
+    const cEmail = normalizeEmailLower(rec.email);
+    if ((phone10 && cPhone === phone10) || (emailLower && cEmail === emailLower)) {
+      return {
+        role: 'CUSTOMER',
+        name: String(rec.name || 'Customer'),
+        phone: cPhone,
+        email: cEmail,
+      };
+    }
+  }
+  // Legacy compatibility: allow genuine returning customers who already placed a real order earlier
+  if (phone10) {
+    for (const ord of Object.values(syncState.ordersById || {})) {
+      if (!ord || typeof ord !== 'object') continue;
+      if (normalizePhone10(ord.customerPhone) === phone10) {
+        return {
+          role: 'CUSTOMER',
+          name: String(ord.customerName || 'Customer'),
+          phone: phone10,
+          email: '',
+        };
+      }
+    }
+  }
+  return null;
 }
 
 function makeHttpsJsonRequest(urlString, { method = 'GET', headers = {}, body = null, timeoutMs = 12000 } = {}) {
@@ -550,6 +686,7 @@ function applyHydratedCloudState(remoteState) {
   [
     'ordersById',
     'riderRegistrationsByKey',
+    'customerAccountsByKey',
     'promoCouponsByCode',
     'withdrawalRequestsById',
     'supportTicketsById',
@@ -588,7 +725,10 @@ function applyHydratedCloudState(remoteState) {
 
 async function hydrateSyncStateFromPermanentCloud() {
   const provider = detectPermanentCloudProvider();
-  if (provider === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP') return;
+  if (provider === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP' || provider === 'PERSISTENT_DISK') {
+    if (provider === 'PERSISTENT_DISK') permanentCloudHydrated = true;
+    return;
+  }
   try {
     let remoteState = null;
     if (provider === 'SUPABASE_REST') {
@@ -661,7 +801,7 @@ async function hydrateSyncStateFromPermanentCloud() {
 
 async function pushSyncStateToPermanentCloudNow() {
   const provider = detectPermanentCloudProvider();
-  if (provider === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP') return;
+  if (provider === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP' || provider === 'PERSISTENT_DISK') return;
   const snapshot = buildSanitizedCloudSnapshotObject();
   const updatedAt = new Date().toISOString();
   try {
@@ -714,7 +854,8 @@ async function pushSyncStateToPermanentCloudNow() {
 }
 
 function schedulePermanentCloudSync() {
-  if (detectPermanentCloudProvider() === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP') return;
+  const provider = detectPermanentCloudProvider();
+  if (provider === 'RENDER_LOCAL_PLUS_GMAIL_BACKUP' || provider === 'PERSISTENT_DISK') return;
   const now = Date.now();
   if (now - lastPermanentCloudSaveMs >= 4000) {
     lastPermanentCloudSaveMs = now;
@@ -1960,6 +2101,7 @@ function buildSyncResponsePayload() {
       (a, b) => Number(b.updatedAtEpochMs || 0) - Number(a.updatedAtEpochMs || 0)
     ),
     riderRegistrations: Object.values(syncState.riderRegistrationsByKey || {}),
+    registeredCustomers: Object.values(syncState.customerAccountsByKey || {}),
     promoCoupons: Object.values(syncState.promoCouponsByCode || {}),
     withdrawalRequests: Object.values(syncState.withdrawalRequestsById || {}),
     supportTickets: Object.values(syncState.supportTicketsById || {}),
@@ -2098,6 +2240,32 @@ const server = http.createServer((req, res) => {
                 syncState.riderRegistrationsByKey[rKey] = {
                   ...(existingReg || {}),
                   ...reg,
+                };
+              }
+            }
+          }
+
+          if (Array.isArray(payload.registeredCustomers)) {
+            if (!syncState.customerAccountsByKey) {
+              syncState.customerAccountsByKey = {};
+            }
+            for (const acc of payload.registeredCustomers) {
+              if (!acc || typeof acc !== 'object') continue;
+              const cleanPhone = normalizePhone10(acc.phone);
+              const cleanEmail = normalizeEmailLower(acc.email);
+              const cKey = buildAccountKey(cleanPhone, cleanEmail);
+              if (!cKey) continue;
+              const prev = syncState.customerAccountsByKey[cKey];
+              if (!prev || Number(acc.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
+                syncState.customerAccountsByKey[cKey] = {
+                  ...(prev || {}),
+                  accountKey: cKey,
+                  role: 'CUSTOMER',
+                  name: String(acc.name || (prev && prev.name) || 'Customer').slice(0, 80),
+                  phone: cleanPhone || String((prev && prev.phone) || ''),
+                  email: cleanEmail || String((prev && prev.email) || ''),
+                  registeredAtEpochMs: Number((prev && prev.registeredAtEpochMs) || acc.registeredAtEpochMs || now),
+                  updatedAtEpochMs: Number(acc.updatedAtEpochMs || now),
                 };
               }
             }
@@ -2661,6 +2829,7 @@ const server = http.createServer((req, res) => {
 
         const restoredOrders = mergeMap('ordersById');
         const restoredRiders = mergeMap('riderRegistrationsByKey');
+        mergeMap('customerAccountsByKey');
         mergeMap('promoCouponsByCode');
         mergeMap('withdrawalRequestsById');
         mergeMap('supportTicketsById');
@@ -2922,6 +3091,121 @@ const server = http.createServer((req, res) => {
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ ok: false, error: 'Invalid OTP verification payload.' }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/auth/register-account' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many signup requests. Please wait shortly.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 32 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const role = String(parsed.role || 'CUSTOMER').trim().toUpperCase();
+        const deviceId = String(parsed.deviceId || '');
+        const sigCheck = verifySyncHmacHeaders(req, deviceId, role);
+        if (!sigCheck.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
+          return;
+        }
+        const cleanPhone = normalizePhone10(parsed.phone);
+        const cleanEmail = normalizeEmailLower(parsed.email);
+        const cleanName = String(parsed.name || '').trim().slice(0, 80);
+        if (!cleanPhone && !cleanEmail) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Valid 10-digit mobile number or email is required.' }));
+          return;
+        }
+        if (cleanPhone && (BLOCKED_FAKE_PHONES.has(cleanPhone) || new Set(cleanPhone.split('')).size <= 1)) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: 'Please enter a valid 10-digit Indian mobile number.' }));
+          return;
+        }
+        const now = Date.now();
+        let savedAccount = null;
+        if (role === 'RIDER') {
+          const rKey = buildAccountKey(cleanPhone, cleanEmail);
+          if (!syncState.riderRegistrationsByKey) syncState.riderRegistrationsByKey = {};
+          const prev = syncState.riderRegistrationsByKey[rKey] || {};
+          syncState.riderRegistrationsByKey[rKey] = {
+            ...prev,
+            riderKey: rKey,
+            riderId: prev.riderId || `RIDER-KYC-${(cleanPhone || String(now)).slice(-4)}`,
+            name: cleanName || prev.name || 'Rider Partner',
+            phone: cleanPhone || prev.phone || '',
+            email: cleanEmail || prev.email || '',
+            approvalStatus: prev.approvalStatus || 'NEEDS_KYC',
+            updatedAtEpochMs: now,
+          };
+          savedAccount = { role: 'RIDER', name: syncState.riderRegistrationsByKey[rKey].name, phone: cleanPhone, email: cleanEmail };
+        } else {
+          savedAccount = registerCustomerAccountInState({ name: cleanName, phone: cleanPhone, email: cleanEmail, now });
+        }
+        saveSyncState();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: true, registered: true, account: savedAccount, message: 'Account registered permanently.' }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid account registration payload.' }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/auth/check-existing-account' && req.method === 'POST') {
+    const rateCheck = checkIpRateLimit(req, true);
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: false, error: 'Too many login checks. Please wait shortly.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 32 * 1024) req.destroy();
+    });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const role = String(parsed.role || 'CUSTOMER').trim().toUpperCase();
+        const deviceId = String(parsed.deviceId || '');
+        const sigCheck = verifySyncHmacHeaders(req, deviceId, role);
+        if (!sigCheck.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
+          return;
+        }
+        const identifier = String(parsed.identifier || '').trim();
+        const found = findRegisteredAccountInState(role, identifier);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        if (found) {
+          res.end(JSON.stringify({
+            ok: true,
+            exists: true,
+            account: found,
+            message: 'Registered account verified.',
+          }));
+        } else {
+          res.end(JSON.stringify({
+            ok: true,
+            exists: false,
+            message: 'Account not found. Please tap New User Sign Up first.',
+          }));
+        }
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: false, error: 'Invalid existing account check payload.' }));
       }
     });
     return;
@@ -3244,8 +3528,10 @@ const server = http.createServer((req, res) => {
         totalOrders: syncPayload.orders.length,
         activeSearchingOrders,
         registeredRiders: syncPayload.riderRegistrations.length,
+        registeredCustomers: syncPayload.registeredCustomers.length,
         withdrawalRequestsCount: syncPayload.withdrawalRequests.length,
         permanentCloudProvider: detectPermanentCloudProvider(),
+        persistentDiskPath: STORAGE_PATHS.diskPath,
         permanentCloudHydrated,
         lastEmailBackupIso,
         securityStats: {

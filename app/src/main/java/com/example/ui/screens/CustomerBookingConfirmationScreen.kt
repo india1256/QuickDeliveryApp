@@ -188,20 +188,25 @@ fun CustomerBookingConfirmationScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = if (isB2bPostpaidSelected) "B2B Monthly Bill (₹0 Pay Now)" else "Final Payable Fare",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = SlateMuted
+                                color = SlateMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = String.format(Locale.US, "₹%.2f", finalTotalWithTipInr),
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = BrandOrange,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.testTag("confirmation_final_fare_text")
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = SoftOrangeSurface,
                             shape = RoundedCornerShape(8.dp),
@@ -223,6 +228,9 @@ fun CustomerBookingConfirmationScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = BrandOrange,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
@@ -250,7 +258,10 @@ fun CustomerBookingConfirmationScreen(
                             text = String.format(Locale.US, "Confirm Booking • ₹%.0f", finalTotalWithTipInr),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -274,7 +285,9 @@ fun CustomerBookingConfirmationScreen(
                             text = "Edit Booking Details",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
-                            color = PrimaryTeal
+                            color = PrimaryTeal,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -362,8 +375,12 @@ fun CustomerBookingConfirmationScreen(
                                 text = "Route Addresses",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = DeepNavy
+                                color = DeepNavy,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 color = SoftTealSurface,
                                 shape = RoundedCornerShape(6.dp)
@@ -373,6 +390,8 @@ fun CustomerBookingConfirmationScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepTeal,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -649,7 +668,10 @@ fun CustomerBookingConfirmationScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
                                 Icon(
                                     imageVector = Icons.Default.Inventory2,
                                     contentDescription = null,
@@ -661,9 +683,12 @@ fun CustomerBookingConfirmationScreen(
                                     text = "Parcel Specifications",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = DeepNavy
+                                    color = DeepNavy,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 color = Color(0xFFECFDF5),
                                 shape = RoundedCornerShape(6.dp),
@@ -684,7 +709,9 @@ fun CustomerBookingConfirmationScreen(
                                         text = "Max 20 kg Verified",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = VerifiedGreen
+                                        color = VerifiedGreen,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
@@ -785,8 +812,12 @@ fun CustomerBookingConfirmationScreen(
                                 text = "Itemized ₹ Fare Breakdown",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = DeepNavy
+                                color = DeepNavy,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 color = SoftTealSurface,
                                 shape = RoundedCornerShape(6.dp)
@@ -796,6 +827,8 @@ fun CustomerBookingConfirmationScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = DeepTeal,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -804,91 +837,116 @@ fun CustomerBookingConfirmationScreen(
                         // Base Fare
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = "Base Fare (Includes initial 1.0 km)",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = SlateMuted
+                                color = SlateMuted,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = detailedFare.formattedBaseFare,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = DeepNavy
+                                color = DeepNavy,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
                         // Distance Charge
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = String.format(Locale.US, "Distance Charge (%.1f km trip)", distanceKm),
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = SlateMuted
+                                color = SlateMuted,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = detailedFare.formattedDistanceCharge,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = DeepNavy
+                                color = DeepNavy,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
                         // Weight Charge
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = "Weight Charge (${packageWeightKg.ifBlank { "1.0" }} kg)",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = SlateMuted
+                                color = SlateMuted,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = detailedFare.formattedWeightCharge,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = DeepNavy
+                                color = DeepNavy,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
                         // Safe Handling & GST
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = "Safe Handling & 5% GST",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = SlateMuted
+                                color = SlateMuted,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = detailedFare.formattedTaxesAndFees,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = DeepNavy
+                                color = DeepNavy,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
                         if (extraAddonInr > 0.0 && extraAddonLabel.isNotBlank()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = extraAddonLabel,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = DeepNavy
+                                    color = DeepNavy,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = String.format(Locale.US, "+ ₹%.0f", extraAddonInr),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = DeepNavy
+                                    color = DeepNavy,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -897,19 +955,24 @@ fun CustomerBookingConfirmationScreen(
                         if (promoDiscountInr > 0.0 && appliedPromoCode.isNotBlank()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = "Promo Discount ($appliedPromoCode)",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = VerifiedGreen
+                                    color = VerifiedGreen,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = String.format(Locale.US, "- ₹%.0f", promoDiscountInr),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = VerifiedGreen
+                                    color = VerifiedGreen,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -917,19 +980,24 @@ fun CustomerBookingConfirmationScreen(
                         if (walletDiscountInr > 0.0) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = "Referral Wallet Credit",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = VerifiedGreen
+                                    color = VerifiedGreen,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = String.format(Locale.US, "- ₹%.0f", walletDiscountInr),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = VerifiedGreen
+                                    color = VerifiedGreen,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -938,18 +1006,23 @@ fun CustomerBookingConfirmationScreen(
                         if (tipInr > 0) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = "Rider Appreciation Tip",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = PrimaryTeal
+                                    color = PrimaryTeal,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "+ ₹$tipInr",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = PrimaryTeal
+                                    color = PrimaryTeal,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -966,7 +1039,7 @@ fun CustomerBookingConfirmationScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = "Total Final Fare",
                                     style = MaterialTheme.typography.titleSmall,
@@ -979,11 +1052,14 @@ fun CustomerBookingConfirmationScreen(
                                     color = SlateMuted
                                 )
                             }
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = String.format(Locale.US, "₹%.2f", finalTotalWithTipInr),
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = BrandOrange
+                                color = BrandOrange,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
