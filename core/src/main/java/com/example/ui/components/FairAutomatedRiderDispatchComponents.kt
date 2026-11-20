@@ -129,7 +129,7 @@ fun FairAutoRiderDispatchSummaryCard(
                             color = FairNavy
                         )
                         Text(
-                            text = "Sabhi Riders Ko Barabar Automatic Order • ₹150 Debt & Active-Order Guard",
+                            text = "Sabhi Riders Ko Barabar Automatic Order • ₹200 COD Limit & Active-Order Guard",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = FairEmerald
@@ -137,6 +137,7 @@ fun FairAutoRiderDispatchSummaryCard(
                     }
                 }
 
+                Spacer(modifier = Modifier.width(8.dp))
                 Surface(
                     color = FairEmeraldBg,
                     shape = RoundedCornerShape(20.dp),
@@ -157,7 +158,9 @@ fun FairAutoRiderDispatchSummaryCard(
                             text = "100% FAIR AUTO",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = FairEmerald
+                            color = FairEmerald,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -194,7 +197,7 @@ fun FairAutoRiderDispatchSummaryCard(
                     val fairCount = AutomatedFairRiderAssignmentEngine.getRiderFairAssignedCount(rider.riderId) +
                         rider.completedOrdersToday
                     val isSelected = selectedRiderId == rider.riderId
-                    val isDebtBlocked = rider.commissionDebtInr > 150.0
+                    val isDebtBlocked = rider.commissionDebtInr >= 200.0
 
                     val badgeColor = when {
                         !rider.isOnline -> Color(0xFF64748B)
@@ -205,7 +208,7 @@ fun FairAutoRiderDispatchSummaryCard(
 
                     val statusLabel = when {
                         !rider.isOnline -> "OFFLINE"
-                        isDebtBlocked -> "DEBT > ₹150"
+                        isDebtBlocked -> "COD DUE ≥ ₹200"
                         activeOrderForRider != null -> "BUSY (#${activeOrderForRider.orderId})"
                         else -> "READY (NEXT)"
                     }
@@ -271,13 +274,17 @@ fun FairAutoRiderDispatchSummaryCard(
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = badgeColor,
+                                        maxLines = 1,
+                                        softWrap = false,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }
                                 Text(
-                                    text = String.format(Locale.US, "Debt ₹%.0f", rider.commissionDebtInr),
+                                    text = String.format(Locale.US, "COD Due ₹%.0f", rider.commissionDebtInr),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF64748B)
+                                    color = Color(0xFF64748B),
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -308,11 +315,12 @@ fun FairAutoRiderDispatchSummaryCard(
                                 color = Color(0xFF92400E)
                             )
                             Text(
-                                text = "Waiting for an eligible online rider with 0 active orders & debt ≤ ₹150.",
+                                text = "Waiting for an eligible online rider with 0 active orders & COD due < ₹200.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFFB45309)
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
                                 val results = AutomatedFairRiderAssignmentEngine.retryAllSearchingOrdersFairly(repository)
@@ -329,7 +337,13 @@ fun FairAutoRiderDispatchSummaryCard(
                         ) {
                             Icon(Icons.Default.Autorenew, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Retry Auto-Match", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Retry Auto-Match",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                     }
                 }

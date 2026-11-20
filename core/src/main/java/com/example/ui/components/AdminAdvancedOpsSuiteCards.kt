@@ -546,7 +546,10 @@ fun AdminDisputeRefundDeskCard(
                                     text = "${dispute.disputeId} • Order #${dispute.orderId}",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = OpsNavy
+                                    color = OpsNavy,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp)
                                 )
                                 Surface(
                                     color = when (dispute.status) {
@@ -565,6 +568,8 @@ fun AdminDisputeRefundDeskCard(
                                             DisputeStatus.REFUNDED -> OpsEmerald
                                             DisputeStatus.REJECTED -> OpsSlate
                                         },
+                                        maxLines = 1,
+                                        softWrap = false,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                     )
                                 }

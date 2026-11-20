@@ -203,7 +203,14 @@ fun CustomerRepeatLastOrderCard(
             ) {
                 Icon(Icons.Default.Replay, contentDescription = null, tint = EnhTeal, modifier = Modifier.size(15.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Fill Route", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = EnhTeal)
+                Text(
+                    text = "Fill Route",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = EnhTeal,
+                    maxLines = 1,
+                    softWrap = false
+                )
             }
         }
     }
@@ -269,7 +276,7 @@ fun CustomerScheduledAndMultiDropCard(
                             FilterChip(
                                 selected = selectedDateLabel == day,
                                 onClick = { onSelectDateLabel(day) },
-                                label = { Text(day, fontWeight = FontWeight.Bold) }
+                                label = { Text(day, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                             )
                         }
                     }
@@ -281,7 +288,7 @@ fun CustomerScheduledAndMultiDropCard(
                             FilterChip(
                                 selected = selectedTimeSlot == slot,
                                 onClick = { onSelectTimeSlot(slot) },
-                                label = { Text(slot, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold) }
+                                label = { Text(slot, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                             )
                         }
                     }
@@ -360,7 +367,10 @@ fun CustomerReferralWalletCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Icon(Icons.Default.CardGiftcard, contentDescription = null, tint = EnhOrange)
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
@@ -378,6 +388,7 @@ fun CustomerReferralWalletCard(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 OutlinedButton(
                     onClick = {
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -392,11 +403,19 @@ fun CustomerReferralWalletCard(
                         }
                     },
                     shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                     modifier = Modifier.height(48.dp)
                 ) {
                     Icon(Icons.Default.Share, contentDescription = "Share Invite", tint = EnhOrange, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Invite", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = EnhOrange)
+                    Text(
+                        text = "Invite",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = EnhOrange,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
 
@@ -429,7 +448,13 @@ fun CustomerReferralWalletCard(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.height(48.dp)
                 ) {
-                    Text("Claim", fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(
+                        text = "Claim",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
 
@@ -443,8 +468,10 @@ fun CustomerReferralWalletCard(
                         text = "Use ₹$walletBonusInr Wallet Bonus on this order",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = EnhGreen
+                        color = EnhGreen,
+                        modifier = Modifier.weight(1f)
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Switch(
                         checked = useWalletBonus,
                         onCheckedChange = onToggleUseWallet
@@ -492,13 +519,40 @@ fun CustomerParcelInsuranceCard(
             )
             Icon(Icons.Default.Shield, contentDescription = null, tint = EnhGreen, modifier = Modifier.size(20.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Secure Parcel Coverage (+₹${flags.insuranceFeeInr})",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = EnhNavy
-                )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Secure Parcel Coverage",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = EnhNavy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        color = EnhGreen.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "+₹${flags.insuranceFeeInr}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = EnhGreen,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        )
+                    }
+                }
                 Text(
                     text = "Covers accidental damage or loss up to ₹5,000 during transit",
                     style = MaterialTheme.typography.labelSmall,
@@ -545,7 +599,14 @@ fun CustomerShareLiveTrackingButton(
     ) {
         Icon(Icons.Default.Share, contentDescription = "Share Tracking", tint = Color(0xFF7DD3FC), modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(6.dp))
-        Text("Share Live Order Tracking", fontWeight = FontWeight.Bold, color = Color.White)
+        Text(
+            text = "Share Live Order Tracking",
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

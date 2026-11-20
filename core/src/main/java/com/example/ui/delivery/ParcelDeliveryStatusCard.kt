@@ -280,7 +280,7 @@ fun IosCrossPlatformCompanionDialog(
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
                         Text(
-                            text = "Shared Firebase Project: ${CrossPlatformDeliveryEngine.SHARED_FIREBASE_PROJECT_ID} • 20% Commission • ₹150 Debt Cap",
+                            text = "Shared Firebase Project: ${CrossPlatformDeliveryEngine.SHARED_FIREBASE_PROJECT_ID} • 20% Commission • ₹200 COD Limit",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = Color(0xFF0D1B2A)

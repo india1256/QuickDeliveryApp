@@ -459,7 +459,10 @@ fun PorterRiderDrawerContent(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Surface(
                                 color = if (isSuspended) PorterRed else if (isOnline) Color(0xFF10B981) else Color(0xFF94A3B8),
                                 shape = CircleShape,
@@ -470,9 +473,12 @@ fun PorterRiderDrawerContent(
                                 text = if (isSuspended) "DUTY: SUSPENDED" else if (isOnline) "DUTY: ONLINE" else "DUTY: OFFLINE",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = Color.White
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = if (isOnline) Color(0xFF10B981).copy(alpha = 0.35f) else Color.White.copy(alpha = 0.2f),
                             shape = RoundedCornerShape(6.dp)
@@ -482,6 +488,8 @@ fun PorterRiderDrawerContent(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = Color.White,
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -1106,6 +1114,7 @@ private fun PorterDrawerMenuItem(
             }
 
             if (badge != null) {
+                Spacer(modifier = Modifier.width(6.dp))
                 Surface(
                     color = badgeColor.copy(alpha = 0.12f),
                     shape = RoundedCornerShape(6.dp),
@@ -1116,6 +1125,8 @@ private fun PorterDrawerMenuItem(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = badgeColor,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
@@ -1242,7 +1253,7 @@ fun PorterAutoOfflineWarningCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "AUTO-OFFLINE ACTIVATED (≤ -₹150)",
+                        text = "COD LIMIT WARNING (₹200 Cap)",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color(0xFF92400E)
@@ -1254,7 +1265,7 @@ fun PorterAutoOfflineWarningCard(
             }
 
             Text(
-                text = "Order delivery was completed, but your wallet balance is -₹${Math.abs(walletBalance.toInt())}. As per Quick Delivery rules, duty was automatically set to OFFLINE after delivery. Please recharge above -₹150 to go back Online.",
+                text = "Your 20% COD commission due is -₹${Math.abs(walletBalance.toInt())}. Transfer pending COD dues to Admin before reaching the ₹200 limit (or complete a Prepaid Online order for automatic offset) to keep accepting orders seamlessly.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF78350F)
             )
@@ -1316,7 +1327,10 @@ fun PorterWalletRechargeDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Surface(
                             color = PorterBlue.copy(alpha = 0.12f),
                             shape = CircleShape,
@@ -1361,7 +1375,7 @@ fun PorterWalletRechargeDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Current Partner Balance",
                                 style = MaterialTheme.typography.labelSmall,
@@ -1371,27 +1385,35 @@ fun PorterWalletRechargeDialog(
                                 text = String.format(Locale.US, "₹%.0f", currentBalance),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = if (currentBalance < 0) PorterRed else PorterGreen
+                                color = if (currentBalance < 0) PorterRed else PorterGreen,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
                         if (currentBalance <= -200.0) {
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(color = PorterRed, shape = RoundedCornerShape(6.dp)) {
                                 Text(
                                     text = "ID SUSPENDED",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         } else if (currentBalance <= -150.0) {
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(color = PorterAmber, shape = RoundedCornerShape(6.dp)) {
                                 Text(
-                                    text = "OFFLINE DUE",
+                                    text = "NEAR ₹200 LIMIT",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -1495,7 +1517,10 @@ fun PorterIncentivesDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Icon(Icons.Default.EmojiEvents, contentDescription = null, tint = PorterAmber)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -1520,18 +1545,23 @@ fun PorterIncentivesDialog(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = "Today's Deliveries: $completedToday trips",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
-                            color = PorterNavy
+                            color = PorterNavy,
+                            modifier = Modifier.weight(1f)
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Target: $target2 trips",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF64748B)
+                            color = Color(0xFF64748B),
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                     LinearProgressIndicator(
@@ -1587,7 +1617,10 @@ private fun IncentiveMilestoneRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
                 Icon(
                     imageVector = if (completed) Icons.Default.CheckCircle else Icons.Default.EmojiEvents,
                     contentDescription = null,
@@ -1610,11 +1643,14 @@ private fun IncentiveMilestoneRow(
                 }
             }
 
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "+₹$bonusAmountInr",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.ExtraBold,
-                color = if (completed) PorterGreen else PorterOrange
+                color = if (completed) PorterGreen else PorterOrange,
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
@@ -1656,7 +1692,10 @@ fun PorterTripHistoryDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Icon(Icons.Default.History, contentDescription = null, tint = PorterBlue)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -1721,13 +1760,19 @@ fun PorterTripHistoryDialog(
                                             text = "Order #${order.orderId} • ${order.customerName}",
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.Bold,
-                                            color = PorterNavy
+                                            color = PorterNavy,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
                                         )
+                                        Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = "Earned: ${order.riderEarning}",
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = PorterGreen
+                                            color = PorterGreen,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                     }
                                     Text(
@@ -1791,7 +1836,10 @@ fun PorterGuidelinesDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Icon(Icons.Default.Description, contentDescription = null, tint = PorterNavy)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -1810,12 +1858,12 @@ fun PorterGuidelinesDialog(
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     RuleBullet(
-                        title = "1. Negative Balance Limit (-₹150)",
-                        desc = "If wallet balance drops to -₹150, you can complete your current ongoing order. After order completion, duty will automatically switch to OFFLINE until recharged."
+                        title = "1. ₹200 COD Commission Limit (Auto-Block)",
+                        desc = "On COD orders you keep 80% cash and 20% platform fee is tracked in your Ledger Balance. Once unpaid COD dues reach ₹200, new orders auto-lock until cleared."
                     )
                     RuleBullet(
-                        title = "2. Partner ID Suspension (-₹200)",
-                        desc = "If negative balance reaches -₹200 or below, your Partner ID is SUSPENDED. All orders are blocked until dues are cleared."
+                        title = "2. Automatic Prepaid Offset & Instant Unlock",
+                        desc = "Completing an Online Prepaid order automatically offsets negative COD dues from your 80% share and credits remaining profit to your wallet. Paying dues to Admin resets ledger to ₹0 and unlocks orders immediately."
                     )
                     RuleBullet(
                         title = "3. 80% Earnings & 100% Tips",
@@ -2099,7 +2147,10 @@ fun PorterDrawerEarningsAndWalletSection(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.AccountBalance,
                                 contentDescription = null,
@@ -2111,10 +2162,13 @@ fun PorterDrawerEarningsAndWalletSection(
                                 text = "PENDING PAYOUT",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF64748B)
+                                color = Color(0xFF64748B),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
+                        Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = PorterAmber.copy(alpha = 0.12f),
                             shape = RoundedCornerShape(6.dp)
@@ -2124,6 +2178,8 @@ fun PorterDrawerEarningsAndWalletSection(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFFB45309),
+                                maxLines = 1,
+                                softWrap = false,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -2134,12 +2190,14 @@ fun PorterDrawerEarningsAndWalletSection(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = String.format(Locale.US, "₹%.2f", pendingPayout),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = PorterNavy
+                                color = PorterNavy,
+                                maxLines = 1,
+                                softWrap = false
                             )
                             Text(
                                 text = if (hasBankDetails && bankSummary.isNotBlank()) {
@@ -2152,6 +2210,7 @@ fun PorterDrawerEarningsAndWalletSection(
                             )
                         }
 
+                        Spacer(modifier = Modifier.width(8.dp))
                         OutlinedButton(
                             onClick = onInstantCashout,
                             shape = RoundedCornerShape(8.dp),
@@ -2171,7 +2230,9 @@ fun PorterDrawerEarningsAndWalletSection(
                                 Text(
                                     text = "Cashout",
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -2203,7 +2264,10 @@ fun PorterDrawerEarningsAndWalletSection(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.TrendingUp,
                                 contentDescription = null,
@@ -2215,10 +2279,13 @@ fun PorterDrawerEarningsAndWalletSection(
                                 text = "Daily Earnings Breakdown",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF64748B)
+                                color = Color(0xFF64748B),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
+                        Spacer(modifier = Modifier.width(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Surface(
                                 color = PorterBlue.copy(alpha = 0.08f),
@@ -2229,6 +2296,8 @@ fun PorterDrawerEarningsAndWalletSection(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = PorterBlue,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -2263,7 +2332,7 @@ fun PorterDrawerEarningsAndWalletSection(
                                 valueColor = PorterOrange
                             )
                             DailyBreakdownRow(
-                                label = "Platform Fee / Commission (15%)",
+                                label = "Platform Fee / Commission (20%)",
                                 value = String.format(Locale.US, "-₹%.2f", platformDeduction),
                                 valueColor = Color(0xFFEF4444)
                             )
@@ -2282,13 +2351,17 @@ fun PorterDrawerEarningsAndWalletSection(
                                     text = "Net Daily Take-Home",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = PorterNavy
+                                    color = PorterNavy,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = String.format(Locale.US, "₹%.2f", netTakeHome),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Black,
-                                    color = PorterGreen
+                                    color = PorterGreen,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -2313,13 +2386,17 @@ private fun DailyBreakdownRow(
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF475569)
+            color = Color(0xFF475569),
+            modifier = Modifier.weight(1f)
         )
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Bold,
-            color = valueColor
+            color = valueColor,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -2359,7 +2436,10 @@ fun PorterInstantCashoutDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Surface(
                             color = PorterTeal.copy(alpha = 0.12f),
                             shape = CircleShape,
@@ -2430,35 +2510,43 @@ fun PorterInstantCashoutDialog(
                         if (accountHolderDisplay.isNotBlank()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("Account Holder", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
-                                Text(accountHolderDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(accountHolderDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Destination Bank", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
-                            Text(bankAccountDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(bankAccountDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (ifscDisplay.isNotBlank()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("IFSC Code", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
-                                Text(ifscDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(ifscDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy, maxLines = 1, softWrap = false)
                             }
                         }
                         if (upiIdDisplay.isNotBlank()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("UPI ID", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
-                                Text(upiIdDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(upiIdDisplay, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterNavy, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     } else {
@@ -2471,10 +2559,12 @@ fun PorterInstantCashoutDialog(
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Transfer Mode", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
-                        Text("Admin Verified IMPS / UPI", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterTeal)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Admin Verified IMPS / UPI", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = PorterTeal, maxLines = 1, softWrap = false)
                     }
                 }
 

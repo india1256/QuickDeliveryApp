@@ -1624,7 +1624,7 @@ private fun EnterpriseDashboardOverviewPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_overview_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         val waitingUnassignedOrders = orders.filter { it.orderStatus == OrderStatus.SEARCHING_RIDER }
@@ -3193,7 +3193,7 @@ private fun EnterpriseOrdersPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_live_orders_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Top Action Bar
@@ -3573,7 +3573,7 @@ private fun EnterpriseLiveTrackingPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_live_tracking_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "live_tracking_map_hero") {
@@ -3802,7 +3802,7 @@ private fun EnterpriseRidersPage(
             "PAN",
             "Driving License",
             "Wallet (₹)",
-            "Debt (₹ / ₹150 Cap)",
+            "COD Due (₹ / ₹200 Limit)",
             "Deliveries",
             "Live GPS"
         )
@@ -3825,7 +3825,7 @@ private fun EnterpriseRidersPage(
                 maskDocForAdmin(vault.panNumber, hasSensitivePiiPermission),
                 maskDocForAdmin(vault.drivingLicenseNumber, hasSensitivePiiPermission),
                 String.format(Locale.US, "₹%.0f", r.walletBalanceInr),
-                String.format(Locale.US, "₹%.0f / ₹150", r.commissionDebtInr),
+                String.format(Locale.US, "₹%.0f / ₹200", r.commissionDebtInr),
                 "${r.totalDeliveries}",
                 String.format(Locale.US, "%.4f, %.4f", r.currentLat, r.currentLng)
             )
@@ -3836,7 +3836,7 @@ private fun EnterpriseRidersPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_riders_all_data_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "enterprise_riders_pending_approvals") {
@@ -3918,7 +3918,7 @@ private fun EnterpriseRidersPage(
                     riderRiskEntries.take(4).forEach { (riderItem, declines, _) ->
                         val riskTags = buildList {
                             if (declines > 0) add("$declines Declines")
-                            if (riderItem.commissionDebtInr >= 100.0) add("Debt ₹${riderItem.commissionDebtInr.toInt()}/₹150")
+                            if (riderItem.commissionDebtInr >= 150.0) add("COD Due ₹${riderItem.commissionDebtInr.toInt()}/₹200")
                             if (overspeedState.isAlarmRinging) add("Speed >60 km/h")
                         }.joinToString(" • ").ifBlank { "0 Declines • Clean Record" }
 
@@ -3993,7 +3993,7 @@ private fun EnterpriseRidersPage(
                     "ALL" to "All Riders (${riders.size})",
                     "ONLINE" to "Online (${riders.count { it.isOnline }})",
                     "VERIFIED" to "KYC Verified (${riders.count { it.verificationStatus == RiderVerificationStatus.VERIFIED }})",
-                    "DEBT_WARNING" to "Near ₹150 Debt Cap (${riders.count { it.commissionDebtInr >= 100.0 }})"
+                    "DEBT_WARNING" to "Near ₹200 COD Limit (${riders.count { it.commissionDebtInr >= 150.0 }})"
                 ),
                 selectedFilterKey = riderFilter,
                 onFilterSelected = { riderFilter = it },
@@ -4095,7 +4095,7 @@ private fun EnterpriseRidersPage(
                         Text(
                             text = String.format(
                                 Locale.US,
-                                "Wallet: ₹%.0f • Debt: ₹%.0f/₹150 • Tips: ₹%d • %d Trips",
+                                "Wallet: ₹%.0f • COD Due: ₹%.0f/₹200 • Tips: ₹%d • %d Trips",
                                 rider.walletBalanceInr,
                                 rider.commissionDebtInr,
                                 riderTipsEarned,
@@ -4256,7 +4256,7 @@ private fun EnterpriseCustomersPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_customers_all_data_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "customers_paginated_xlsx_table") {
@@ -4446,7 +4446,7 @@ private fun EnterpriseKycPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_kyc_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         statusBanner?.let { msg ->
@@ -4735,7 +4735,7 @@ private fun EnterprisePaymentsSettlementsPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_settlements_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // KPI Summary Row
@@ -5174,7 +5174,7 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_commission_earnings_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 1. 20% / 80% Split Hero Card
@@ -5195,7 +5195,7 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
                         color = Color.White
                     )
                     Text(
-                        text = "Strict automated revenue split on every order + 100% customer tips to rider + ₹150 negative wallet debt cap enforcement.",
+                        text = "Strict automated revenue split on every order + 100% customer tips to rider + ₹200 automatic COD commission limit enforcement.",
                         style = MaterialTheme.typography.labelSmall,
                         color = SidebarMintText
                     )
@@ -5207,26 +5207,32 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
                         DashboardMetricKpiCard(
                             title = "100% GROSS ORDER FARE",
                             primaryValue = String.format(Locale.US, "₹%.0f", totalGmvInr),
-                            subtitle = "${orders.size} Orders",
+                            subtitle = "${orders.size} Orders • Tap: All",
                             accentColor = SidebarActiveTeal,
-                            onClick = {},
-                            modifier = Modifier.weight(1f)
+                            onClick = { splitFilter = "ALL" },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_kpi_gross_fare_btn")
                         )
                         DashboardMetricKpiCard(
                             title = "20% COMPANY COMMISSION",
                             primaryValue = String.format(Locale.US, "₹%.0f", companyCommission20Inr),
-                            subtitle = "Exact 20.0% Platform Share",
+                            subtitle = "20% Share • Tap: COD",
                             accentColor = DashGold,
-                            onClick = {},
-                            modifier = Modifier.weight(1f)
+                            onClick = { splitFilter = "COD" },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_kpi_company_commission_btn")
                         )
                         DashboardMetricKpiCard(
                             title = "80% RIDER EARNINGS",
                             primaryValue = String.format(Locale.US, "₹%.0f", riderEarnings80Inr),
-                            subtitle = "+ ₹$totalTipsInr Tips (0% Cut)",
+                            subtitle = "+ ₹$totalTipsInr Tips • Prepaid",
                             accentColor = DashEmerald,
-                            onClick = {},
-                            modifier = Modifier.weight(1f)
+                            onClick = { splitFilter = "PREPAID" },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_kpi_rider_earnings_btn")
                         )
                     }
 
@@ -5307,7 +5313,7 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
             )
         }
 
-        // 3. Rider ₹150 Commission Debt Cap Monitor
+        // 3. Rider ₹200 COD Commission Limit Monitor
         item(key = "rider_debt_cap_monitor_card") {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -5320,13 +5326,13 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "🛡️ ₹150 Maximum Commission Debt Cap Monitor (Auto-Dispatch Eligibility)",
+                        text = "🛡️ ₹200 COD Commission Limit Monitor (Auto-Dispatch Eligibility)",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = SidebarDarkTeal
                     )
                     riders.forEach { r ->
-                        val isOverCap = r.commissionDebtInr > 150.0
+                        val isOverCap = r.commissionDebtInr >= 200.0
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -5343,7 +5349,7 @@ private fun EnterpriseCommissionAndRiderEarningsPage(
                                     color = DashNavy
                                 )
                                 Text(
-                                    text = "20% COD Commission Debt: ₹${r.commissionDebtInr.toInt()} / ₹150 Cap • ${if (isOverCap) "BLOCKED FROM DISPATCH" else "ELIGIBLE FOR DISPATCH"}",
+                                    text = "20% COD Commission Due: ₹${r.commissionDebtInr.toInt()} / ₹200 Limit • ${if (isOverCap) "AUTO-LOCKED AT LIMIT" else "ELIGIBLE FOR DISPATCH"}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (isOverCap) DashCrimson else DashEmerald
                                 )
@@ -5393,7 +5399,7 @@ private fun EnterpriseComplaintsAndSosPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_complaints_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "complaints_dispute_refund_desk") {
@@ -5903,7 +5909,7 @@ private fun EnterpriseNotificationsPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_notifications_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 1. Live Targeted FCM Push & Live Banner Broadcast Console
@@ -6128,7 +6134,7 @@ private fun EnterpriseSettingsPage(
         modifier = Modifier
             .fillMaxSize()
             .testTag("admin_page_settings_list"),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 0. Live 3-Phone Server Connectivity & Anti-Fake-Order Security Card
@@ -6342,7 +6348,7 @@ private fun EnterpriseSettingsPage(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Zero-Partiality Fair Auto-Dispatch", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            Text("Round-robin fair assignment across online riders within 5 km & ≤₹150 debt cap", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                            Text("Round-robin fair assignment across online riders within 5 km & <₹200 COD limit", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
                         }
                         Switch(
                             checked = autoDispatchEnabled,

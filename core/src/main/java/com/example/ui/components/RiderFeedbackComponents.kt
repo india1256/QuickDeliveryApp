@@ -1259,7 +1259,10 @@ fun RiderReceivedFeedbackCard(
                 text = "💝 Customer Tip Received (100% Yours)",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
-                color = FeedbackNavy
+                color = FeedbackNavy,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
             )
             Surface(
                 color = Color(0xFFFEF3C7),
@@ -1271,6 +1274,8 @@ fun RiderReceivedFeedbackCard(
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF92400E),
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }

@@ -1873,7 +1873,7 @@ fun RiderPartnerCompactScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .testTag("rider_compact_main_list"),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Post-Delivery Celebratory Motivational Notification Banner (sent automatically after every delivery!)

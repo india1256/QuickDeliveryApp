@@ -1739,8 +1739,10 @@ fun RiderEarningsDashboardScreen(
                                     text = "No Completed Trips Yet (0 Trips)",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = DashNavy
+                                    color = DashNavy,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
                                     color = Color(0xFFECFDF5),
                                     shape = RoundedCornerShape(8.dp),
@@ -1751,6 +1753,8 @@ fun RiderEarningsDashboardScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = DashTeal,
+                                        maxLines = 1,
+                                        softWrap = false,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
                                 }

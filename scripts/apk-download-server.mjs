@@ -13,7 +13,7 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
-const APP_SUITE_VERSION = '6.7.0';
+const APP_SUITE_VERSION = '6.7.1';
 const ADMIN_ALLOWLIST_EMAILS = new Set([
   'ravindergupta141@gmail.com',
   'admin@quickdelivery.co.in',
@@ -1771,39 +1771,44 @@ function renderFirebaseHostingHomeHtml() {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="canonical" href="${BRAND_ORIGIN}/" />
-  <title>Quick Delivery (${BRAND_DOMAIN}) — Local Parcel Delivery Suite</title>
+  <title>Quick Delivery — Fast. Simple. Secure. Local Parcel Delivery</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #022C22; color: #F8FAFC; line-height: 1.55; }
     .wrap { max-width: 740px; margin: 0 auto; }
-    .hero { background: linear-gradient(135deg, #065F46, #042F2E); border: 2px solid #34D399; border-radius: 18px; padding: 22px; margin-bottom: 16px; }
-    .badge { display: inline-block; background: #10B981; color: #022C22; font-weight: 800; font-size: 11px; padding: 4px 10px; border-radius: 999px; text-transform: uppercase; }
-    h1 { margin: 10px 0 6px; font-size: 24px; color: #ECFDF5; }
+    .hero { background: linear-gradient(135deg, #065F46, #042F2E); border: 2px solid #34D399; border-radius: 18px; padding: 24px; margin-bottom: 16px; }
+    .badge { display: inline-block; background: #10B981; color: #022C22; font-weight: 800; font-size: 11px; padding: 4px 10px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.4px; }
+    h1 { margin: 10px 0 6px; font-size: 26px; color: #ECFDF5; }
     .card { background: #0F172A; border: 1px solid #1E293B; border-radius: 14px; padding: 18px; margin-bottom: 12px; }
     h2 { margin: 0 0 8px; font-size: 16px; color: #6EE7B7; }
+    p { margin: 6px 0; color: #CBD5E1; font-size: 14px; }
     a { color: #6EE7B7; }
     .pill { display: inline-block; background: #059669; color: #fff; text-decoration: none; font-weight: 700; padding: 10px 14px; border-radius: 10px; margin: 4px 6px 4px 0; font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
+    .feat { background: #1E293B; border-radius: 10px; padding: 12px; font-size: 13px; color: #E2E8F0; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="hero">
-      <span class="badge">Official Site • ${BRAND_DOMAIN}</span>
-      <h1>Quick Delivery Logistics</h1>
-      <p>Fast door-to-door local parcel delivery, OTP &amp; digital-signature handover, transparent upfront pricing, and live GPS partner tracking.</p>
+      <span class="badge">Official Brand Portal • ${BRAND_DOMAIN}</span>
+      <h1>Quick Delivery</h1>
+      <p style="color:#D1FAE5;font-size:15px;"><b>FAST. SIMPLE. SECURE.</b> On-demand local doorstep parcel pickup &amp; delivery up to 20 kg with live GPS tracking, verified handover proofs, and instant transparent fares.</p>
     </div>
     <div class="card">
-      <h2>Quick Delivery Mobile Suite (v${APP_SUITE_VERSION})</h2>
-      <p><b>Customer App:</b> Instant booking, saved address labels, live GPS tracking, UPI/COD checkout &amp; GST receipts.</p>
-      <p><b>Partner Quick Delivery:</b> 80% base fare + 100% customer tips, same-day payouts, pickup/drop camera proof &amp; smart shift controls.</p>
-      <p><b>Quick Delivery Admin:</b> Cloud Firestore real-time fleet console, B2B/Enterprise switches &amp; settlement ledger.</p>
+      <h2>Why Choose Quick Delivery?</h2>
+      <div class="grid">
+        <div class="feat"><b>⚡ Rapid Doorstep Pickup</b><br/>Bike, Scooter, Auto &amp; Mini-Truck options for every parcel up to 20 kg.</div>
+        <div class="feat"><b>📍 Live GPS Tracking</b><br/>Track every pickup and drop milestone with verified photo &amp; signature proof.</div>
+        <div class="feat"><b>💳 Transparent Pricing</b><br/>Upfront itemized fares with UPI, Card, Net Banking &amp; Cash on Delivery.</div>
+      </div>
     </div>
     <div class="card">
-      <h2>Play Store Compliance &amp; Legal Pages</h2>
+      <h2>Customer Support &amp; Legal Compliance</h2>
       <a class="pill" href="/privacy-policy">Privacy Policy</a>
       <a class="pill" href="/terms" style="background:#0D9488;">Terms of Service</a>
       <a class="pill" href="/delete-account" style="background:#B91C1C;">Delete Account &amp; Data</a>
-      <p style="margin-top:12px;font-size:13px;color:#94A3B8;">Official Contact &amp; Support Email: <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a></p>
+      <p style="margin-top:12px;font-size:13px;color:#94A3B8;">Need help with a parcel or account? Contact <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a></p>
     </div>
   </div>
 </body>
@@ -1843,6 +1848,7 @@ function configureNginxDirectApkServing() {
       }
     }
 
+    const htmlPublicHome = renderFirebaseHostingHomeHtml();
     const htmlAll = renderDownloadPageHtml('', '');
     const htmlCustomer = renderDownloadPageHtml('QuickDelivery-Customer.apk', 'CUSTOMER');
     const htmlRider = renderDownloadPageHtml('QuickDelivery-Rider-Partner.apk', 'RIDER');
@@ -1852,7 +1858,8 @@ function configureNginxDirectApkServing() {
     const htmlDelete = renderLegalPageHtml('delete');
 
     if (fs.existsSync('/var/www/assets')) {
-      fs.writeFileSync('/var/www/assets/warmup.html', htmlAll, 'utf-8');
+      fs.writeFileSync('/var/www/assets/warmup.html', htmlPublicHome, 'utf-8');
+      fs.writeFileSync('/var/www/assets/suite.html', htmlAll, 'utf-8');
       fs.writeFileSync('/var/www/assets/customer-apk.html', htmlCustomer, 'utf-8');
       fs.writeFileSync('/var/www/assets/rider-apk.html', htmlRider, 'utf-8');
       fs.writeFileSync('/var/www/assets/admin-apk.html', htmlAdmin, 'utf-8');
@@ -1910,8 +1917,20 @@ function configureNginxDirectApkServing() {
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
 
+        location = /customer {
+            alias /var/www/assets/customer-apk.html;
+            default_type text/html;
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
         location = /customer-apk {
             alias /var/www/assets/customer-apk.html;
+            default_type text/html;
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        location = /rider {
+            alias /var/www/assets/rider-apk.html;
             default_type text/html;
             add_header Cache-Control "no-store, no-cache, must-revalidate";
         }
@@ -1922,8 +1941,20 @@ function configureNginxDirectApkServing() {
             add_header Cache-Control "no-store, no-cache, must-revalidate";
         }
 
+        location = /admin {
+            alias /var/www/assets/admin-apk.html;
+            default_type text/html;
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
         location = /admin-apk {
             alias /var/www/assets/admin-apk.html;
+            default_type text/html;
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        location = /suite {
+            alias /var/www/assets/suite.html;
             default_type text/html;
             add_header Cache-Control "no-store, no-cache, must-revalidate";
         }
@@ -2964,8 +2995,7 @@ const server = http.createServer((req, res) => {
           `This code is valid for 10 minutes. Do not share this code with anyone.`,
           ``,
           `Regards,`,
-          `Quick Delivery Team`,
-          `${OTP_FROM_EMAIL} | https://${BRAND_DOMAIN}`,
+          `Quick Delivery Security Team`,
         ].join('\n');
         const htmlBody = `
           <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;border:1px solid #e2e8f0;border-radius:12px;color:#0f172a;">
@@ -2974,9 +3004,9 @@ const server = http.createServer((req, res) => {
             <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;padding:16px;text-align:center;margin-bottom:16px;">
               <span style="font-size:30px;font-weight:bold;letter-spacing:6px;color:#0f172a;">${otpCode}</span>
             </div>
-            <p style="margin:0 0 8px 0;font-size:12px;color:#64748b;">Valid for 10 minutes. If you did not request this code, you can safely ignore this email.</p>
+            <p style="margin:0 0 8px 0;font-size:12px;color:#64748b;">Valid for 10 minutes. Never share this OTP with anyone. If you did not request this code, you can safely ignore this email.</p>
             <hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;" />
-            <p style="margin:0;font-size:11px;color:#94a3b8;">Sent by Quick Delivery (${OTP_FROM_EMAIL}) • ${BRAND_DOMAIN}</p>
+            <p style="margin:0;font-size:11px;color:#94a3b8;">Quick Delivery Security • Automated Verification Email</p>
           </div>
         `.trim();
 
@@ -3665,6 +3695,18 @@ const server = http.createServer((req, res) => {
   const params = new URLSearchParams(queryString);
   let autoDownload = params.get('download') || '';
   let roleFilter = params.get('role') || '';
+  const isRoleApkRoute =
+    pathname === '/customer' ||
+    pathname === '/customer-apk' ||
+    pathname === '/rider' ||
+    pathname === '/rider-apk' ||
+    pathname === '/admin' ||
+    pathname === '/admin-apk' ||
+    pathname === '/suite' ||
+    pathname === '/all-apks' ||
+    Boolean(autoDownload) ||
+    Boolean(roleFilter);
+
   if (pathname === '/customer' || pathname === '/customer-apk' || autoDownload.includes('Customer')) {
     autoDownload = 'QuickDelivery-Customer.apk';
     roleFilter = 'CUSTOMER';
@@ -3675,7 +3717,12 @@ const server = http.createServer((req, res) => {
     autoDownload = 'QuickDelivery-Admin-Enterprise.apk';
     roleFilter = 'ADMIN';
   }
-  const html = renderDownloadPageHtml(autoDownload, roleFilter);
+
+  // Root URL (https://quickdelivery.co.in/) MUST show the official public brand page — NEVER expose
+  // internal Rider/Admin APK download links when customers visit the domain or open links from emails.
+  const html = isRoleApkRoute
+    ? renderDownloadPageHtml(autoDownload, roleFilter)
+    : renderFirebaseHostingHomeHtml();
   const buf = Buffer.from(html, 'utf-8');
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',

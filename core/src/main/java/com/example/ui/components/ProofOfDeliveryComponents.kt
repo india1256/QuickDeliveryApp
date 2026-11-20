@@ -14,6 +14,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -158,7 +159,12 @@ fun DigitalSignaturePadCanvas(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
                 Icon(
                     imageVector = Icons.Default.Edit,
                     contentDescription = "Digital Signature",
@@ -181,8 +187,9 @@ fun DigitalSignaturePadCanvas(
                 },
                 shape = RoundedCornerShape(8.dp),
                 border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier
-                    .height(32.dp)
+                    .height(34.dp)
                     .testTag(clearButtonTestTag)
             ) {
                 Icon(
@@ -196,7 +203,9 @@ fun DigitalSignaturePadCanvas(
                     text = "Clear",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF475569)
+                    color = Color(0xFF475569),
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }

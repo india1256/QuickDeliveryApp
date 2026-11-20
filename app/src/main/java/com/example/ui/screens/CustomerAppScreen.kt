@@ -2177,13 +2177,17 @@ fun CustomerAppScreen(
                                 text = "Total Paid / Payable (incl. GST)",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = DeepNavy
+                                color = DeepNavy,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = invOrder.totalAmount,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = PrimaryTeal
+                                color = PrimaryTeal,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -2492,7 +2496,7 @@ fun CustomerAppScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .nestedScroll(clearFocusOnUserScrollConnection),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Post-Delivery Celebratory Motivational Notification Banner (sent automatically to Customer after every delivery!)
@@ -4696,55 +4700,84 @@ fun CustomerAppScreen(
                                             colors = listOf(PrimaryTeal, BrightTeal)
                                         )
                                     )
-                                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
                             ) {
-                                Row(
+                                Column(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        IconButton(
-                                            onClick = { currentStep = 1 },
-                                            modifier = Modifier.size(32.dp)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                                contentDescription = "Back to Address",
-                                                tint = Color.White
-                                            )
+                                            IconButton(
+                                                onClick = { currentStep = 1 },
+                                                modifier = Modifier
+                                                    .size(34.dp)
+                                                    .testTag("customer_step2_back_btn")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                                    contentDescription = "Back to Address",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                color = Color.White.copy(alpha = 0.18f),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = "STEP 2 OF 4",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = Color.White,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                )
+                                            }
                                         }
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Column {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Surface(
+                                            color = BrandOrange,
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
                                             Text(
-                                                text = uiStrings.step2HeaderTitle,
-                                                style = MaterialTheme.typography.titleMedium,
+                                                text = uiStrings.safeProofBadge,
+                                                style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.ExtraBold,
-                                                color = Color.White
-                                            )
-                                            Text(
-                                                text = uiStrings.step2HeaderSubtitle,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color.White.copy(alpha = 0.88f)
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                             )
                                         }
                                     }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Surface(
-                                        color = BrandOrange,
-                                        shape = RoundedCornerShape(8.dp)
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
                                     ) {
                                         Text(
-                                            text = uiStrings.safeProofBadge,
-                                            style = MaterialTheme.typography.labelSmall,
+                                            text = uiStrings.step2HeaderTitle,
+                                            style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.ExtraBold,
                                             color = Color.White,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = uiStrings.step2HeaderSubtitle,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.White.copy(alpha = 0.9f),
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }

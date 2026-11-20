@@ -850,7 +850,13 @@ fun AdminRiderDetailBottomSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                ) {
                     AdminIconBadge(icon = Icons.AutoMirrored.Filled.DirectionsBike, tint = palette.accentTeal, sizeDp = 42)
                     Column {
                         Text(rider.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
@@ -866,6 +872,8 @@ fun AdminRiderDetailBottomSheet(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = if (rider.isOnline) palette.accentEmerald else palette.textSecondary,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
@@ -879,13 +887,32 @@ fun AdminRiderDetailBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Wallet Balance: ₹${rider.walletBalanceInr.toInt()}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = palette.accentEmerald)
-                        Text("Debt Cap: ₹${rider.commissionDebtInr.toInt()} / ₹150", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = if (rider.commissionDebtInr >= 100) palette.accentCrimson else palette.textSecondary)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Wallet Balance: ₹${rider.walletBalanceInr.toInt()}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = palette.accentEmerald,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        )
+                        Text(
+                            text = "COD Limit: ₹${rider.commissionDebtInr.toInt()} / ₹200",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (rider.commissionDebtInr >= 150) palette.accentCrimson else palette.textSecondary,
+                            maxLines = 1,
+                            softWrap = false
+                        )
                     }
                     LinearProgressIndicator(
-                        progress = { (rider.commissionDebtInr / 150.0).toFloat().coerceIn(0f, 1f) },
-                        color = if (rider.commissionDebtInr >= 100) palette.accentCrimson else palette.accentTeal,
+                        progress = { (rider.commissionDebtInr / 200.0).toFloat().coerceIn(0f, 1f) },
+                        color = if (rider.commissionDebtInr >= 150) palette.accentCrimson else palette.accentTeal,
                         trackColor = palette.hairlineBorder,
                         modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
                     )

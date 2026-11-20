@@ -357,4 +357,46 @@ test('7. Rider Battery Monitoring Service: automatically throttles GPS update fr
   assert.equal(gpsService.getUpdateIntervalMs(), 2000);
 });
 
+test('8. OTP Email & Root Website Security: OTP emails must NOT link to quickdelivery.co.in and root / must serve public brand page without exposing Admin/Rider APKs', () => {
+  const serverSource = fs.readFileSync('./scripts/apk-download-server.mjs', 'utf8');
+
+  // 8a. Suite version synced to 6.7.1
+  assert.match(serverSource, /const APP_SUITE_VERSION = '6\.7\.1';/);
+
+  // 8b. Extract send-email-otp handler and verify ZERO clickable quickdelivery.co.in links in OTP text/HTML
+  const otpStart = serverSource.indexOf("if (pathname === '/api/auth/send-email-otp' && req.method === 'POST')");
+  assert.ok(otpStart > 0, 'send-email-otp handler must exist');
+  const otpEnd = serverSource.indexOf('const deliveryInfo = await sendQuickDeliveryEmail(', otpStart);
+  assert.ok(otpEnd > otpStart, 'sendQuickDeliveryEmail invocation must exist inside OTP handler');
+  const otpBlock = serverSource.slice(otpStart, otpEnd);
+
+  assert.equal(otpBlock.includes('http://quickdelivery.co.in'), false, 'OTP email must not contain http://quickdelivery.co.in');
+  assert.equal(otpBlock.includes('https://quickdelivery.co.in'), false, 'OTP email must not contain https://quickdelivery.co.in');
+  assert.equal(otpBlock.includes('https://${BRAND_DOMAIN}'), false, 'OTP email must not embed https://${BRAND_DOMAIN}');
+  assert.equal(otpBlock.includes('${BRAND_DOMAIN}'), false, 'OTP email must not embed bare ${BRAND_DOMAIN} that Gmail auto-links');
+  assert.match(otpBlock, /Quick Delivery Security/);
+
+  // 8c. Root landing page function must NOT link to Rider/Admin APKs or /suite
+  const homeStart = serverSource.indexOf('function renderFirebaseHostingHomeHtml(');
+  assert.ok(homeStart > 0, 'renderFirebaseHostingHomeHtml must exist');
+  const homeEnd = serverSource.indexOf('function configureNginxDirectApkServing(', homeStart);
+  assert.ok(homeEnd > homeStart, 'renderFirebaseHostingHomeHtml boundary must exist');
+  const homeBlock = serverSource.slice(homeStart, homeEnd);
+
+  assert.equal(homeBlock.includes('QuickDelivery-Admin-Enterprise.apk'), false, 'Public home must not expose Admin APK');
+  assert.equal(homeBlock.includes('QuickDelivery-Rider-Partner.apk'), false, 'Public home must not expose Rider APK');
+  assert.equal(homeBlock.includes('/admin-apk'), false, 'Public home must not link to /admin-apk');
+  assert.equal(homeBlock.includes('/rider-apk'), false, 'Public home must not link to /rider-apk');
+  assert.match(homeBlock, /Privacy Policy/);
+  assert.match(homeBlock, /Terms of Service/);
+
+  // 8d. Root route '/' serves renderFirebaseHostingHomeHtml() while dedicated /customer, /rider, /admin, /suite routes stay active
+  assert.match(serverSource, /const html = isRoleApkRoute\s*\?\s*renderDownloadPageHtml\(autoDownload, roleFilter\)\s*:\s*renderFirebaseHostingHomeHtml\(\);/);
+  assert.match(serverSource, /pathname === '\/suite'/);
+  assert.match(serverSource, /pathname === '\/customer'/);
+  assert.match(serverSource, /pathname === '\/rider'/);
+  assert.match(serverSource, /pathname === '\/admin'/);
+});
+
+
 

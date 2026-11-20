@@ -229,7 +229,10 @@ fun RiderKycDocumentCenterDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Surface(
                             color = PorterBlue.copy(alpha = 0.12f),
                             shape = CircleShape,

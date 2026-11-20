@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -1510,7 +1511,7 @@ fun RiderBankAccountFormScreen(
             .fillMaxSize()
             .background(Color(0xFFF0F4F8))
             .testTag("rider_bank_account_form_screen"),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 36.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
@@ -1530,19 +1531,29 @@ fun RiderBankAccountFormScreen(
                     ) {
                         Surface(
                             color = Color(0xFF10B981).copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f, fill = false)
                         ) {
                             Text(
                                 text = if (isOnboardingStep) "STEP 3 OF 3 • PAYOUT BANK SETUP" else "PAYOUT BANK ACCOUNT",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = Color(0xFF6EE7B7),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
                         if (onSignOut != null) {
                             TextButton(onClick = onSignOut) {
-                                Text("Sign Out", color = Color(0xFFFCA5A5), style = MaterialTheme.typography.labelSmall)
+                                Text(
+                                    text = "Sign Out",
+                                    color = Color(0xFFFCA5A5),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                         } else if (onSkipOrClose != null) {
                             IconButton(onClick = onSkipOrClose) {

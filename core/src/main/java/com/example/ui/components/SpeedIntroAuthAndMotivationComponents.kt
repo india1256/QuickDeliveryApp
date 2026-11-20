@@ -2664,7 +2664,10 @@ private fun PermissionGateItemRow(
                         text = title,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0D1B2A)
+                        color = Color(0xFF0D1B2A),
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
                     )
                     Surface(
                         color = if (isGranted) Color(0xFFDCFCE7) else Color(0xFFFFEDD5),
@@ -2675,6 +2678,8 @@ private fun PermissionGateItemRow(
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = if (isGranted) Color(0xFF047857) else Color(0xFFC2410C),
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                         )
                     }
