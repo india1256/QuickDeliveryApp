@@ -1014,6 +1014,17 @@ class SecurityAndPricingIntegrationTest {
             identifier = "9876501234"
         )
         assertNull("Customer signup must NOT unlock Rider Existing Sign In", crossRoleBlocked)
+
+        // 6. Verify DynamicUiStrings in English has clean English error (no Hinglish!)
+        val enStrings = com.example.ui.i18n.DynamicUiStringsCatalog.forLanguage(com.example.ui.i18n.AppLanguage.ENGLISH)
+        assertTrue(enStrings.accountNotFoundErrorMessage.contains("Account not found"))
+        assertFalse(enStrings.accountNotFoundErrorMessage.contains("nahi"))
+        assertEquals("Go to New User • Sign Up →", enStrings.goToSignUpBtn)
+
+        // 7. Verify DynamicUiStrings in Hindi has proper Hindi translations
+        val hiStrings = com.example.ui.i18n.DynamicUiStringsCatalog.forLanguage(com.example.ui.i18n.AppLanguage.HINDI)
+        assertTrue(hiStrings.accountNotFoundErrorMessage.contains("खाता नहीं मिला"))
+        assertTrue(hiStrings.goToSignUpBtn.contains("साइन अप"))
     }
 
     @Test

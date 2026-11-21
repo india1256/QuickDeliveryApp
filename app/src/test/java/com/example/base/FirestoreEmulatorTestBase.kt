@@ -17,6 +17,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Before
 import org.junit.runner.RunWith
+import org.junit.Assume.assumeTrue
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
@@ -32,6 +33,16 @@ abstract class FirestoreEmulatorTestBase {
 
     @Before
     open fun setUpFirebase() {
+        val isEmulatorAvailable = try {
+            java.net.Socket().use { socket ->
+                socket.connect(java.net.InetSocketAddress(EMULATOR_HOST, FIRESTORE_PORT), 250)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+        assumeTrue("Firebase Emulators not reachable on $EMULATOR_HOST:$FIRESTORE_PORT; skipping emulator tests", isEmulatorAvailable)
+
         val context = ApplicationProvider.getApplicationContext<Context>()
         val resId = context.resources.getIdentifier("firestore_database_id", "string", context.packageName)
         databaseId = if (resId != 0) {
@@ -68,14 +79,16 @@ abstract class FirestoreEmulatorTestBase {
 
     @After
     open fun tearDownFirebase() {
-        auth.signOut()
+        if (::auth.isInitialized) {
+            auth.signOut()
+        }
     }
 
     protected suspend fun signInTestUser(email: String): String = withContext(Dispatchers.IO) {
         withTimeout(AUTH_TIMEOUT_MS) {
             val result = try {
                 auth.signInWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
-            } catch (unused: FirebaseAuthInvalidUserException) {
+            } catch (unused: Exception) {
                 auth.createUserWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
             }
             checkNotNull(result.user?.uid) { "User auth failed" }

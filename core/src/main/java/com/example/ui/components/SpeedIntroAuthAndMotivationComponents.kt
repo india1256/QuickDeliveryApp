@@ -2063,7 +2063,7 @@ fun QuickDeliveryUserAuthScreen(
                             .testTag("${prefsKeyPrefix}_switch_to_signup_btn")
                     ) {
                         Text(
-                            text = "New User • Sign Up par jayein →",
+                            text = uiStrings.goToSignUpBtn,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.ExtraBold,
                             color = accentColor,
@@ -2221,11 +2221,11 @@ fun QuickDeliveryUserAuthScreen(
                                             onAuthenticated(resolvedName, resolvedPhone, resolvedEmail)
                                         } else {
                                             showSwitchToSignUpPrompt = true
-                                            errorMessage = "❌ Account nahi mila! Is number/email se pehle Sign Up nahi hua hai. Kripya pehle 'New User • Sign Up' par click karke apna account banayein."
+                                            errorMessage = uiStrings.accountNotFoundErrorMessage
                                         }
                                     }.onFailure {
                                         showSwitchToSignUpPrompt = true
-                                        errorMessage = "❌ Account verify nahi ho saka! Is phone par ye account registered nahi hai aur server connect nahi ho pa raha. Internet check karein ya 'New User • Sign Up' se register karein."
+                                        errorMessage = uiStrings.accountVerificationFailedErrorMessage
                                     }
                                 }
                             }

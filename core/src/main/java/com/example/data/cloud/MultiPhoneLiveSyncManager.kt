@@ -65,8 +65,7 @@ object MultiPhoneLiveSyncManager {
     private const val KEY_LOCKED_ROLE = "locked_phone_role"
 
     private val LIVE_SYNC_ENDPOINTS = listOf(
-        QuickDeliveryBrandLinks.LIVE_SYNC_API_URL,
-        "https://quickdeliveryapp-1wll.onrender.com/api/live-sync"
+        QuickDeliveryBrandLinks.LIVE_SYNC_API_URL
     )
 
     fun getConfiguredSyncEndpoints(): List<String> = LIVE_SYNC_ENDPOINTS
