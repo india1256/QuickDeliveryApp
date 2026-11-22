@@ -182,7 +182,8 @@ class AdminMainActivity : ComponentActivity() {
                                 this@AdminMainActivity,
                                 android.Manifest.permission.CAMERA
                             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                            fine && cam
+                            val storage = com.example.ui.components.hasPhoneStoragePermission(this@AdminMainActivity)
+                            fine && cam && storage
                         }
                         Column(
                             modifier = Modifier

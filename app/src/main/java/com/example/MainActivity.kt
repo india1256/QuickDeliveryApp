@@ -223,6 +223,9 @@ fun AdminLivePermissionsAndTrackingBar(
             true
         }
     }
+    val hasStoragePerm = remember(permissionRefreshTick) {
+        com.example.ui.components.hasPhoneStoragePermission(context)
+    }
 
     val allAdminPermsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -232,7 +235,8 @@ fun AdminLivePermissionsAndTrackingBar(
 
     val allGranted = hasLocationPerm &&
         hasCameraPerm &&
-        hasNotificationPerm
+        hasNotificationPerm &&
+        hasStoragePerm
 
     Surface(
         color = Color(0xFF0F172A),
@@ -260,7 +264,7 @@ fun AdminLivePermissionsAndTrackingBar(
                         color = Color(0xFF38BDF8)
                     )
                     Text(
-                        text = "GPS: ${if (hasLocationPerm) "Active" else "Off"} • Alerts: ${if (hasNotificationPerm) "Active" else "Off"} • Camera: ${if (hasCameraPerm) "Ready" else "Off"}",
+                        text = "GPS: ${if (hasLocationPerm) "Active" else "Off"} • Alerts: ${if (hasNotificationPerm) "Active" else "Off"} • Camera: ${if (hasCameraPerm) "Ready" else "Off"} • Storage: ${if (hasStoragePerm) "Ready" else "Off"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White.copy(alpha = 0.85f)
                     )
@@ -276,6 +280,7 @@ fun AdminLivePermissionsAndTrackingBar(
                             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                                 perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
                             }
+                            com.example.ui.components.requiredPhoneStoragePermissions().forEach { perms.add(it) }
                             allAdminPermsLauncher.launch(perms.toTypedArray())
                         },
                         colors = ButtonDefaults.outlinedButtonColors(

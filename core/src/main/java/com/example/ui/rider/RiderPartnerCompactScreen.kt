@@ -123,6 +123,7 @@ import com.example.data.model.RiderWorkMode
 import com.example.data.model.VehicleType
 import com.example.data.repository.RiderRepository
 import com.example.data.repository.SharedOrderRepository
+import com.example.security.QuickDeliverySecurityGuard
 import com.example.security.RiderOverspeedSafetyCard
 import com.example.ui.components.DigitalSignaturePadCanvas
 import com.example.ui.components.DirectDialPadCallButton
@@ -2479,9 +2480,16 @@ fun RiderPartnerCompactScreen(
                             com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
                             val baseRider = currentRider ?: riders.firstOrNull()
                             if (baseRider != null) {
+                                val resolvedRiderPhone = riderPhone.ifBlank { baseRider.mobile }
+                                if (QuickDeliverySecurityGuard.isSameActorSelfOrder(order.customerPhone, resolvedRiderPhone)) {
+                                    com.example.security.OrderAlertSoundManager.markOrderHandledAndStopAlert(order.orderId)
+                                    isErrorBanner = true
+                                    statusMessage = "🚫 Anti-Fraud Block: Cannot accept an order booked with your own mobile number."
+                                    return@RiderProgressiveOrderCard
+                                }
                                 val activeRider = baseRider.copy(
                                     name = riderDisplayName.ifBlank { baseRider.name },
-                                    mobile = riderPhone.ifBlank { baseRider.mobile },
+                                    mobile = resolvedRiderPhone,
                                     isOnline = true,
                                     shiftStatus = RiderShiftStatus.ON_ACTIVE_SHIFT,
                                     accountStatus = "ACTIVE",
@@ -2492,28 +2500,10 @@ fun RiderPartnerCompactScreen(
 
                                 val acceptRes = repository.acceptOrderByRider(order.orderId, activeRider)
                                 if (acceptRes.isFailure) {
-                                    runCatching {
-                                        val field = repository.javaClass.getDeclaredField("_orders")
-                                        field.isAccessible = true
-                                        @Suppress("UNCHECKED_CAST")
-                                        val flow = field.get(repository) as? kotlinx.coroutines.flow.MutableStateFlow<List<CustomerOrder>>
-                                        if (flow != null) {
-                                            flow.value = flow.value.map { existing ->
-                                                if (existing.orderId == order.orderId) {
-                                                    existing.copy(
-                                                        orderStatus = OrderStatus.RIDER_ASSIGNED,
-                                                        assignedRiderId = activeRider.riderId,
-                                                        assignedRiderName = activeRider.name,
-                                                        assignedRiderPhone = activeRider.mobile,
-                                                        assignedRiderVehicle = "${activeRider.vehicleType.title} (${activeRider.vehicleNumber})",
-                                                        latestRiderQuickNote = "Rider ${activeRider.name} accepted your order!"
-                                                    )
-                                                } else {
-                                                    existing
-                                                }
-                                            }
-                                        }
-                                    }
+                                    isErrorBanner = true
+                                    statusMessage = acceptRes.exceptionOrNull()?.message
+                                        ?: "Unable to accept order #${order.orderId}. It may already be claimed or locked."
+                                    return@RiderProgressiveOrderCard
                                 }
                                 isErrorBanner = false
                                 statusMessage = "✅ Order #${order.orderId} Accepted! Follow Pickup Navigation first."

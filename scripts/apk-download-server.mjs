@@ -298,12 +298,13 @@ let permanentCloudHydrated = false;
 // ============================================================================
 // SERVER-SIDE ANTI-FAKE-ORDER & ANTI-LOAD SECURITY SHIELD
 // ============================================================================
-const SYNC_HMAC_SECRET = 'QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in';
+const SYNC_HMAC_SECRET = String(process.env.QD_SYNC_HMAC_SECRET || '').trim() || 'QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in';
 const MAX_SYNC_BODY_BYTES = 4 * 1024 * 1024; // 4 MB payload ceiling
 const MAX_SYNC_REQ_PER_MIN_PER_IP = 420; // supports 3+ phones behind shared Wi-Fi NAT polling ~1.8s plus bursts
 const MAX_HEAVY_REQ_PER_MIN_PER_IP = 30;
 const MAX_ACTIVE_PENDING_ORDERS_PER_ACTOR = 25;
 const MAX_NEW_ORDERS_PER_MIN_PER_ACTOR = 8;
+const MAX_NEW_ORDERS_PER_MIN_PER_IP = 15;
 const DUPLICATE_ORDER_COOLDOWN_MS = 10000;
 const ONE_MINUTE_MS = 60000;
 const SYNC_TIMESTAMP_SKEW_MS = 10 * 60 * 1000;
@@ -311,6 +312,7 @@ const SYNC_TIMESTAMP_SKEW_MS = 10 * 60 * 1000;
 const ipRequestBuckets = new Map();
 const heavyRequestBuckets = new Map();
 const newOrderBucketsByActor = new Map();
+const newOrderBucketsByIp = new Map();
 const recentRouteByActor = new Map();
 
 const BLOCKED_FAKE_PHONES = new Set([
@@ -326,7 +328,60 @@ const BLOCKED_FAKE_PHONES = new Set([
   '9999999999',
   '1234567890',
   '0123456789',
+  '6789012345',
+  '9123456789',
+  '9000000000',
+  '9999988888',
+  '9988776655',
+  '9898989898',
+  '8989898989',
+  '9876500000',
+  '9876543210',
 ]);
+
+const BLOCKED_SPAM_NAMES = new Set([
+  'test', 'testing', 'fake', 'dummy', 'spam', 'asdf', 'asdfg', 'qwerty', 'qwer',
+  'zxcv', 'zxcvb', 'null', 'undefined', 'none', 'na', 'n/a', 'xxx', 'abcd', 'abcde',
+  '1234', '12345', '123456', 'bot', 'hack', 'hacker',
+]);
+
+function hasLongSequentialPhoneDigits(digits) {
+  let asc = 1;
+  let desc = 1;
+  for (let i = 1; i < digits.length; i++) {
+    const prev = digits.charCodeAt(i - 1) - 48;
+    const curr = digits.charCodeAt(i) - 48;
+    asc = curr === (prev + 1) % 10 ? asc + 1 : 1;
+    desc = (curr + 1) % 10 === prev ? desc + 1 : 1;
+    if (asc >= 7 || desc >= 7) return true;
+  }
+  return false;
+}
+
+function isFakeOrInvalidIndianPhone10(digits, allowDiagnosticNumber = false) {
+  if (!/^[6-9]\d{9}$/.test(digits)) return true;
+  if (digits === '9876543210') return !allowDiagnosticNumber;
+  if (BLOCKED_FAKE_PHONES.has(digits)) return true;
+  const uniqueCount = new Set(digits.split('')).size;
+  if (uniqueCount <= 1) return true;
+  if (uniqueCount <= 2 && /(.)\1{4,}/.test(digits)) return true;
+  if (/^(\d\d)\1{4}$/.test(digits) || /^(\d)\1(\d)\2(\d)\3(\d)\4(\d)\5$/.test(digits) || /^(\d{5})\1$/.test(digits)) {
+    return true;
+  }
+  if (hasLongSequentialPhoneDigits(digits)) return true;
+  return false;
+}
+
+function isPlausibleHumanName(raw) {
+  const clean = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (clean.length < 2) return false;
+  const letters = clean.replace(/[^A-Za-z\u0900-\u0D7F]/g, '');
+  if (letters.length < 2) return false;
+  const lower = clean.toLowerCase();
+  if (BLOCKED_SPAM_NAMES.has(lower)) return false;
+  if (/^(.)\1{2,}$/.test(lower.replace(/\s+/g, ''))) return false;
+  return true;
+}
 
 function ensureSecurityStats() {
   if (!syncState.securityStats || typeof syncState.securityStats !== 'object') {
@@ -434,7 +489,7 @@ function hasUnsafePayloadText(str) {
   );
 }
 
-function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now) {
+function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now, clientIp = 'unknown') {
   if (!incoming || !incoming.orderId) return { ok: false, reason: 'Missing orderId' };
   const oid = String(incoming.orderId).trim();
   if (!/^[A-Za-z0-9_-]{3,40}$/.test(oid)) {
@@ -442,23 +497,41 @@ function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now) {
   }
   const pickup = String(incoming.pickupFullAddress || '').trim();
   const drop = String(incoming.dropFullAddress || '').trim();
-  if (hasUnsafePayloadText(pickup) || hasUnsafePayloadText(drop) || hasUnsafePayloadText(incoming.customerName)) {
+  if (hasUnsafePayloadText(pickup) || hasUnsafePayloadText(drop) || hasUnsafePayloadText(incoming.customerName) || hasUnsafePayloadText(incoming.dropAddress?.contactName || incoming.receiverName)) {
     return { ok: false, reason: `Unsafe markup rejected on order ${oid}` };
   }
-  if (pickup.length < 3 || drop.length < 3) {
+  if (pickup.length < 5 || drop.length < 5) {
     return { ok: false, reason: `Incomplete pickup/drop address on ${oid}` };
   }
   if (pickup.toLowerCase() === drop.toLowerCase()) {
     return { ok: false, reason: `Identical pickup and drop address rejected on ${oid}` };
   }
+  if (!isPlausibleHumanName(incoming.customerName || 'Customer') && incoming.customerName) {
+    return { ok: false, reason: `Suspicious/dummy customer name rejected on ${oid}` };
+  }
 
+  const allowDiagnostic = oid.startsWith('DIAG-');
   const rawPhoneStr = String(incoming.customerPhone || '').trim();
   const rawPhoneDigits = rawPhoneStr.replace(/\D/g, '');
   const phone10 = rawPhoneDigits.length >= 10 ? rawPhoneDigits.slice(-10) : rawPhoneDigits;
-  if (rawPhoneDigits.length > 0 && !rawPhoneStr.includes('@')) {
-    if (phone10.length !== 10 || BLOCKED_FAKE_PHONES.has(phone10) || new Set(phone10.split('')).size <= 1) {
-      return { ok: false, reason: `Fake/dummy customer phone (${phone10}) blocked on ${oid}` };
+  if (!rawPhoneStr.includes('@')) {
+    if (isFakeOrInvalidIndianPhone10(phone10, allowDiagnostic)) {
+      return { ok: false, reason: `Fake/invalid Indian customer phone (${phone10 || 'empty'}) blocked on ${oid}` };
     }
+  }
+
+  const rawDropPhoneDigits = String(incoming.dropAddress?.contactPhone || incoming.receiverPhone || '').replace(/\D/g, '');
+  if (rawDropPhoneDigits.length > 0) {
+    const dropPhone10 = rawDropPhoneDigits.length >= 10 ? rawDropPhoneDigits.slice(-10) : rawDropPhoneDigits;
+    if (isFakeOrInvalidIndianPhone10(dropPhone10, allowDiagnostic)) {
+      return { ok: false, reason: `Fake/invalid receiver phone (${dropPhone10}) blocked on ${oid}` };
+    }
+  }
+
+  const riderPhoneDigits = String(incoming.assignedRiderPhone || '').replace(/\D/g, '');
+  const riderPhone10 = riderPhoneDigits.length >= 10 ? riderPhoneDigits.slice(-10) : riderPhoneDigits;
+  if (phone10.length === 10 && riderPhone10.length === 10 && phone10 === riderPhone10) {
+    return { ok: false, reason: `Self-order fraud (same customer & rider phone ${phone10}) blocked on ${oid}` };
   }
 
   const totalInr = parseMoneyInr(incoming.totalAmount);
@@ -470,6 +543,11 @@ function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now) {
 
   const existing = syncState.ordersById[oid];
   if (!existing) {
+    const inStatus = String(incoming.orderStatus || 'SEARCHING_RIDER').toUpperCase();
+    if (inStatus === 'PICKED_UP' || inStatus === 'IN_TRANSIT' || inStatus === 'DELIVERED') {
+      return { ok: false, reason: `New order ${oid} cannot start directly in ${inStatus}` };
+    }
+
     const actor = phone10 || senderDeviceId || 'anon';
     let activePending = 0;
     for (const ord of Object.values(syncState.ordersById)) {
@@ -495,8 +573,17 @@ function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now) {
       return { ok: false, reason: `Order spam burst limit (${MAX_NEW_ORDERS_PER_MIN_PER_ACTOR}/min) exceeded for ${actor}` };
     }
 
+    const ipKey = String(clientIp || 'unknown');
+    const ipTs = (newOrderBucketsByIp.get(ipKey) || []).filter(ts => now - ts < ONE_MINUTE_MS);
+    if (ipTs.length >= MAX_NEW_ORDERS_PER_MIN_PER_IP) {
+      newOrderBucketsByIp.set(ipKey, ipTs);
+      return { ok: false, reason: `IP new-order burst limit (${MAX_NEW_ORDERS_PER_MIN_PER_IP}/min) exceeded for ${ipKey}` };
+    }
+
     actorTs.push(now);
+    ipTs.push(now);
     newOrderBucketsByActor.set(actor, actorTs);
+    newOrderBucketsByIp.set(ipKey, ipTs);
     recentRouteByActor.set(routeFp, now);
     if (recentRouteByActor.size > 500) {
       for (const [k, ts] of recentRouteByActor.entries()) {
@@ -1746,7 +1833,7 @@ function renderLegalPageHtml(kind = 'privacy') {
         <ul>
           <li><b>Account &amp; Partner Identity:</b> Name, 10-digit mobile number, Google email address, and (for Riders) KYC documents strictly isolated per account for booking history, GST receipts, and payouts.</li>
           <li><b>Foreground Location (Required Post-Login):</b> Approximate and precise GPS coordinates collected only while booking, actively navigating, or tracking an active order. No background spying occurs when offline.</li>
-          <li><b>Camera (Required Post-Login, User-Initiated):</b> Parcel pickup/drop proof photos and Rider selfie check-ins captured only when triggered by you. Zero broad storage permissions are requested.</li>
+          <li><b>Camera &amp; Media Storage (Required Post-Login):</b> Parcel pickup/drop proof photos and Rider selfie check-ins captured when triggered by you, plus encrypted local backups of your profile, saved addresses, and order history stored safely in Phone Storage (Documents/QuickDelivery).</li>
           <li><b>Notifications (Required Post-Login):</b> Push and local tray alerts strictly for order status updates, OTPs, and live Rider-Customer chat.</li>
         </ul>
         <h2>2. How We Use &amp; Protect Data</h2>
@@ -2327,7 +2414,10 @@ const server = http.createServer((req, res) => {
             }
           }
 
-          if (payload.resetEpochMs && Number(payload.resetEpochMs) > syncState.resetEpochMs) {
+          const normalizedSenderRole = String(payload.role || 'UNIFIED').trim().toUpperCase();
+          const isAdminOrUnified = normalizedSenderRole === 'ADMIN' || normalizedSenderRole === 'UNIFIED';
+
+          if (isAdminOrUnified && payload.resetEpochMs && Number(payload.resetEpochMs) > syncState.resetEpochMs) {
             syncState.resetEpochMs = Number(payload.resetEpochMs);
             syncState.ordersById = {};
             syncState.chatMessagesById = {};
@@ -2379,7 +2469,7 @@ const server = http.createServer((req, res) => {
             }
           }
 
-          if (Array.isArray(payload.promoCoupons)) {
+          if (isAdminOrUnified && Array.isArray(payload.promoCoupons)) {
             if (!syncState.promoCouponsByCode) syncState.promoCouponsByCode = {};
             for (const c of payload.promoCoupons) {
               if (!c || !c.code) continue;
@@ -2455,7 +2545,7 @@ const server = http.createServer((req, res) => {
             }
           }
 
-          if (payload.remoteFeatureFlags && typeof payload.remoteFeatureFlags === 'object') {
+          if (isAdminOrUnified && payload.remoteFeatureFlags && typeof payload.remoteFeatureFlags === 'object') {
             const incomingFlags = { ...payload.remoteFeatureFlags };
             if (Number(incomingFlags.flagsSchemaVersion || 1) < 2) {
               incomingFlags.scheduledDeliveryEnabled = true;
@@ -2630,13 +2720,14 @@ const server = http.createServer((req, res) => {
 
           if (Array.isArray(payload.orders)) {
             const senderDeviceId = String(payload.deviceId || '');
-            const senderRole = String(payload.role || 'UNIFIED');
+            const senderRole = String(payload.role || 'UNIFIED').trim().toUpperCase();
+            const clientIp = getClientIp(req);
 
             for (const incoming of payload.orders) {
               if (!incoming || !incoming.orderId) continue;
               const oid = String(incoming.orderId);
               if (DEMO_ORDER_IDS.has(oid)) continue;
-              const antiSpamCheck = validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now);
+              const antiSpamCheck = validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now, clientIp);
               if (!antiSpamCheck.ok) {
                 console.warn('[LIVE-SYNC BLOCKED]', oid, antiSpamCheck.reason);
                 recordSecurityBlock('FAKE_ORDER_BLOCKED', incoming.customerPhone || senderDeviceId, antiSpamCheck.reason);
@@ -2644,7 +2735,7 @@ const server = http.createServer((req, res) => {
               }
               const existing = syncState.ordersById[oid];
               if (!existing) {
-                if (incoming.orderStatus === 'RIDER_ASSIGNED' && senderRole !== 'RIDER') {
+                if (incoming.orderStatus === 'RIDER_ASSIGNED' && senderRole !== 'RIDER' && senderRole !== 'ADMIN' && senderRole !== 'UNIFIED') {
                   syncState.ordersById[oid] = {
                     ...incoming,
                     orderStatus: 'SEARCHING_RIDER',
@@ -2675,26 +2766,40 @@ const server = http.createServer((req, res) => {
                   });
                 }
               } else {
+                const inStatus = String(incoming.orderStatus || existing.orderStatus).toUpperCase();
+                const exStatus = String(existing.orderStatus || 'SEARCHING_RIDER').toUpperCase();
                 let inRank = Number(incoming.statusRank || 1);
                 const exRank = Number(existing.statusRank || 1);
                 const exRejected = Array.isArray(existing.rejectedByRiderIds) ? existing.rejectedByRiderIds : [];
                 const inRejected = Array.isArray(incoming.rejectedByRiderIds) ? incoming.rejectedByRiderIds : [];
                 const mergedRejected = Array.from(new Set([...exRejected, ...inRejected]));
 
+                // Final terminal states cannot be reversed or rewritten
+                if (exStatus === 'DELIVERED' || exStatus === 'CANCELLED') {
+                  if (inStatus !== exStatus) continue;
+                }
+
+                // A Customer-role device cannot forge Rider delivery status transitions
+                const isRiderLifecycleStatus = ['RIDER_ASSIGNED', 'ARRIVED_AT_PICKUP', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED'].includes(inStatus);
+                if (senderRole === 'CUSTOMER' && isRiderLifecycleStatus && inStatus !== exStatus) {
+                  recordSecurityBlock('FAKE_ORDER_BLOCKED', senderDeviceId, `Blocked CUSTOMER role status forgery (${exStatus} -> ${inStatus}) on ${oid}`);
+                  continue;
+                }
+
                 const isRiderRejectionRollback =
-                  incoming.orderStatus === 'SEARCHING_RIDER' &&
+                  inStatus === 'SEARCHING_RIDER' &&
                   mergedRejected.length > exRejected.length &&
-                  ['SEARCHING_RIDER', 'RIDER_ASSIGNED', 'ARRIVED_AT_PICKUP'].includes(existing.orderStatus);
+                  ['SEARCHING_RIDER', 'RIDER_ASSIGNED', 'ARRIVED_AT_PICKUP'].includes(exStatus);
 
                 const staleAssignForRejectedRider =
-                  existing.orderStatus === 'SEARCHING_RIDER' &&
-                  incoming.orderStatus === 'RIDER_ASSIGNED' &&
+                  exStatus === 'SEARCHING_RIDER' &&
+                  inStatus === 'RIDER_ASSIGNED' &&
                   incoming.assignedRiderId &&
                   mergedRejected.includes(incoming.assignedRiderId);
 
                 if (
-                  existing.orderStatus === 'SEARCHING_RIDER' &&
-                  incoming.orderStatus === 'RIDER_ASSIGNED' &&
+                  exStatus === 'SEARCHING_RIDER' &&
+                  inStatus === 'RIDER_ASSIGNED' &&
                   existing.createdByDeviceId &&
                   senderDeviceId === existing.createdByDeviceId &&
                   senderRole !== 'RIDER'
@@ -2710,6 +2815,12 @@ const server = http.createServer((req, res) => {
                   const rolledBack = {
                     ...existing,
                     ...incoming,
+                    customerPhone: existing.customerPhone,
+                    pickupFullAddress: existing.pickupFullAddress,
+                    dropFullAddress: existing.dropFullAddress,
+                    totalAmount: existing.totalAmount,
+                    platformCommission: existing.platformCommission,
+                    riderEarning: existing.riderEarning,
                     orderStatus: 'SEARCHING_RIDER',
                     statusRank: 1,
                     assignedRiderId: '',
@@ -2742,6 +2853,18 @@ const server = http.createServer((req, res) => {
                 }
 
                 const merged = inRank >= exRank ? { ...existing, ...incoming } : { ...incoming, ...existing };
+                // Enforce financial, route, and customer identity immutability once created
+                merged.customerPhone = existing.customerPhone;
+                merged.customerName = existing.customerName;
+                merged.pickupFullAddress = existing.pickupFullAddress;
+                merged.dropFullAddress = existing.dropFullAddress;
+                merged.totalAmount = existing.totalAmount;
+                merged.platformCommission = existing.platformCommission;
+                merged.riderEarning = existing.riderEarning;
+                if (existing.isPaidToCompany) {
+                  merged.isPaidToCompany = true;
+                  merged.paymentStatus = existing.paymentStatus;
+                }
                 merged.rejectedByRiderIds = mergedRejected;
                 if (existing.pickupProof && !incoming.pickupProof) merged.pickupProof = existing.pickupProof;
                 if (incoming.pickupProof) merged.pickupProof = incoming.pickupProof;

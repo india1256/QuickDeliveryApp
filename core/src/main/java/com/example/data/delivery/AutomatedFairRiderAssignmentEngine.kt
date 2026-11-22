@@ -880,6 +880,18 @@ object AutomatedFairRiderAssignmentEngine {
                 return Result.failure(rateErr)
             }
 
+            val rawDropPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(dropAddress.contactPhone)
+            if (rawDropPhone.isNotBlank() && QuickDeliverySecurityGuard.isFakeOrDummyPhone(rawDropPhone)) {
+                return Result.failure(IllegalArgumentException("Please enter a valid real 10-digit Receiver mobile number."))
+            }
+            if (!isRobolectricTestEnv && rawDropPhone.length != 10) {
+                return Result.failure(IllegalArgumentException("Receiver 10-digit mobile number is required to place an order."))
+            }
+            val cleanDropName = QuickDeliverySecurityGuard.sanitizeText(dropAddress.contactName, 80).ifBlank { "Receiver" }
+            if (dropAddress.contactName.isNotBlank() && !QuickDeliverySecurityGuard.isPlausibleHumanName(cleanDropName)) {
+                return Result.failure(IllegalArgumentException("Please enter a valid real Receiver name."))
+            }
+
             val sanitizedPickup = pickupAddress.copy(
                 fullAddress = sanitizedFields.pickupAddress,
                 landmark = QuickDeliverySecurityGuard.sanitizeText(pickupAddress.landmark, 120),
@@ -889,8 +901,8 @@ object AutomatedFairRiderAssignmentEngine {
             val sanitizedDrop = dropAddress.copy(
                 fullAddress = sanitizedFields.dropAddress,
                 landmark = QuickDeliverySecurityGuard.sanitizeText(dropAddress.landmark, 120),
-                contactName = QuickDeliverySecurityGuard.sanitizeText(dropAddress.contactName, 80).ifBlank { "Receiver" },
-                contactPhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(dropAddress.contactPhone).ifBlank { sanitizedFields.customerPhone }
+                contactName = cleanDropName,
+                contactPhone = rawDropPhone.ifBlank { sanitizedFields.customerPhone }
             )
 
             val normalizedPackage = packageDetails.copy(

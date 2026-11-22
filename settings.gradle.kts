@@ -24,8 +24,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "Quick Delivery"
 include(":app")
-// include(":rider")
-// include(":admin")
 include(":core")
 
 runCatching {

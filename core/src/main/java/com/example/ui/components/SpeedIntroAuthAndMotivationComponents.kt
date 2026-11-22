@@ -1,11 +1,15 @@
 package com.example.ui.components
 
 import android.Manifest
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -611,8 +615,112 @@ object MotivationAndPromoManager {
                 .putLong("last_background_sync_epoch_ms", System.currentTimeMillis())
                 .apply()
 
-            writeBackupJsonToPhoneStorage(context, "customer", cachedCustomerName, cachedCustomerPhone, cachedCustomerEmail)
-            writeBackupJsonToPhoneStorage(context, "rider", cachedRiderName, cachedRiderPhone, cachedRiderEmail)
+            writeBackupJsonToPhoneStorage(context, "customer", cachedCustomerName, cachedCustomerPhone, cachedCustomerEmail, ordersJson = ordersSummaryArray)
+            writeBackupJsonToPhoneStorage(context, "rider", cachedRiderName, cachedRiderPhone, cachedRiderEmail, ordersJson = ordersSummaryArray)
+        }
+    }
+
+    private fun requiredVaultFileName(cleanRole: String): String =
+        "quick_delivery_${cleanRole}_vault.json"
+
+    private fun writeVaultToPublicPhoneStorage(
+        context: Context,
+        cleanRole: String,
+        payload: String
+    ) {
+        if (!hasPhoneStoragePermission(context)) return
+        val fileName = requiredVaultFileName(cleanRole)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val collection = MediaStore.Files.getContentUri("external")
+                val relativePath = "${Environment.DIRECTORY_DOCUMENTS}/QuickDelivery"
+                val existingId = resolver.query(
+                    collection,
+                    arrayOf(MediaStore.MediaColumns._ID),
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+                    arrayOf(fileName, "%QuickDelivery%"),
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getLong(0) else null
+                }
+
+                val uri = if (existingId != null) {
+                    ContentUris.withAppendedId(collection, existingId)
+                } else {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                    }
+                    resolver.insert(collection, values)
+                }
+                if (uri != null) {
+                    resolver.openOutputStream(uri, "wt")?.use { out ->
+                        out.write(payload.toByteArray(Charsets.UTF_8))
+                        out.flush()
+                    }
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                val qdDir = File(docsDir, "QuickDelivery")
+                if (!qdDir.exists()) qdDir.mkdirs()
+                File(qdDir, fileName).writeText(payload, Charsets.UTF_8)
+            }
+        }
+    }
+
+    private fun readVaultFromPublicPhoneStorage(context: Context, cleanRole: String): JSONObject? {
+        if (!hasPhoneStoragePermission(context)) return null
+        val fileName = requiredVaultFileName(cleanRole)
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val collection = MediaStore.Files.getContentUri("external")
+                resolver.query(
+                    collection,
+                    arrayOf(MediaStore.MediaColumns._ID),
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+                    arrayOf(fileName, "%QuickDelivery%"),
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val id = cursor.getLong(0)
+                        val uri = ContentUris.withAppendedId(collection, id)
+                        resolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+                            val raw = reader.readText()
+                            if (raw.isNotBlank()) return@runCatching JSONObject(raw)
+                        }
+                    }
+                }
+                null
+            } else {
+                @Suppress("DEPRECATION")
+                val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                val file = File(File(docsDir, "QuickDelivery"), fileName)
+                if (file.exists()) JSONObject(file.readText(Charsets.UTF_8)) else null
+            }
+        }.getOrNull()
+    }
+
+    private fun deleteVaultFromPublicPhoneStorage(context: Context, cleanRole: String) {
+        val fileName = requiredVaultFileName(cleanRole)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val collection = MediaStore.Files.getContentUri("external")
+                resolver.delete(
+                    collection,
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+                    arrayOf(fileName, "%QuickDelivery%")
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                val file = File(File(docsDir, "QuickDelivery"), fileName)
+                if (file.exists()) file.delete()
+            }
         }
     }
 
@@ -622,7 +730,8 @@ object MotivationAndPromoManager {
         name: String,
         phone: String,
         email: String,
-        sessionToken: String? = null
+        sessionToken: String? = null,
+        ordersJson: org.json.JSONArray? = null
     ) {
         runCatching {
             val cleanRole = if (rolePrefix.trim().lowercase() == "rider") "rider" else "customer"
@@ -642,19 +751,26 @@ object MotivationAndPromoManager {
                 put("phone", cleanPhone)
                 put("email", cleanEmail)
                 put("sessionToken", resolvedToken)
+                if (ordersJson != null) {
+                    put("ordersCount", ordersJson.length())
+                    put("ordersSummary", ordersJson)
+                }
                 put("savedAtEpochMs", System.currentTimeMillis())
                 put("autoLoginEnabled", true)
             }.toString()
 
-            // Save in internal app phone storage
+            // 1. Save in internal app phone storage
             val internalFile = File(context.filesDir, "quick_delivery_${cleanRole}_login_backup.json")
             internalFile.writeText(payload)
 
-            // Also save in external app-specific phone storage directory if mounted
+            // 2. Save in external app-specific phone storage directory if mounted
             context.getExternalFilesDir("login_backup")?.let { extDir ->
                 if (!extDir.exists()) extDir.mkdirs()
                 File(extDir, "quick_delivery_${cleanRole}_login_backup.json").writeText(payload)
             }
+
+            // 3. Save in durable Phone Storage (Documents/QuickDelivery) when storage permission is granted
+            writeVaultToPublicPhoneStorage(context, cleanRole, payload)
         }
     }
 
@@ -671,7 +787,7 @@ object MotivationAndPromoManager {
                 if (extFile != null && extFile.exists()) {
                     JSONObject(extFile.readText())
                 } else {
-                    null
+                    readVaultFromPublicPhoneStorage(context, cleanRole)
                 }
             } ?: return@runCatching null
 
@@ -761,6 +877,7 @@ object MotivationAndPromoManager {
                 val extFile = File(extDir, "quick_delivery_${cleanRole}_login_backup.json")
                 if (extFile.exists()) extFile.delete()
             }
+            deleteVaultFromPublicPhoneStorage(context, cleanRole)
         }
         runCatching { Firebase.auth.signOut() }
     }
@@ -2349,6 +2466,47 @@ fun QuickDeliveryUserAuthScreen(
     }
 }
 
+fun requiredPhoneStoragePermissions(): Array<String> {
+    return when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+        Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q ->
+            arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
+        else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+}
+
+fun hasPhoneStoragePermission(context: Context): Boolean {
+    return when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_MEDIA_IMAGES
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+        Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q -> {
+            val readOk = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            val writeOk = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            readOk && writeOk
+        }
+        else -> {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+}
+
 fun hasAllMandatoryAppPermissions(context: Context): Boolean {
     val fineGranted = ContextCompat.checkSelfPermission(
         context,
@@ -2370,12 +2528,13 @@ fun hasAllMandatoryAppPermissions(context: Context): Boolean {
     } else {
         true
     }
-    return (fineGranted || coarseGranted) && cameraGranted && notificationsGranted
+    val storageGranted = hasPhoneStoragePermission(context)
+    return (fineGranted || coarseGranted) && cameraGranted && notificationsGranted && storageGranted
 }
 
 /**
  * Mandatory Post-Login Permission Gate for both Customer & Partner Rider Apps.
- * Ensures Location, Camera & Notification permissions are granted before proceeding to the dashboard.
+ * Ensures Location, Camera, Notifications & Phone Storage permissions are granted before proceeding to the dashboard.
  */
 @Composable
 fun QuickDeliveryMandatoryPermissionsGateScreen(
@@ -2411,18 +2570,21 @@ fun QuickDeliveryMandatoryPermissionsGateScreen(
     var locationGranted by remember { mutableStateOf(checkLocationGranted()) }
     var cameraGranted by remember { mutableStateOf(checkCameraGranted()) }
     var notificationsGranted by remember { mutableStateOf(checkNotificationsGranted()) }
+    var storageGranted by remember { mutableStateOf(hasPhoneStoragePermission(context)) }
     var attemptedRequest by remember { mutableStateOf(false) }
 
     val refreshPermissions = {
         locationGranted = checkLocationGranted()
         cameraGranted = checkCameraGranted()
         notificationsGranted = checkNotificationsGranted()
+        storageGranted = hasPhoneStoragePermission(context)
     }
 
-    val allGranted = locationGranted && cameraGranted && notificationsGranted
+    val allGranted = locationGranted && cameraGranted && notificationsGranted && storageGranted
 
     LaunchedEffect(allGranted) {
         if (allGranted) {
+            MotivationAndPromoManager.restoreSavedLoginFromPhoneStorage(context)
             onAllPermissionsGranted()
         }
     }
@@ -2455,6 +2617,9 @@ fun QuickDeliveryMandatoryPermissionsGateScreen(
             }
             if (!notificationsGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (!storageGranted) {
+                requiredPhoneStoragePermissions().forEach { add(it) }
             }
         }.toTypedArray()
         if (missing.isEmpty()) {
@@ -2546,6 +2711,14 @@ fun QuickDeliveryMandatoryPermissionsGateScreen(
                     title = uiStrings.notificationsPermissionTitle,
                     description = "Needed for real-time order status alerts & instant Rider-Customer chat.",
                     isGranted = notificationsGranted,
+                    accentColor = accentColor
+                )
+
+                PermissionGateItemRow(
+                    icon = Icons.Default.Shield,
+                    title = uiStrings.storagePermissionTitle,
+                    description = "Needed to keep an encrypted backup of your profile, saved addresses & orders safely stored on your phone.",
+                    isGranted = storageGranted,
                     accentColor = accentColor
                 )
 
@@ -2739,6 +2912,7 @@ fun QuickDeliveryPrivacyPolicyDialog(
                         "2. Essential Permissions Only:\n" +
                         "   • Location (GPS): Used only while the app is open/on active delivery for accurate pickup/drop addresses, fare distance, and live rider tracking.\n" +
                         "   • Camera: Triggered only when you capture parcel safety photos, pickup/delivery proofs, or Rider KYC selfies.\n" +
+                        "   • Phone Storage / Media: Used strictly to store encrypted offline backups of your profile, saved addresses, and order history in Phone Storage (Documents/QuickDelivery) and attach KYC/parcel photos.\n" +
                         "   • Notifications: Used for instant order updates, OTP alerts, and live Rider-Customer chat.\n\n" +
                         "3. Prohibited Parcels & Liability: Sending illegal, hazardous, flammable, stolen, or prohibited goods is strictly banned. Senders are solely liable for accurate parcel declaration.\n\n" +
                         "4. Payments, Cancellation & Rider Terms: Fair fare splits, OTP + Digital Signature Proof-of-Delivery, pickup wait-time & cancellation rules, and traffic/KYC compliance apply.\n\n" +
@@ -3131,7 +3305,6 @@ fun LiveRiderContinuousTrackingCard(
     photoProofSummary: String?,
     liveRiderGpsCoordinates: String?,
     onRefreshLiveGps: () -> Unit,
-    onSimulateOrAdvanceStep: () -> Unit,
     onBookNewOrder: () -> Unit,
     modifier: Modifier = Modifier
 ) {

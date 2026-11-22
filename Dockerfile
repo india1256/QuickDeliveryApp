@@ -9,7 +9,6 @@ COPY package.json ./
 # Copy production assets and scripts
 COPY scripts/ ./scripts/
 COPY public/ ./public/
-COPY index.html ./
 
 # Google Cloud Run default port
 ENV NODE_ENV=production

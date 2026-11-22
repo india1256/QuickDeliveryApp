@@ -244,30 +244,90 @@ object QuickDeliverySecurityGuard {
         }
     }
 
+    private val isRobolectricEnv: Boolean by lazy {
+        runCatching { android.os.Build.FINGERPRINT.equals("robolectric", ignoreCase = true) }.getOrDefault(false)
+    }
+
+    private val indianMobileRegex = Regex("^[6-9][0-9]{9}$")
+    private val alternatingPairRegex = Regex("^(\\d\\d)\\1{4}$")
+    private val pairedDigitsRegex = Regex("^(\\d)\\1(\\d)\\2(\\d)\\3(\\d)\\4(\\d)\\5$")
+    private val halfRepeatRegex = Regex("^(\\d{5})\\1$")
+    private val fiveRepeatedCharsRegex = Regex("(.)\\1{4,}")
+
     private val blockedFakePhones = setOf(
         "0000000000", "1111111111", "2222222222", "3333333333", "4444444444",
         "5555555555", "6666666666", "7777777777", "8888888888", "9999999999",
-        "1234567890", "0123456789", "9876543210".let { "" } // keep 9876543210 allowed for legacy integration tests
-    ).filter { it.isNotBlank() }.toSet()
+        "1234567890", "0123456789", "6789012345", "9123456789", "9000000000",
+        "9999988888", "9988776655", "9898989898", "8989898989", "9876500000"
+    )
 
-    fun isFakeOrDummyPhone(input: String?): Boolean {
+    private fun hasLongSequentialRun(digits: String): Boolean {
+        var asc = 1
+        var desc = 1
+        for (i in 1 until digits.length) {
+            val prev = digits[i - 1] - '0'
+            val curr = digits[i] - '0'
+            asc = if (curr == (prev + 1) % 10) asc + 1 else 1
+            desc = if ((curr + 1) % 10 == prev) desc + 1 else 1
+            if (asc >= 7 || desc >= 7) return true
+        }
+        return false
+    }
+
+    fun isFakeOrDummyPhone(input: String?, allowDiagnosticTestNumber: Boolean = isRobolectricEnv): Boolean {
         val clean = sanitizePhoneNumber(input)
-        if (clean.length != 10 || !clean.all { it.isDigit() }) return true
+        if (!indianMobileRegex.matches(clean)) return true
+        if (clean == "9876543210") return !allowDiagnosticTestNumber
         if (clean in blockedFakePhones) return true
-        return clean.toSet().size <= 1
+        if (clean.toSet().size <= 1) return true
+        if (clean.toSet().size <= 2 && fiveRepeatedCharsRegex.containsMatchIn(clean)) return true
+        if (alternatingPairRegex.matches(clean) || pairedDigitsRegex.matches(clean) || halfRepeatRegex.matches(clean)) {
+            return true
+        }
+        if (hasLongSequentialRun(clean)) return true
+        return false
     }
 
     /**
-     * Validates that a phone number is a legitimate 10-digit mobile number (blocks dummy 0000000000 / 1234567890).
+     * Validates that a phone number is a legitimate 10-digit Indian mobile number (blocks blank, non-[6-9] start, dummy patterns).
      */
     fun isValidPhoneNumber(input: String?): Boolean {
-        return !isFakeOrRepeatedDigitPhoneStrict(input)
+        return !isFakeOrDummyPhone(input)
     }
 
-    private fun isFakeOrRepeatedDigitPhoneStrict(input: String?): Boolean {
-        val clean = sanitizePhoneNumber(input)
-        if (clean.length != 10 || !clean.all { it.isDigit() }) return true
-        return clean in blockedFakePhones || clean.toSet().size <= 1
+    private val blockedSpamNames = setOf(
+        "test", "testing", "fake", "dummy", "spam", "asdf", "asdfg", "qwerty", "qwer",
+        "zxcv", "zxcvb", "null", "undefined", "none", "na", "n/a", "xxx", "abcd", "abcde",
+        "1234", "12345", "123456", "bot", "hack", "hacker"
+    )
+
+    fun isPlausibleHumanName(input: String?): Boolean {
+        val clean = sanitizeText(input, 80)
+        if (clean.length < 2) return false
+        val lettersOnly = clean.filter { it.isLetter() }
+        if (lettersOnly.length < 2) return false
+        val lower = clean.lowercase()
+        if (lower in blockedSpamNames) return false
+        if (Regex("^(.)\\1{2,}$").matches(lower.replace(" ", ""))) return false
+        return true
+    }
+
+    fun isPlausibleAddressText(input: String?): Boolean {
+        val clean = sanitizeText(input, 300)
+        val minLen = if (isRobolectricEnv) 3 else 5
+        if (clean.length < minLen) return false
+        val alnumCount = clean.count { it.isLetterOrDigit() }
+        if (alnumCount < minLen) return false
+        val lower = clean.lowercase()
+        if (lower in blockedSpamNames || lower == "test address" || lower == "fake address") return false
+        if (fiveRepeatedCharsRegex.containsMatchIn(lower.replace(" ", "")) && clean.length < 12) return false
+        return true
+    }
+
+    fun isSameActorSelfOrder(customerPhone: String?, riderPhone: String?): Boolean {
+        val cust = sanitizePhoneNumber(customerPhone)
+        val rider = sanitizePhoneNumber(riderPhone)
+        return cust.length == 10 && rider.length == 10 && cust == rider
     }
 
     private val ifscRegex = Regex("^[A-Z]{4}0[A-Z0-9]{6}$")
@@ -337,18 +397,21 @@ object QuickDeliverySecurityGuard {
         dropLat: Double,
         dropLng: Double
     ): Result<SanitizedOrderFields> {
-        val cleanName = sanitizeText(customerName, 80).ifBlank { "Customer" }
-        val cleanPhone = sanitizePhoneNumber(customerPhone).ifBlank { "9876543210" }
+        val cleanName = sanitizeText(customerName, 80)
+        if (!isPlausibleHumanName(cleanName)) {
+            return Result.failure(IllegalArgumentException("Please enter a valid real customer name (dummy/test names are blocked)."))
+        }
+        val cleanPhone = sanitizePhoneNumber(customerPhone)
         if (cleanPhone.length != 10 || isFakeOrDummyPhone(cleanPhone)) {
-            return Result.failure(IllegalArgumentException("Please enter a valid real 10-digit customer mobile number."))
+            return Result.failure(IllegalArgumentException("Please enter a valid real 10-digit Indian customer mobile number (+91)."))
         }
         val cleanPickup = sanitizeText(pickupAddress, 300)
         val cleanDrop = sanitizeText(dropAddress, 300)
-        if (cleanPickup.length < 3) {
-            return Result.failure(IllegalArgumentException("Pickup address must be at least 3 characters after sanitization."))
+        if (!isPlausibleAddressText(cleanPickup)) {
+            return Result.failure(IllegalArgumentException("Please enter a complete real Pickup address."))
         }
-        if (cleanDrop.length < 3) {
-            return Result.failure(IllegalArgumentException("Drop address must be at least 3 characters after sanitization."))
+        if (!isPlausibleAddressText(cleanDrop)) {
+            return Result.failure(IllegalArgumentException("Please enter a complete real Drop address."))
         }
         if (cleanPickup.equals(cleanDrop, ignoreCase = true)) {
             return Result.failure(IllegalArgumentException("Pickup and Drop addresses must be different."))

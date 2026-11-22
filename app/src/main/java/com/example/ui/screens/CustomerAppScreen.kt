@@ -823,21 +823,24 @@ fun CustomerAppScreen(
                 "${selectedVehicle.title} is temporarily unavailable. Please choose another vehicle."
             pickupHouseFlat.isBlank() -> "Pickup House / Flat No. (*) is mandatory"
             pickupBuilding.isBlank() -> "Pickup Building / Society (*) is mandatory"
-            pickupAddressText.isBlank() -> "Pickup Area / Locality / Street (*) is mandatory"
+            !com.example.security.QuickDeliverySecurityGuard.isPlausibleAddressText(pickupAddressText) ->
+                "Please enter a valid Pickup Area / Locality / Street (*)"
             pickupPinCode.length != 6 -> "Please enter a valid 6-digit Pickup PIN Code (*)"
             !remoteFlags.isPinCodeAllowed(pickupPinCode) -> "Pickup PIN $pickupPinCode is currently outside Admin serviceable PIN zones."
-            receiverFullName.isBlank() -> "Receiver Name (*) is mandatory"
+            !com.example.security.QuickDeliverySecurityGuard.isPlausibleHumanName(receiverFullName) ->
+                "Please enter a real Receiver Full Name (*) (dummy/test names are blocked)"
             receiverMobilePhone.length != 10 || com.example.security.QuickDeliverySecurityGuard.isFakeOrDummyPhone(receiverMobilePhone) ->
-                "Please enter a valid 10-digit Receiver Mobile Number (+91) (*)"
+                "Please enter a valid real 10-digit Receiver Mobile Number (+91) (*)"
             dropHouseFlat.isBlank() -> "Drop House / Flat No. (*) is mandatory"
             dropBuilding.isBlank() -> "Drop Building / Society (*) is mandatory"
-            dropAddressText.isBlank() -> "Drop Area / Locality / Street (*) is mandatory"
+            !com.example.security.QuickDeliverySecurityGuard.isPlausibleAddressText(dropAddressText) ->
+                "Please enter a valid Drop Area / Locality / Street (*)"
             dropPinCode.length != 6 -> "Please enter a valid 6-digit Drop PIN Code (*)"
             !remoteFlags.isPinCodeAllowed(dropPinCode) -> "Drop PIN $dropPinCode is currently outside Admin serviceable PIN zones."
             remoteFlags.multiDropEnabled && isMultiDropEnabled && extraStopAddress.isBlank() -> "Please enter Extra Stop address or turn off Multi-Drop."
             weightCheck.isFailure -> weightCheck.exceptionOrNull()?.message
                 ?: AutomatedFairRiderAssignmentEngine.MAX_PARCEL_WEIGHT_ERROR_MESSAGE
-            packageDescription.isBlank() -> "Parcel Note / Item Description (*) is mandatory"
+            packageDescription.trim().length < 2 -> "Parcel Note / Item Description (*) is mandatory"
             else -> null
         }
     }
@@ -969,6 +972,12 @@ fun CustomerAppScreen(
 
     val executeCustomerBooking: () -> Unit = executeBooking@{
         runCatching {
+            if (!MotivationAndPromoManager.customerAuthenticatedInSession || normalizedCustomerPhone.length != 10) {
+                isErrorBanner = true
+                statusBanner = "Please sign in with a verified 10-digit mobile number before placing an order."
+                showBookingConfirmationScreen = false
+                return@executeBooking
+            }
             val weightBackendCheck = AutomatedFairRiderAssignmentEngine.validateCustomerParcelWeightKg(
                 packageWeightKg,
                 selectedVehicle
@@ -1139,6 +1148,13 @@ fun CustomerAppScreen(
                             }
                         }
                     }
+                    // Save updated order vault securely in Phone Storage when permitted
+                    MotivationAndPromoManager.syncAccountAndOrdersInBackground(
+                        context = context,
+                        orders = repository.orders.value,
+                        authEmail = customerEmail,
+                        authDisplayName = customerName
+                    )
                     // Auto-save real Pickup & Drop addresses under the chosen Home/Office/Shop label for 1-tap future bookings
                     if (pickupAddressText.isNotBlank() && pickupPinCode.length == 6) {
                         runCatching {
@@ -5172,37 +5188,6 @@ fun CustomerAppScreen(
                                                 Manifest.permission.ACCESS_COARSE_LOCATION
                                             )
                                         )
-                                    }
-                                },
-                                onSimulateOrAdvanceStep = {
-                                    when (activeOrder.orderStatus) {
-                                        OrderStatus.SEARCHING_RIDER -> {
-                                            AutomatedFairRiderAssignmentEngine.ensureBalancedActiveRiderFleet(repository)
-                                            AutomatedFairRiderAssignmentEngine.autoDiscoverAndAssignOrder(
-                                                repository = repository,
-                                                orderId = activeOrder.orderId
-                                            )
-                                        }
-                                        OrderStatus.RIDER_ASSIGNED, OrderStatus.ARRIVED_AT_PICKUP -> {
-                                            repository.verifyPickupOtpByRider(
-                                                activeOrder.orderId,
-                                                activeOrder.pickupOtp,
-                                                activeOrder.assignedRiderId
-                                            )
-                                        }
-                                        OrderStatus.PICKED_UP, OrderStatus.IN_TRANSIT -> {
-                                            repository.verifyDeliveryOtpByRider(
-                                                activeOrder.orderId,
-                                                activeOrder.deliveryOtp,
-                                                activeOrder.assignedRiderId
-                                            )
-                                            AutomatedFairRiderAssignmentEngine.retryAllSearchingOrdersFairly(repository)
-                                            MotivationAndPromoManager.notifySuccessfulDeliveryMotivationForBoth(
-                                                order = activeOrder.copy(orderStatus = OrderStatus.DELIVERED),
-                                                forceTrigger = true
-                                            )
-                                        }
-                                        else -> Unit
                                     }
                                 },
                                 onBookNewOrder = {

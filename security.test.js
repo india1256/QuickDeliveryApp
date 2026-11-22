@@ -400,5 +400,30 @@ test('8. OTP Email & Root Website Security: OTP emails must NOT link to quickdel
   assert.match(serverSource, /pathname === '\/admin'/);
 });
 
+test('9. Maximum Anti-Fake-Order Security & Phone Storage Permission Audit: blocks fake Indian mobile patterns, self-order fraud, customer status forgery, and enables storage permissions', () => {
+  const serverSource = fs.readFileSync('./scripts/apk-download-server.mjs', 'utf8');
+  const manifestSource = fs.readFileSync('./app/src/main/AndroidManifest.xml', 'utf8');
+  const guardSource = fs.readFileSync('./core/src/main/java/com/example/security/QuickDeliverySecurityGuard.kt', 'utf8');
+
+  // 9a. Storage permissions present in Manifest
+  assert.match(manifestSource, /android\.permission\.READ_MEDIA_IMAGES/);
+  assert.match(manifestSource, /android\.permission\.READ_EXTERNAL_STORAGE/);
+  assert.match(manifestSource, /android\.permission\.WRITE_EXTERNAL_STORAGE/);
+
+  // 9b. QuickDeliverySecurityGuard blocks blank phone fallback and validates real names/phones/self-order
+  assert.equal(guardSource.includes('sanitizePhoneNumber(customerPhone).ifBlank { "9876543210" }'), false);
+  assert.match(guardSource, /fun isPlausibleHumanName\(/);
+  assert.match(guardSource, /fun isSameActorSelfOrder\(/);
+  assert.match(guardSource, /\^\[6-9\]\[0-9\]\{9\}\$/);
+
+  // 9c. Server enforces Indian ^[6-9]\d{9}$, blocks self-order, locks customer role transitions, and protects Admin reset
+  assert.match(serverSource, /function isFakeOrInvalidIndianPhone10\(/);
+  assert.match(serverSource, /Self-order fraud/);
+  assert.match(serverSource, /Blocked CUSTOMER role status forgery/);
+  assert.match(serverSource, /MAX_NEW_ORDERS_PER_MIN_PER_IP/);
+  assert.match(serverSource, /Documents\/QuickDelivery/);
+});
+
+
 
 
