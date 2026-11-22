@@ -1,4 +1,4 @@
-import { gpsService } from './gpsTrackingService';
+import { gpsService } from './gpsTrackingService.ts';
 
 export interface BatteryStatus {
   levelPercent: number;

@@ -28,6 +28,7 @@ import com.example.data.cloud.QuickDeliveryFirebaseInitializer
 import com.example.data.cloud.QuickDeliveryOperationsManager
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import com.example.security.AppPermissionManager
@@ -72,11 +73,14 @@ class CustomerMainActivity : ComponentActivity() {
             QuickDeliveryTheme {
                 LocalizedContextProvider {
                     QuickDeliveryCloudSyncBar(showCardUi = false)
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                            .windowInsetsPadding(WindowInsets.navigationBars)
+                    ) {
                         Column(modifier = Modifier.fillMaxSize()) {
-                            LiveNetworkStatusBanner(
-                                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
-                            )
+                            LiveNetworkStatusBanner()
                             Box(modifier = Modifier.weight(1f)) {
                                 CustomerAppScreen()
                             }

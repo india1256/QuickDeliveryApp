@@ -4562,24 +4562,24 @@ fun CustomerAppScreen(
                 item(key = "customer_step1_cta_card") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         val inlineStep1ValidationError = if (attemptedStep1Next) validateStep1MandatoryFields() else null
-                                if (inlineStep1ValidationError != null) {
-                                    Surface(
-                                        color = Color(0xFFFEF2F2),
-                                        shape = RoundedCornerShape(12.dp),
-                                        border = BorderStroke(1.2.dp, Color(0xFFDC2626)),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("customer_step1_mandatory_error_box")
-                                    ) {
-                                        Text(
-                                            text = "⚠️ $inlineStep1ValidationError",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFB91C1C),
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
-                                        )
-                                    }
-                                }
+                        if (inlineStep1ValidationError != null) {
+                            Surface(
+                                color = Color(0xFFFEF2F2),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.2.dp, Color(0xFFDC2626)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("customer_step1_mandatory_error_box")
+                            ) {
+                                Text(
+                                    text = "⚠️ $inlineStep1ValidationError",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFB91C1C),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                )
+                            }
+                        }
 
                                 // Step 1 Primary Action Button (Enforces mandatory * fields + max 20 kg limit)
                                 Button(

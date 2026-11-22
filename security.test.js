@@ -390,8 +390,10 @@ test('8. OTP Email & Root Website Security: OTP emails must NOT link to quickdel
   assert.match(homeBlock, /Privacy Policy/);
   assert.match(homeBlock, /Terms of Service/);
 
-  // 8d. Root route '/' serves renderFirebaseHostingHomeHtml() while dedicated /customer, /rider, /admin, /suite routes stay active
-  assert.match(serverSource, /const html = isRoleApkRoute\s*\?\s*renderDownloadPageHtml\(autoDownload, roleFilter\)\s*:\s*renderFirebaseHostingHomeHtml\(\);/);
+  // 8d. Root route '/' on quickdelivery.co.in strictly serves renderFirebaseHostingHomeHtml() and blocks /api/preview/* while /customer, /rider, /admin, /suite routes stay active
+  assert.match(serverSource, /const showInteractivePreviewOnRoot =\s*pathname === '\/'[\s\S]*!isPublicBrandDomain/);
+  assert.match(serverSource, /pathname === '\/api\/preview\/state' \|\| pathname === '\/api\/preview\/action'[\s\S]*!reqHost\.includes\(BRAND_DOMAIN\)[\s\S]*403/);
+  assert.match(serverSource, /const html = \(isRoleApkRoute \|\| showApkSuiteOnRoot\)\s*\?\s*renderDownloadPageHtml\(autoDownload, roleFilter\)\s*:\s*showInteractivePreviewOnRoot\s*\?\s*readInteractivePreviewHtml\(\)\s*:\s*renderFirebaseHostingHomeHtml\(\);/);
   assert.match(serverSource, /pathname === '\/suite'/);
   assert.match(serverSource, /pathname === '\/customer'/);
   assert.match(serverSource, /pathname === '\/rider'/);

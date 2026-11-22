@@ -738,7 +738,11 @@ object FcmOrderNotificationManager {
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setAutoCancel(true)
             if (pendingIntent != null) builder.setContentIntent(pendingIntent)
-            NotificationManagerCompat.from(context).notify(message.messageId.hashCode(), builder.build())
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            ) {
+                NotificationManagerCompat.from(context).notify(message.messageId.hashCode(), builder.build())
+            }
         }
     }
 
@@ -830,10 +834,14 @@ object FcmOrderNotificationManager {
                 builder.setContentIntent(pendingIntent)
             }
 
-            NotificationManagerCompat.from(context).notify(
-                notifId,
-                builder.build()
-            )
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            ) {
+                NotificationManagerCompat.from(context).notify(
+                    notifId,
+                    builder.build()
+                )
+            }
         }
     }
 }

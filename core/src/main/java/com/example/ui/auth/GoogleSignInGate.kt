@@ -375,27 +375,30 @@ fun QuickDeliveryCloudSyncBar(
     }
 
     // Observe customer's own orders in real time
-    LaunchedEffect(currentUser?.uid) {
+    LaunchedEffect(firebaseReady, currentUser?.uid) {
+        if (!firebaseReady) return@LaunchedEffect
         val uid = currentUser?.uid ?: return@LaunchedEffect
-        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
         cloudRepo.observeCustomerOrders(uid)
             .catch { }
             .collect { list -> customerCloudOrders = list }
     }
 
     // Observe open unassigned orders so a Rider on another phone sees new bookings in real time
-    LaunchedEffect(currentUser?.uid) {
+    LaunchedEffect(firebaseReady, currentUser?.uid) {
+        if (!firebaseReady) return@LaunchedEffect
         currentUser?.uid ?: return@LaunchedEffect
-        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
         cloudRepo.observeAvailableOrdersForRider()
             .catch { }
             .collect { list -> openPoolCloudOrders = list }
     }
 
     // Observe orders assigned to this Rider UID in real time
-    LaunchedEffect(currentUser?.uid) {
+    LaunchedEffect(firebaseReady, currentUser?.uid) {
+        if (!firebaseReady) return@LaunchedEffect
         val uid = currentUser?.uid ?: return@LaunchedEffect
-        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
         cloudRepo.observeAssignedOrdersForRider(uid)
             .catch { }
             .collect { list -> assignedRiderCloudOrders = list }
@@ -423,8 +426,9 @@ fun QuickDeliveryCloudSyncBar(
             deliveryStateManager.syncFromCustomerOrder(localOrder, setAsActive = index == 0)
         }
 
+        if (!firebaseReady) return@LaunchedEffect
         val uid = currentUser?.uid ?: return@LaunchedEffect
-        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
         localOrders.forEach { localOrder ->
             val safeId = localOrder.orderId.replace("[^a-zA-Z0-9_\\-]".toRegex(), "_").take(64)
             val signature = "${localOrder.orderStatus.name}|${localOrder.assignedRiderId.orEmpty()}|${localOrder.totalAmount}"
@@ -448,10 +452,12 @@ fun QuickDeliveryCloudSyncBar(
 
     // Automatically synchronize logged-in Rider profile and wallet state in the background
     LaunchedEffect(
+        firebaseReady,
         currentUser?.uid,
         localRiders,
         com.example.ui.components.MotivationAndPromoManager.cachedRiderName
     ) {
+        if (!firebaseReady) return@LaunchedEffect
         val uid = currentUser?.uid ?: return@LaunchedEffect
         val primaryRider = localRiders.firstOrNull() ?: return@LaunchedEffect
         val riderName = com.example.ui.components.MotivationAndPromoManager.cachedRiderName
@@ -465,7 +471,7 @@ fun QuickDeliveryCloudSyncBar(
         val shiftStatus = if (primaryRider.isOnline) "ONLINE_ACTIVE" else "OFFLINE_RESTING"
         val profileSig = "${primaryRider.riderId}|$riderName|$balancePaise|$debtPaise|$shiftStatus"
         if (lastSyncedRiderProfileSignature != profileSig) {
-            val cloudRepo = QuickDeliveryCloudRepository(context)
+            val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
             val walletRes = cloudRepo.upsertRiderWallet(
                 CloudRiderWallet(
                     id = uid,
@@ -497,11 +503,12 @@ fun QuickDeliveryCloudSyncBar(
     val remoteFlagsState by com.example.data.cloud.QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
     var lastPublishedRemoteFlagsTs by remember { mutableStateOf(0L) }
 
-    LaunchedEffect(currentUser?.uid) {
+    LaunchedEffect(firebaseReady, currentUser?.uid) {
+        if (!firebaseReady) return@LaunchedEffect
         val uid = currentUser?.uid ?: return@LaunchedEffect
         val email = currentUser?.email.orEmpty()
         val displayName = currentUser?.displayName.orEmpty()
-        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
         val role = when {
             com.example.data.cloud.QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(email) -> "ADMIN"
             com.example.ui.components.MotivationAndPromoManager.cachedRiderName.isNotBlank() -> "RIDER"
@@ -523,9 +530,10 @@ fun QuickDeliveryCloudSyncBar(
         }
     }
 
-    LaunchedEffect(currentUser?.uid) {
+    LaunchedEffect(firebaseReady, currentUser?.uid) {
+        if (!firebaseReady) return@LaunchedEffect
         currentUser?.uid ?: return@LaunchedEffect
-        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
         cloudRepo.observeRemoteConfigFlags()
             .catch { }
             .collect { cloudFlags ->
@@ -540,11 +548,12 @@ fun QuickDeliveryCloudSyncBar(
             }
     }
 
-    LaunchedEffect(currentUser?.uid, remoteFlagsState.updatedAtEpochMs) {
+    LaunchedEffect(firebaseReady, currentUser?.uid, remoteFlagsState.updatedAtEpochMs) {
+        if (!firebaseReady) return@LaunchedEffect
         val email = currentUser?.email ?: return@LaunchedEffect
         if (!com.example.data.cloud.QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(email)) return@LaunchedEffect
         if (remoteFlagsState.updatedAtEpochMs > lastPublishedRemoteFlagsTs && remoteFlagsState.updatedAtEpochMs > 0L) {
-            val cloudRepo = QuickDeliveryCloudRepository(context)
+            val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
             val res = cloudRepo.publishRemoteConfigFlags(remoteFlagsState, email)
             if (res.isSuccess) {
                 lastPublishedRemoteFlagsTs = remoteFlagsState.updatedAtEpochMs
@@ -552,10 +561,11 @@ fun QuickDeliveryCloudSyncBar(
         }
     }
 
-    LaunchedEffect(currentUser?.uid) {
+    LaunchedEffect(firebaseReady, currentUser?.uid) {
+        if (!firebaseReady) return@LaunchedEffect
         val uid = currentUser?.uid ?: return@LaunchedEffect
         val email = currentUser?.email.orEmpty()
-        val cloudRepo = QuickDeliveryCloudRepository(context)
+        val cloudRepo = runCatching { QuickDeliveryCloudRepository(context) }.getOrNull() ?: return@LaunchedEffect
         val flow = if (com.example.data.cloud.QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(email)) {
             cloudRepo.observeAllB2bAccountsForAdmin()
         } else {
