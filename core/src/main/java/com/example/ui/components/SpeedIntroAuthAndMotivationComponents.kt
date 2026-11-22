@@ -807,6 +807,35 @@ object MotivationAndPromoManager {
         }.getOrNull()
     }
 
+    fun markNewSignUpAppGuidePending(context: Context, rolePrefix: String) {
+        val cleanRole = normalizeAccountRole(rolePrefix)
+        runCatching {
+            context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("${cleanRole}_pending_app_guide_v1", true)
+                .apply()
+        }
+    }
+
+    fun hasPendingNewSignUpAppGuide(context: Context, rolePrefix: String): Boolean {
+        val cleanRole = normalizeAccountRole(rolePrefix)
+        return runCatching {
+            context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean("${cleanRole}_pending_app_guide_v1", false)
+        }.getOrDefault(false)
+    }
+
+    fun dismissNewSignUpAppGuide(context: Context, rolePrefix: String) {
+        val cleanRole = normalizeAccountRole(rolePrefix)
+        lastAuthWasNewSignUp = false
+        runCatching {
+            context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("${cleanRole}_pending_app_guide_v1", false)
+                .apply()
+        }
+    }
+
     fun logoutCustomer(context: Context? = null) {
         customerAuthenticatedInSession = false
         context?.let { ctx ->
@@ -2234,6 +2263,7 @@ fun QuickDeliveryUserAuthScreen(
                                 }
                             }
                             MotivationAndPromoManager.lastAuthWasNewSignUp = true
+                            MotivationAndPromoManager.markNewSignUpAppGuidePending(context, prefsKeyPrefix)
                             MotivationAndPromoManager.forceSignInTabNextOpen = false
                             MotivationAndPromoManager.riderApprovalBannerMessage = null
                             MotivationAndPromoManager.registerNewAccountLocally(
@@ -2287,6 +2317,7 @@ fun QuickDeliveryUserAuthScreen(
                                 }
                                 showSwitchToSignUpPrompt = false
                                 MotivationAndPromoManager.lastAuthWasNewSignUp = false
+                                MotivationAndPromoManager.dismissNewSignUpAppGuide(context, prefsKeyPrefix)
                                 MotivationAndPromoManager.forceSignInTabNextOpen = false
                                 MotivationAndPromoManager.riderApprovalBannerMessage = null
                                 MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
@@ -2325,6 +2356,7 @@ fun QuickDeliveryUserAuthScreen(
                                                 email = resolvedEmail
                                             )
                                             MotivationAndPromoManager.lastAuthWasNewSignUp = false
+                                            MotivationAndPromoManager.dismissNewSignUpAppGuide(context, prefsKeyPrefix)
                                             MotivationAndPromoManager.forceSignInTabNextOpen = false
                                             MotivationAndPromoManager.riderApprovalBannerMessage = null
                                             MotivationAndPromoManager.grantPhoneStorageAndSaveLogin(
@@ -2400,6 +2432,11 @@ fun QuickDeliveryUserAuthScreen(
                             }
                         val googlePhone = QuickDeliverySecurityGuard.sanitizePhoneNumber(mobileNumber)
                         MotivationAndPromoManager.lastAuthWasNewSignUp = isNewUserSignUp
+                        if (isNewUserSignUp) {
+                            MotivationAndPromoManager.markNewSignUpAppGuidePending(context, prefsKeyPrefix)
+                        } else {
+                            MotivationAndPromoManager.dismissNewSignUpAppGuide(context, prefsKeyPrefix)
+                        }
                         MotivationAndPromoManager.forceSignInTabNextOpen = false
                         MotivationAndPromoManager.riderApprovalBannerMessage = null
                         MotivationAndPromoManager.registerNewAccountLocally(

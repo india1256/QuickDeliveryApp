@@ -424,6 +424,48 @@ test('9. Maximum Anti-Fake-Order Security & Phone Storage Permission Audit: bloc
   assert.match(serverSource, /Documents\/QuickDelivery/);
 });
 
+test('10. Strict Order-Only Chatbot & Post-Sign-Up App Guide with Skip: verifies strict order scope, bypass refusal, and Sign-Up walkthrough Skip wiring', () => {
+  const botSource = fs.readFileSync(
+    './core/src/main/java/com/example/ui/components/OrderChatbotAndOnboardingComponents.kt',
+    'utf8'
+  );
+  const authSource = fs.readFileSync(
+    './core/src/main/java/com/example/ui/components/SpeedIntroAuthAndMotivationComponents.kt',
+    'utf8'
+  );
+  const customerSource = fs.readFileSync(
+    './app/src/main/java/com/example/ui/screens/CustomerAppScreen.kt',
+    'utf8'
+  );
+  const riderSource = fs.readFileSync(
+    './core/src/main/java/com/example/ui/rider/RiderPartnerCompactScreen.kt',
+    'utf8'
+  );
 
+  // 10a. OrderAssistantBotEngine enforces strict order-only scope and rejects off-topic / OTP bypass probes
+  assert.match(botSource, /object OrderAssistantBotEngine/);
+  assert.match(botSource, /fun isOrderRelatedQuery\(/);
+  assert.match(botSource, /fun isSecurityBypassProbe\(/);
+  assert.match(botSource, /EXPLICIT_OFF_TOPIC_KEYWORDS/);
+  assert.match(botSource, /SECURITY_BYPASS_KEYWORDS/);
+  assert.match(botSource, /only answer order-related questions/);
 
+  // 10b. QuickDeliveryNewUserAppGuideScreen provides multi-step details + clear Skip buttons
+  assert.match(botSource, /fun QuickDeliveryNewUserAppGuideScreen\(/);
+  assert.match(botSource, /_app_guide_skip_top_btn/);
+  assert.match(botSource, /_app_guide_skip_btn/);
+  assert.match(botSource, /_app_guide_next_btn/);
 
+  // 10c. Sign-Up marks pending guide while existing Sign-In dismisses it
+  assert.match(authSource, /fun markNewSignUpAppGuidePending\(/);
+  assert.match(authSource, /fun hasPendingNewSignUpAppGuide\(/);
+  assert.match(authSource, /fun dismissNewSignUpAppGuide\(/);
+
+  // 10d. Both CustomerAppScreen and RiderPartnerCompactScreen wire Order Chatbot & New Sign-Up Guide
+  assert.match(customerSource, /QuickDeliveryOrderChatbotDialog/);
+  assert.match(customerSource, /QuickDeliveryNewUserAppGuideScreen/);
+  assert.match(customerSource, /customer_top_bar_order_bot_btn/);
+  assert.match(riderSource, /QuickDeliveryOrderChatbotDialog/);
+  assert.match(riderSource, /QuickDeliveryNewUserAppGuideScreen/);
+  assert.match(riderSource, /rider_top_header_order_bot_btn/);
+});

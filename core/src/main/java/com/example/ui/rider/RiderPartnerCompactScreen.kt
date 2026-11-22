@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Redeem
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
@@ -130,9 +131,12 @@ import com.example.ui.components.DirectDialPadCallButton
 import com.example.ui.components.DualDeliveryCelebrationMotivationBanner
 import com.example.ui.components.FcmOrderNotificationManager
 import com.example.ui.components.MotivationAndPromoManager
+import com.example.ui.components.OrderBotRole
 import com.example.ui.components.QuickDeliveryDeleteAccountDialog
 import com.example.ui.components.QuickDeliveryMandatoryPermissionsGateScreen
+import com.example.ui.components.QuickDeliveryNewUserAppGuideScreen
 import com.example.ui.components.QuickDeliveryNextLevelLaunchOverlay
+import com.example.ui.components.QuickDeliveryOrderChatbotDialog
 import com.example.ui.components.QuickDeliveryCuteBunnyLogo
 import com.example.ui.components.QuickDeliveryOfficialLogo
 import com.example.ui.components.QuickDeliveryPrivacyPolicyDialog
@@ -586,8 +590,11 @@ fun RiderPartnerCompactScreen(
         return
     }
 
-    // Rider authentication & mandatory permissions gate state
+    // Rider authentication, new sign-up app guide & mandatory permissions gate state
     var isRiderLoggedIn by remember { mutableStateOf(MotivationAndPromoManager.riderAuthenticatedInSession) }
+    var showNewUserAppGuide by remember {
+        mutableStateOf(MotivationAndPromoManager.hasPendingNewSignUpAppGuide(context, "rider"))
+    }
     var allRiderPermissionsGranted by remember { mutableStateOf(hasAllMandatoryAppPermissions(context)) }
     if (!isRiderLoggedIn) {
         QuickDeliveryUserAuthScreen(
@@ -610,11 +617,31 @@ fun RiderPartnerCompactScreen(
                 MotivationAndPromoManager.forceSignInTabNextOpen = false
                 MotivationAndPromoManager.riderApprovalBannerMessage = null
                 MotivationAndPromoManager.riderAuthenticatedInSession = true
+                showNewUserAppGuide = MotivationAndPromoManager.hasPendingNewSignUpAppGuide(context, "rider")
                 isRiderLoggedIn = true
                 allRiderPermissionsGranted = hasAllMandatoryAppPermissions(context)
                 MultiPhoneLiveSyncManager.triggerImmediateSync(context)
                 statusMessage = "Welcome, Partner $name!"
             }
+        )
+        return
+    }
+
+    if (showNewUserAppGuide) {
+        BackHandler {
+            MotivationAndPromoManager.dismissNewSignUpAppGuide(context, "rider")
+            showNewUserAppGuide = false
+        }
+        QuickDeliveryNewUserAppGuideScreen(
+            roleTitle = "Rider Partner",
+            prefsKeyPrefix = "rider",
+            accentColor = RiderOrange,
+            userName = riderDisplayName,
+            onFinishOrSkip = {
+                MotivationAndPromoManager.dismissNewSignUpAppGuide(context, "rider")
+                showNewUserAppGuide = false
+            },
+            modifier = modifier
         )
         return
     }
@@ -808,6 +835,7 @@ fun RiderPartnerCompactScreen(
     var showRiderDeleteAccountDialog by rememberSaveable { mutableStateOf(false) }
     var showPartnerSupportDialog by rememberSaveable { mutableStateOf(false) }
     var showBankAccountDialog by rememberSaveable { mutableStateOf(false) }
+    var showRiderOrderChatbotDialog by rememberSaveable { mutableStateOf(false) }
     var orderPendingRejection by remember { mutableStateOf<CustomerOrder?>(null) }
     remember(context) { RiderProfilePhotoManager.ensureLoaded(context) }
     val riderHomeProfileBitmap by RiderProfilePhotoManager.profilePhotoBitmap.collectAsState()
@@ -830,6 +858,7 @@ fun RiderPartnerCompactScreen(
         showIncentivesDialog = false
         showGuidelinesDialog = false
         showTopSosEmergencyDialog = false
+        showRiderOrderChatbotDialog = false
         if (drawerState.isOpen) {
             scope.launch { drawerState.close() }
         }
@@ -854,6 +883,7 @@ fun RiderPartnerCompactScreen(
     }
 
     val hasRiderSubNavigation = orderPendingRejection != null ||
+        showRiderOrderChatbotDialog ||
         showRiderDeleteAccountDialog ||
         showRiderPrivacyPolicyDialog ||
         showPartnerSupportDialog ||
@@ -875,6 +905,7 @@ fun RiderPartnerCompactScreen(
     BackHandler(enabled = hasRiderSubNavigation) {
         when {
             orderPendingRejection != null -> orderPendingRejection = null
+            showRiderOrderChatbotDialog -> showRiderOrderChatbotDialog = false
             showRiderDeleteAccountDialog -> showRiderDeleteAccountDialog = false
             showRiderPrivacyPolicyDialog -> showRiderPrivacyPolicyDialog = false
             showPartnerSupportDialog -> showPartnerSupportDialog = false
@@ -1127,6 +1158,14 @@ fun RiderPartnerCompactScreen(
                         scope.launch { drawerState.close() }
                         showRiderDeleteAccountDialog = true
                     },
+                    onOpenOrderChatbot = {
+                        scope.launch { drawerState.close() }
+                        showRiderOrderChatbotDialog = true
+                    },
+                    onOpenAppGuide = {
+                        scope.launch { drawerState.close() }
+                        showNewUserAppGuide = true
+                    },
                     onCloseDrawer = {
                         scope.launch { drawerState.close() }
                     }
@@ -1191,11 +1230,38 @@ fun RiderPartnerCompactScreen(
                             }
                         }
 
-                        // Right: Compact Emergency SOS Button + Duty Online/Offline Status & Switch
+                        // Right: Order Bot Chip + Compact Emergency SOS Button + Duty Online/Offline Status & Switch
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
+                            Surface(
+                                onClick = { showRiderOrderChatbotDialog = true },
+                                color = QuickDeliveryTeal,
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.testTag("rider_top_header_order_bot_btn")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SmartToy,
+                                        contentDescription = "Rider Order Assistant Bot",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Bot",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
                             Surface(
                                 onClick = { showTopSosEmergencyDialog = true },
                                 color = PorterRed,
@@ -1718,6 +1784,26 @@ fun RiderPartnerCompactScreen(
                 QuickDeliveryPrivacyPolicyDialog(
                     context = context,
                     onDismiss = { showRiderPrivacyPolicyDialog = false }
+                )
+            }
+
+            if (showRiderOrderChatbotDialog) {
+                val myRiderId = currentRider?.riderId
+                val riderScopedOrders = remember(orders, myRiderId) {
+                    orders.filter { ord ->
+                        (myRiderId != null && ord.assignedRiderId == myRiderId) ||
+                            (myRiderId == null && ord.assignedRiderId != null)
+                    }
+                }
+                QuickDeliveryOrderChatbotDialog(
+                    role = OrderBotRole.RIDER,
+                    orders = riderScopedOrders,
+                    openPoolOrdersCount = incomingSearchingCount,
+                    riderProfile = currentRider,
+                    pendingPayoutInr = currentBalance.coerceAtLeast(0.0),
+                    remoteFlags = remoteFlags,
+                    accentColor = RiderOrange,
+                    onDismiss = { showRiderOrderChatbotDialog = false }
                 )
             }
 

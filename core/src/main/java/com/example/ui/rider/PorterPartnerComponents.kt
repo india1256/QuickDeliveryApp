@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -249,6 +250,8 @@ fun PorterRiderDrawerContent(
     onOpenIncentives: () -> Unit,
     onOpenRecharge: () -> Unit,
     onOpenSupport: () -> Unit,
+    onOpenOrderChatbot: () -> Unit = {},
+    onOpenAppGuide: () -> Unit = {},
     onOpenGuidelines: () -> Unit,
     onOpenSafety: () -> Unit = onOpenSupport,
     onOpenKycDocuments: () -> Unit = onOpenProfile,
@@ -725,6 +728,28 @@ fun PorterRiderDrawerContent(
                     subtitle = "Operating Checklist & Commission Rules",
                     onClick = onOpenGuidelines,
                     tag = "drawer_item_guidelines"
+                )
+            }
+
+            item {
+                PorterDrawerMenuItem(
+                    icon = Icons.Default.SmartToy,
+                    title = "Order Assistant Bot (Order-Only)",
+                    subtitle = "Ask active trip status, OTP steps, 80% earnings & COD rules",
+                    badge = "BOT",
+                    badgeColor = PorterTeal,
+                    onClick = onOpenOrderChatbot,
+                    tag = "drawer_item_order_chatbot"
+                )
+            }
+
+            item {
+                PorterDrawerMenuItem(
+                    icon = Icons.Default.Description,
+                    title = "Partner App Guide",
+                    subtitle = "Step-by-step overview of Rider KYC, OTP & payouts",
+                    onClick = onOpenAppGuide,
+                    tag = "drawer_item_app_guide"
                 )
             }
 

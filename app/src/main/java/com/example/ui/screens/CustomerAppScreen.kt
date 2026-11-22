@@ -49,6 +49,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -72,6 +73,7 @@ import androidx.compose.material.icons.filled.Redeem
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
@@ -151,10 +153,13 @@ import com.example.ui.components.FcmRealtimeNotificationCenterCard
 import com.example.ui.components.FcmTargetAppRole
 import com.example.ui.components.LiveRiderContinuousTrackingCard
 import com.example.ui.components.MotivationAndPromoManager
+import com.example.ui.components.OrderBotRole
 import com.example.ui.components.PhoneStorageLoginBackupCard
 import com.example.ui.components.QuickDeliveryDeleteAccountDialog
 import com.example.ui.components.QuickDeliveryMandatoryPermissionsGateScreen
+import com.example.ui.components.QuickDeliveryNewUserAppGuideScreen
 import com.example.ui.components.QuickDeliveryNextLevelLaunchOverlay
+import com.example.ui.components.QuickDeliveryOrderChatbotDialog
 import com.example.ui.components.QuickDeliveryCuteBunnyLogo
 import com.example.ui.components.QuickDeliveryOfficialLogo
 import com.example.ui.components.QuickDeliveryPrivacyPolicyDialog
@@ -759,6 +764,10 @@ fun CustomerAppScreen(
     var showCustomerSupportTicketDialog by remember { mutableStateOf(false) }
     var showCustomerPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showCustomerDeleteAccountDialog by remember { mutableStateOf(false) }
+    var showOrderChatbotDialog by remember { mutableStateOf(false) }
+    var showNewUserAppGuide by remember {
+        mutableStateOf(MotivationAndPromoManager.hasPendingNewSignUpAppGuide(context, "customer"))
+    }
     var showGstInvoiceDialogForOrder by remember { mutableStateOf<CustomerOrder?>(null) }
     var orderPendingCancellation by remember { mutableStateOf<CustomerOrder?>(null) }
     var isCustomerLoggedIn by remember { mutableStateOf(MotivationAndPromoManager.customerAuthenticatedInSession) }
@@ -847,6 +856,8 @@ fun CustomerAppScreen(
 
     val hasCustomerBackHistory = orderPendingCancellation != null ||
         showGstInvoiceDialogForOrder != null ||
+        showOrderChatbotDialog ||
+        showNewUserAppGuide ||
         showCustomerDeleteAccountDialog ||
         showCustomerPrivacyPolicyDialog ||
         showCustomerSupportTicketDialog ||
@@ -862,6 +873,11 @@ fun CustomerAppScreen(
         when {
             orderPendingCancellation != null -> orderPendingCancellation = null
             showGstInvoiceDialogForOrder != null -> showGstInvoiceDialogForOrder = null
+            showOrderChatbotDialog -> showOrderChatbotDialog = false
+            showNewUserAppGuide -> {
+                MotivationAndPromoManager.dismissNewSignUpAppGuide(context, "customer")
+                showNewUserAppGuide = false
+            }
             showCustomerDeleteAccountDialog -> showCustomerDeleteAccountDialog = false
             showCustomerPrivacyPolicyDialog -> showCustomerPrivacyPolicyDialog = false
             showCustomerSupportTicketDialog -> showCustomerSupportTicketDialog = false
@@ -908,10 +924,26 @@ fun CustomerAppScreen(
                 customerEmail = email
                 QuickDeliveryOperationsManager.setActiveCustomerAccount(context, phone, email)
                 MotivationAndPromoManager.customerAuthenticatedInSession = true
+                showNewUserAppGuide = MotivationAndPromoManager.hasPendingNewSignUpAppGuide(context, "customer")
                 isCustomerLoggedIn = true
                 allCustomerPermissionsGranted = hasAllMandatoryAppPermissions(context)
                 statusBanner = "Welcome, $name! Plan your delivery."
             }
+        )
+        return@LocalizedContextProvider
+    }
+
+    if (showNewUserAppGuide) {
+        QuickDeliveryNewUserAppGuideScreen(
+            roleTitle = "Customer",
+            prefsKeyPrefix = "customer",
+            accentColor = PrimaryTeal,
+            userName = customerName,
+            onFinishOrSkip = {
+                MotivationAndPromoManager.dismissNewSignUpAppGuide(context, "customer")
+                showNewUserAppGuide = false
+            },
+            modifier = modifier
         )
         return@LocalizedContextProvider
     }
@@ -1295,6 +1327,8 @@ fun CustomerAppScreen(
         showOrderHistoryScreen = false
         showCustomerTopOptionsDialog = false
         showCustomerSupportTicketDialog = false
+        showOrderChatbotDialog = false
+        showNewUserAppGuide = false
         val matchedOrder = if (tapOrderId.isNotBlank()) {
             customerOrders.firstOrNull { it.orderId.equals(tapOrderId, ignoreCase = true) }
         } else null
@@ -1684,6 +1718,110 @@ fun CustomerAppScreen(
                                 )
                                 Text(
                                     text = uiStrings.helpSupportDeskSubtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = SlateMuted
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            showCustomerTopOptionsDialog = false
+                            showOrderChatbotDialog = true
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = PrimaryTeal.copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, PrimaryTeal.copy(alpha = 0.28f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_menu_order_bot_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = PrimaryTeal,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.SmartToy,
+                                        contentDescription = "Order Assistant Bot",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Order Assistant Bot (Order-Only)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DeepNavy
+                                )
+                                Text(
+                                    text = "Ask order status, Pickup/Delivery OTP & fares",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = SlateMuted
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = PrimaryTeal,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            showCustomerTopOptionsDialog = false
+                            showNewUserAppGuide = true
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFF8FAFC),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("customer_menu_app_guide_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = BrandOrange.copy(alpha = 0.14f),
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = "App Features Guide",
+                                        tint = BrandOrange,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "App Features & Walkthrough Guide",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DeepNavy
+                                )
+                                Text(
+                                    text = "See step-by-step Quick Delivery app details",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SlateMuted
                                 )
@@ -2106,6 +2244,16 @@ fun CustomerAppScreen(
         )
     }
 
+    if (showOrderChatbotDialog) {
+        QuickDeliveryOrderChatbotDialog(
+            role = OrderBotRole.CUSTOMER,
+            orders = customerOrders,
+            remoteFlags = remoteFlags,
+            accentColor = PrimaryTeal,
+            onDismiss = { showOrderChatbotDialog = false }
+        )
+    }
+
     if (showCustomerDeleteAccountDialog) {
         QuickDeliveryDeleteAccountDialog(
             roleTitle = "Customer",
@@ -2491,6 +2639,36 @@ fun CustomerAppScreen(
                     }
                 },
                 actions = {
+                    Surface(
+                        onClick = { showOrderChatbotDialog = true },
+                        color = Color.White.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Color(0xFFFFD166).copy(alpha = 0.7f)),
+                        modifier = Modifier
+                            .padding(end = 4.dp)
+                            .testTag("customer_top_bar_order_bot_btn")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SmartToy,
+                                contentDescription = "Open Order Assistant Bot",
+                                tint = Color(0xFFFFD166),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Order Bot",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = { showCustomerTopOptionsDialog = true },
                         modifier = Modifier.testTag("customer_top_bar_three_lines_menu_btn")
