@@ -392,13 +392,17 @@ def main():
         ("CUSTOMER", "QuickDelivery-Customer.apk"),
         ("RIDER", "QuickDelivery-Rider-Partner.apk"),
         ("ADMIN", "QuickDelivery-Admin-Enterprise.apk"),
+        ("UNIFIED", "QuickDelivery-AllInOne-Hub.apk"),
     ]
 
     for role, filename in variants:
-        patched_manifest = patch_axml_manifest(orig_manifest, role)
-        apk_with_manifest = replace_zip_entry_raw(
-            base_apk_shrunk, "AndroidManifest.xml", patched_manifest
-        )
+        if role == "UNIFIED":
+            apk_with_manifest = base_apk_shrunk
+        else:
+            patched_manifest = patch_axml_manifest(orig_manifest, role)
+            apk_with_manifest = replace_zip_entry_raw(
+                base_apk_shrunk, "AndroidManifest.xml", patched_manifest
+            )
 
         unsigned_tmp = f"/tmp/unsigned_{role}.apk"
         aligned_tmp = f"/tmp/aligned_{role}.apk"
@@ -446,13 +450,17 @@ def main():
 
         signed_apk = open(signed_tmp, "rb").read()
         out_pub = os.path.join("public/apks", filename)
-        with open(out_pub, "wb") as f:
+        out_pub_tmp = out_pub + ".tmp"
+        with open(out_pub_tmp, "wb") as f:
             f.write(signed_apk)
+        os.replace(out_pub_tmp, out_pub)
         if www_apks_writable:
             try:
                 out_www = os.path.join("/var/www/assets/apks", filename)
-                with open(out_www, "wb") as f:
+                out_www_tmp = out_www + ".tmp"
+                with open(out_www_tmp, "wb") as f:
                     f.write(signed_apk)
+                os.replace(out_www_tmp, out_www)
             except OSError:
                 pass
         print(f"Built, zipaligned & v1/v2/v3-signed {filename} ({len(signed_apk)} bytes) for role={role}")

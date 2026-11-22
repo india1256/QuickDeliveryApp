@@ -82,6 +82,7 @@ const APK_FILE_NAMES = [
   'QuickDelivery-Customer.apk',
   'QuickDelivery-Rider-Partner.apk',
   'QuickDelivery-Admin-Enterprise.apk',
+  'QuickDelivery-AllInOne-Hub.apk',
 ];
 
 function isValidStandaloneApk(filePath) {
@@ -1387,19 +1388,23 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
   const custTag = getApkCacheTag('QuickDelivery-Customer.apk');
   const riderTag = getApkCacheTag('QuickDelivery-Rider-Partner.apk');
   const adminTag = getApkCacheTag('QuickDelivery-Admin-Enterprise.apk');
+  const hubTag = getApkCacheTag('QuickDelivery-AllInOne-Hub.apk');
   const autoTag = getApkCacheTag(safeAuto || 'QuickDelivery-Customer.apk');
 
   const custSha = getApkSha256Short('QuickDelivery-Customer.apk');
   const riderSha = getApkSha256Short('QuickDelivery-Rider-Partner.apk');
   const adminSha = getApkSha256Short('QuickDelivery-Admin-Enterprise.apk');
+  const hubSha = getApkSha256Short('QuickDelivery-AllInOne-Hub.apk');
   const custDlName = getVersionedDownloadFileName('QuickDelivery-Customer.apk');
   const riderDlName = getVersionedDownloadFileName('QuickDelivery-Rider-Partner.apk');
   const adminDlName = getVersionedDownloadFileName('QuickDelivery-Admin-Enterprise.apk');
+  const hubDlName = getVersionedDownloadFileName('QuickDelivery-AllInOne-Hub.apk');
 
   const roleUpper = String(singleRoleFilter || '').toUpperCase();
   const showCustomer = !roleUpper || roleUpper === 'CUSTOMER';
   const showRider = !roleUpper || roleUpper === 'RIDER';
   const showAdmin = !roleUpper || roleUpper === 'ADMIN';
+  const showHub = !roleUpper || roleUpper === 'HUB' || roleUpper === 'UNIFIED';
 
   const pageHeading =
     roleUpper === 'CUSTOMER'
@@ -1408,6 +1413,8 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
       ? `Partner Quick Delivery — Rider App (v${APP_SUITE_VERSION})`
       : roleUpper === 'ADMIN'
       ? `Quick Delivery Admin — Console App (v${APP_SUITE_VERSION})`
+      : roleUpper === 'HUB' || roleUpper === 'UNIFIED'
+      ? `Quick Delivery — All-in-One 3-App Hub (v${APP_SUITE_VERSION})`
       : `Quick Delivery — Standalone App Downloads (v${APP_SUITE_VERSION})`;
 
   const customerCardHtml = showCustomer
@@ -1448,6 +1455,20 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
         </a>
         <a class="direct-link" href="/dl/QuickDelivery-Admin-Enterprise.apk?v=${adminTag}" download="${adminDlName}">
           Direct Download: ${adminDlName}
+        </a>
+      </div>`
+    : '';
+
+  const allInOneCardHtml = showHub
+    ? `
+      <div class="apk-card" style="border-color: #8B5CF6; background: linear-gradient(180deg, #1E1B4B 0%, #0F172A 100%);">
+        <div class="apk-title" style="color: #C4B5FD;">📲 Quick Delivery All-in-One 3-App Hub • v${APP_SUITE_VERSION} • ${getApkSizeMb('QuickDelivery-AllInOne-Hub.apk')}</div>
+        <div class="apk-desc">Installs the unified <b>3-in-1 Test Hub</b> (Build <b>#${hubSha}</b>) with the top <b>Customer / Rider / Admin</b> switcher inside one app — check all 3 apps &amp; live sync on a single phone.</div>
+        <a class="dl-btn" style="background: #7C3AED;" href="/dl/QuickDelivery-AllInOne-Hub.apk?v=${hubTag}" download="${hubDlName}" onclick="onDirectApkClick('${hubDlName}')">
+          Download v${APP_SUITE_VERSION} All-in-One 3-App APK (Build #${hubSha})
+        </a>
+        <a class="direct-link" href="/dl/QuickDelivery-AllInOne-Hub.apk?v=${hubTag}" download="${hubDlName}">
+          Direct Download: ${hubDlName}
         </a>
       </div>`
     : '';
@@ -1608,7 +1629,10 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
 <body>
   <div class="container">
     <div class="header-box">
-      <span class="badge">Direct Instant APK Download • 1 Link = 1 Single App</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+        <span class="badge">Direct Instant APK Download • 1 Link = 1 Single App</span>
+        <a href="/?view=app" style="color:#6EE7B7;font-size:12px;font-weight:800;text-decoration:none;background:rgba(16,185,129,0.18);border:1px solid #34D399;padding:4px 10px;border-radius:8px;">← Live 3-App Preview</a>
+      </div>
       <h1>${pageHeading}</h1>
       <p>Niche green button dabayein ya auto-download start hone dein — <b>Chrome seedha .apk file (${sizeMb}) download karega</b>.</p>
     </div>
@@ -1622,6 +1646,7 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
     </div>
 
     <div class="grid">
+      ${allInOneCardHtml}
       ${customerCardHtml}
       ${riderCardHtml}
       ${adminCardHtml}
@@ -1640,7 +1665,8 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
       <div><b>Official Domain:</b> <a href="${BRAND_ORIGIN}" style="color: #6EE7B7;">${BRAND_DOMAIN}</a> • <b>Support:</b> <a href="mailto:${BRAND_SUPPORT_EMAIL}" style="color: #6EE7B7;">${BRAND_SUPPORT_EMAIL}</a></div>
       <a href="/privacy-policy" style="color: #6EE7B7; margin: 0 8px;">Privacy Policy</a> •
       <a href="/terms" style="color: #6EE7B7; margin: 0 8px;">Terms of Service</a> •
-      <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a>
+      <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a> •
+      <a href="/?view=public" style="color: #93C5FD; margin: 0 8px;">Public Brand Portal</a>
     </div>
   </div>
 
@@ -1815,6 +1841,16 @@ function renderFirebaseHostingHomeHtml() {
 </html>`;
 }
 
+function readInteractivePreviewHtml() {
+  const previewPath = path.join(ROOT, 'public', 'preview-3apps.html');
+  try {
+    if (fs.existsSync(previewPath)) {
+      return fs.readFileSync(previewPath, 'utf-8');
+    }
+  } catch {}
+  return renderDownloadPageHtml('', '');
+}
+
 function configureNginxDirectApkServing() {
   try {
     const luaPath = '/etc/nginx/user_auth_verification.lua';
@@ -1853,16 +1889,22 @@ function configureNginxDirectApkServing() {
     const htmlCustomer = renderDownloadPageHtml('QuickDelivery-Customer.apk', 'CUSTOMER');
     const htmlRider = renderDownloadPageHtml('QuickDelivery-Rider-Partner.apk', 'RIDER');
     const htmlAdmin = renderDownloadPageHtml('QuickDelivery-Admin-Enterprise.apk', 'ADMIN');
+    const htmlHub = renderDownloadPageHtml('QuickDelivery-AllInOne-Hub.apk', 'HUB');
     const htmlPrivacy = renderLegalPageHtml('privacy');
     const htmlTerms = renderLegalPageHtml('terms');
     const htmlDelete = renderLegalPageHtml('delete');
 
     if (fs.existsSync('/var/www/assets')) {
-      fs.writeFileSync('/var/www/assets/warmup.html', htmlPublicHome, 'utf-8');
+      fs.writeFileSync(
+        '/var/www/assets/warmup.html',
+        IS_AISTUDIO_CONTAINER ? readInteractivePreviewHtml() : htmlPublicHome,
+        'utf-8'
+      );
       fs.writeFileSync('/var/www/assets/suite.html', htmlAll, 'utf-8');
       fs.writeFileSync('/var/www/assets/customer-apk.html', htmlCustomer, 'utf-8');
       fs.writeFileSync('/var/www/assets/rider-apk.html', htmlRider, 'utf-8');
       fs.writeFileSync('/var/www/assets/admin-apk.html', htmlAdmin, 'utf-8');
+      fs.writeFileSync('/var/www/assets/hub-apk.html', htmlHub, 'utf-8');
       fs.writeFileSync('/var/www/assets/privacy-policy.html', htmlPrivacy, 'utf-8');
       fs.writeFileSync('/var/www/assets/terms.html', htmlTerms, 'utf-8');
       fs.writeFileSync('/var/www/assets/delete-account.html', htmlDelete, 'utf-8');
@@ -1873,6 +1915,7 @@ function configureNginxDirectApkServing() {
       fs.writeFileSync(path.join(ROOT, 'public', 'customer-apk.html'), htmlCustomer, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'rider-apk.html'), htmlRider, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'admin-apk.html'), htmlAdmin, 'utf-8');
+      fs.writeFileSync(path.join(ROOT, 'public', 'hub-apk.html'), htmlHub, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'privacy-policy.html'), htmlPrivacy, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'terms.html'), htmlTerms, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'delete-account.html'), htmlDelete, 'utf-8');
@@ -1917,6 +1960,16 @@ function configureNginxDirectApkServing() {
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
 
+        location = /dl/QuickDelivery-AllInOne-Hub.apk {
+            alias /var/www/assets/apks/QuickDelivery-AllInOne-Hub.apk;
+            types { }
+            default_type application/vnd.android.package-archive;
+            add_header Content-Disposition 'attachment; filename="${getVersionedDownloadFileName('QuickDelivery-AllInOne-Hub.apk')}"';
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
+        }
+
         location = /customer {
             alias /var/www/assets/customer-apk.html;
             default_type text/html;
@@ -1949,6 +2002,18 @@ function configureNginxDirectApkServing() {
 
         location = /admin-apk {
             alias /var/www/assets/admin-apk.html;
+            default_type text/html;
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        location = /hub {
+            alias /var/www/assets/hub-apk.html;
+            default_type text/html;
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        location = /hub-apk {
+            alias /var/www/assets/hub-apk.html;
             default_type text/html;
             add_header Cache-Control "no-store, no-cache, must-revalidate";
         }
@@ -2076,13 +2141,25 @@ function ensureStandaloneRoleApksBuilt() {
   const customerApk = path.join('/var/www/assets/apks', 'QuickDelivery-Customer.apk');
   const riderApk = path.join('/var/www/assets/apks', 'QuickDelivery-Rider-Partner.apk');
   const adminApk = path.join('/var/www/assets/apks', 'QuickDelivery-Admin-Enterprise.apk');
-  if (isValidStandaloneApk(customerApk) && isValidStandaloneApk(riderApk) && isValidStandaloneApk(adminApk)) {
+  const hubApk = path.join('/var/www/assets/apks', 'QuickDelivery-AllInOne-Hub.apk');
+  if (
+    isValidStandaloneApk(customerApk) &&
+    isValidStandaloneApk(riderApk) &&
+    isValidStandaloneApk(adminApk) &&
+    isValidStandaloneApk(hubApk)
+  ) {
     return;
   }
   const pubCust = path.join(ROOT, 'public', 'apks', 'QuickDelivery-Customer.apk');
   const pubRider = path.join(ROOT, 'public', 'apks', 'QuickDelivery-Rider-Partner.apk');
   const pubAdmin = path.join(ROOT, 'public', 'apks', 'QuickDelivery-Admin-Enterprise.apk');
-  if (isValidStandaloneApk(pubCust) && isValidStandaloneApk(pubRider) && isValidStandaloneApk(pubAdmin)) {
+  const pubHub = path.join(ROOT, 'public', 'apks', 'QuickDelivery-AllInOne-Hub.apk');
+  if (
+    isValidStandaloneApk(pubCust) &&
+    isValidStandaloneApk(pubRider) &&
+    isValidStandaloneApk(pubAdmin) &&
+    isValidStandaloneApk(pubHub)
+  ) {
     configureNginxDirectApkServing();
     return;
   }
@@ -3702,6 +3779,8 @@ const server = http.createServer((req, res) => {
     pathname === '/rider-apk' ||
     pathname === '/admin' ||
     pathname === '/admin-apk' ||
+    pathname === '/hub' ||
+    pathname === '/hub-apk' ||
     pathname === '/suite' ||
     pathname === '/all-apks' ||
     Boolean(autoDownload) ||
@@ -3716,12 +3795,368 @@ const server = http.createServer((req, res) => {
   } else if (pathname === '/admin' || pathname === '/admin-apk' || autoDownload.includes('Admin')) {
     autoDownload = 'QuickDelivery-Admin-Enterprise.apk';
     roleFilter = 'ADMIN';
+  } else if (
+    pathname === '/hub' ||
+    pathname === '/hub-apk' ||
+    autoDownload.includes('AllInOne') ||
+    autoDownload.includes('Hub')
+  ) {
+    autoDownload = 'QuickDelivery-AllInOne-Hub.apk';
+    roleFilter = 'HUB';
   }
 
-  // Root URL (https://quickdelivery.co.in/) MUST show the official public brand page — NEVER expose
-  // internal Rider/Admin APK download links when customers visit the domain or open links from emails.
-  const html = isRoleApkRoute
+  if (pathname === '/api/preview/state' || pathname === '/api/preview/action') {
+    const reqHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').toLowerCase();
+    const isAllowedPreviewHost =
+      !reqHost.includes(BRAND_DOMAIN) &&
+      (IS_AISTUDIO_CONTAINER || reqHost.includes('localhost') || reqHost.includes('127.0.0.1') || reqHost.includes('.run.app'));
+    if (!isAllowedPreviewHost) {
+      res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: 'Preview sandbox disabled on public domain.' }));
+      return;
+    }
+
+    if (pathname === '/api/preview/state') {
+      const snap = buildSyncResponsePayload();
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      res.end(JSON.stringify(snap));
+      return;
+    }
+
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => {
+        if (body.length < 256 * 1024) body += chunk;
+      });
+      req.on('end', () => {
+        try {
+          const input = JSON.parse(body || '{}');
+          const act = String(input.action || '');
+          const now = Date.now();
+          let message = '';
+
+          if (!syncState.remoteFeatureFlags) {
+            syncState.remoteFeatureFlags = {
+              flagsSchemaVersion: 7,
+              bikeBaseInr: 45,
+              bikePerKmInr: 12,
+              scooterBaseInr: 40,
+              scooterPerKmInr: 10,
+              autoBaseInr: 85,
+              autoPerKmInr: 16,
+              weightBaseInr: 10,
+              riderCodCommissionLimitInr: 200,
+              promoCodeEnabled: true,
+              scheduledDeliveryEnabled: true,
+              multiDropEnabled: true,
+              parcelInsuranceEnabled: true,
+              overSpeedAlarmEnabled: true,
+              batteryGuardEnabled: true,
+              updatedAtEpochMs: now,
+            };
+          }
+
+          if (act === 'BOOK_ORDER') {
+            const fl = syncState.remoteFeatureFlags;
+            const veh = String(input.vehicleType || 'BIKE').toUpperCase();
+            const dist = Math.max(1, Number(input.distanceKm || 5));
+            const base =
+              veh === 'SCOOTER'
+                ? Number(fl.scooterBaseInr || 40)
+                : veh === 'AUTO'
+                ? Number(fl.autoBaseInr || 85)
+                : Number(fl.bikeBaseInr || 45);
+            const perKm =
+              veh === 'SCOOTER'
+                ? Number(fl.scooterPerKmInr || 10)
+                : veh === 'AUTO'
+                ? Number(fl.autoPerKmInr || 16)
+                : Number(fl.bikePerKmInr || 12);
+            const wb = String(input.weightBracket || 'Up to 5kg');
+            const wFee = wb === '15-20kg' ? Number(fl.weightBaseInr || 10) * 2 : wb === '5-15kg' ? Number(fl.weightBaseInr || 10) : 0;
+            const sub = base + Math.round(dist * perKm) + wFee;
+            let disc = 0;
+            const code = String(input.promoCode || '').trim().toUpperCase();
+            if (code && syncState.promoCouponsByCode && syncState.promoCouponsByCode[code]) {
+              const cp = syncState.promoCouponsByCode[code];
+              disc = Math.min(Number(cp.maxDiscountInr || 50), Math.round(sub * (Number(cp.percentOff || 15) / 100)));
+            }
+            const total = Math.max(25, sub - disc);
+            const riderEarn = Math.round(total * 0.8);
+            const oid = `QD-${String(now).slice(-5)}`;
+            const pOtp = String(1000 + Math.floor(Math.random() * 9000));
+            const dOtp = String(1000 + Math.floor(Math.random() * 9000));
+            syncState.ordersById[oid] = {
+              orderId: oid,
+              orderStatus: 'SEARCHING_RIDER',
+              statusRank: 1,
+              customerName: String(input.customerName || 'Customer').slice(0, 60),
+              customerPhone: String(input.customerPhone || '9876543210').slice(0, 15),
+              receiverName: String(input.receiverName || 'Receiver').slice(0, 60),
+              receiverPhone: String(input.receiverPhone || '9845098450').slice(0, 15),
+              pickupFullAddress: String(input.pickupAddress || 'MG Road').slice(0, 140),
+              dropFullAddress: String(input.dropAddress || 'Koramangala').slice(0, 140),
+              vehicleType: veh,
+              packageCategory: String(input.packageCategory || 'Documents'),
+              weightBracket: wb,
+              distanceKm: dist,
+              paymentMode: String(input.paymentMethod || 'UPI_INSTANT_PAY'),
+              totalFare: `₹${total}`,
+              riderEarning: `₹${riderEarn}`,
+              pickupOtp: pOtp,
+              deliveryOtp: dOtp,
+              rejectedByRiderIds: [],
+              createdByDeviceId: 'PREVIEW_HUB',
+              updatedAtEpochMs: now,
+            };
+            message = `✅ Order #${oid} booked (₹${total})! Switch to Rider tab to accept.`;
+          } else if (act === 'CANCEL_ORDER') {
+            const o = syncState.ordersById[String(input.orderId || '')];
+            if (o) {
+              o.orderStatus = 'CANCELLED';
+              o.cancellationReason = String(input.reason || 'Cancelled');
+              o.statusRank = 7;
+              o.updatedAtEpochMs = now;
+              message = `Order #${o.orderId} cancelled`;
+            }
+          } else if (act === 'RIDER_TOGGLE_DUTY') {
+            const rId = String(input.riderId || 'RIDER-PREVIEW-01');
+            if (input.online) {
+              syncState.devicesById[rId] = { deviceId: rId, role: 'RIDER', deviceModel: 'Preview Rider', lastSeenEpochMs: now };
+              message = '🟢 Rider is now ON DUTY';
+            } else {
+              delete syncState.devicesById[rId];
+              message = '⚪ Rider is now OFFLINE';
+            }
+          } else if (act === 'RIDER_REGISTER_KYC') {
+            const key = String(input.phone || input.riderId || 'RIDER-PREVIEW-01');
+            if (!syncState.riderRegistrationsByKey) syncState.riderRegistrationsByKey = {};
+            syncState.riderRegistrationsByKey[key] = {
+              riderKey: key,
+              riderId: String(input.riderId || 'RIDER-PREVIEW-01'),
+              riderName: String(input.riderName || 'Rider'),
+              mobile: String(input.phone || ''),
+              vehicleType: String(input.vehicleType || 'BIKE'),
+              vehicleNumber: String(input.vehicleNumber || 'KA-01-QD-4021'),
+              status: 'PENDING_APPROVAL',
+              updatedAtEpochMs: now,
+            };
+            message = '🪪 Rider KYC submitted! Check Admin → Rider KYC tab.';
+          } else if (act === 'RIDER_ACCEPT_ORDER') {
+            const o = syncState.ordersById[String(input.orderId || '')];
+            if (o && o.orderStatus === 'SEARCHING_RIDER') {
+              o.orderStatus = 'RIDER_ASSIGNED';
+              o.statusRank = 2;
+              o.assignedRiderId = String(input.riderId || 'RIDER-PREVIEW-01');
+              o.assignedRiderName = String(input.riderName || 'Vikram Singh');
+              o.assignedRiderVehicle = String(input.riderVehicle || 'KA-01-QD-4021');
+              o.updatedAtEpochMs = now;
+              message = `✅ Accepted #${o.orderId}! Proceed to pickup.`;
+            }
+          } else if (act === 'RIDER_REJECT_ORDER') {
+            const o = syncState.ordersById[String(input.orderId || '')];
+            if (o) {
+              o.orderStatus = 'SEARCHING_RIDER';
+              o.statusRank = 1;
+              o.assignedRiderId = '';
+              o.assignedRiderName = '';
+              o.rejectedByRiderIds = Array.from(new Set([...(o.rejectedByRiderIds || []), String(input.riderId || 'RIDER-PREVIEW-01')]));
+              o.updatedAtEpochMs = now;
+              message = `Rejected #${o.orderId} (rolled back to Searching)`;
+            }
+          } else if (act === 'RIDER_ARRIVE_PICKUP') {
+            const o = syncState.ordersById[String(input.orderId || '')];
+            if (o) {
+              o.orderStatus = 'ARRIVED_AT_PICKUP';
+              o.statusRank = 3;
+              o.updatedAtEpochMs = now;
+              message = `📍 Marked Arrived at Pickup for #${o.orderId}`;
+            }
+          } else if (act === 'RIDER_VERIFY_PICKUP_OTP') {
+            const o = syncState.ordersById[String(input.orderId || '')];
+            if (!o || String(input.otp || '').trim() !== String(o.pickupOtp)) {
+              res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+              res.end(JSON.stringify({ ok: false, error: 'Invalid 4-digit Pickup OTP! Check Customer tab.' }));
+              return;
+            }
+            o.orderStatus = 'PICKED_UP';
+            o.statusRank = 4;
+            o.pickupProof = { senderName: String(input.senderName || 'Sender'), verifiedAtEpochMs: now };
+            o.updatedAtEpochMs = now;
+            message = `✅ Pickup OTP verified! Order #${o.orderId} picked up.`;
+          } else if (act === 'RIDER_START_TRANSIT') {
+            const o = syncState.ordersById[String(input.orderId || '')];
+            if (o) {
+              o.orderStatus = 'IN_TRANSIT';
+              o.statusRank = 5;
+              o.updatedAtEpochMs = now;
+              message = `🚀 Order #${o.orderId} is now IN TRANSIT`;
+            }
+          } else if (act === 'RIDER_VERIFY_DROP_OTP') {
+            const o = syncState.ordersById[String(input.orderId || '')];
+            if (!o || String(input.otp || '').trim() !== String(o.deliveryOtp)) {
+              res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+              res.end(JSON.stringify({ ok: false, error: 'Invalid 4-digit Drop OTP! Check Customer tab.' }));
+              return;
+            }
+            o.orderStatus = 'DELIVERED';
+            o.statusRank = 6;
+            o.deliveryProof = { receiverName: String(input.receiverName || 'Receiver'), verifiedAtEpochMs: now };
+            o.updatedAtEpochMs = now;
+            message = `🎉 Order #${o.orderId} DELIVERED! Rider payout credited.`;
+          } else if (act === 'RIDER_WITHDRAW_PAYOUT') {
+            const reqId = `WD-${String(now).slice(-5)}`;
+            if (!syncState.withdrawalRequestsById) syncState.withdrawalRequestsById = {};
+            syncState.withdrawalRequestsById[reqId] = {
+              requestId: reqId,
+              riderId: String(input.riderId || 'RIDER-PREVIEW-01'),
+              riderName: String(input.riderName || 'Vikram Singh'),
+              amountInr: Number(input.amountInr || 100),
+              upiId: String(input.upiId || 'rider@upi'),
+              status: 'PENDING',
+              updatedAtEpochMs: now,
+            };
+            message = `⚡ Payout request #${reqId} submitted to Admin!`;
+          } else if (act === 'SEND_CHAT') {
+            const mid = `MSG-${now}`;
+            if (!syncState.chatMessagesById) syncState.chatMessagesById = {};
+            syncState.chatMessagesById[mid] = {
+              messageId: mid,
+              orderId: String(input.orderId || ''),
+              senderRole: String(input.senderRole || 'CUSTOMER'),
+              senderName: String(input.senderName || 'User'),
+              messageText: String(input.messageText || ''),
+              timestampLabel: new Date(now).toLocaleTimeString(),
+              createdAtEpochMs: now,
+            };
+            message = '💬 Message sent';
+          } else if (act === 'SUBMIT_SUPPORT_TICKET') {
+            const tid = `TKT-${String(now).slice(-5)}`;
+            if (!syncState.supportTicketsById) syncState.supportTicketsById = {};
+            syncState.supportTicketsById[tid] = {
+              ticketId: tid,
+              role: String(input.role || 'CUSTOMER'),
+              orderId: String(input.orderId || ''),
+              message: String(input.message || ''),
+              contactName: String(input.contactName || ''),
+              contactPhone: String(input.contactPhone || ''),
+              status: 'OPEN',
+              updatedAtEpochMs: now,
+            };
+            message = `🛟 Ticket #${tid} logged in Admin Console!`;
+          } else if (act === 'RATE_ORDER') {
+            const oid = String(input.orderId || '');
+            if (!syncState.orderRatingsByOrder) syncState.orderRatingsByOrder = {};
+            syncState.orderRatingsByOrder[oid] = {
+              orderId: oid,
+              stars: Number(input.stars || 5),
+              tipAmountInr: Number(input.tipAmountInr || 0),
+              feedback: String(input.feedback || ''),
+              updatedAtEpochMs: now,
+            };
+            message = `⭐ Rated #${oid} with ₹${Number(input.tipAmountInr || 0)} tip!`;
+          } else if (act === 'ADMIN_UPDATE_FLAGS') {
+            syncState.remoteFeatureFlags = {
+              ...(syncState.remoteFeatureFlags || {}),
+              flagsSchemaVersion: 7,
+              bikeBaseInr: Number(input.bikeBaseInr || 45),
+              bikePerKmInr: Number(input.bikePerKmInr || 12),
+              scooterBaseInr: Number(input.scooterBaseInr || 40),
+              scooterPerKmInr: Number(input.scooterPerKmInr || 10),
+              autoBaseInr: Number(input.autoBaseInr || 85),
+              autoPerKmInr: Number(input.autoPerKmInr || 16),
+              weightBaseInr: Number(input.weightBaseInr || 10),
+              riderCodCommissionLimitInr: Number(input.riderCodCommissionLimitInr || 200),
+              promoCodeEnabled: Boolean(input.promoCodeEnabled),
+              scheduledDeliveryEnabled: Boolean(input.scheduledDeliveryEnabled),
+              parcelInsuranceEnabled: Boolean(input.parcelInsuranceEnabled),
+              overSpeedAlarmEnabled: Boolean(input.overSpeedAlarmEnabled),
+              batteryGuardEnabled: Boolean(input.batteryGuardEnabled),
+              updatedAtEpochMs: now,
+            };
+            message = '✅ Pricing & Feature Flags synced across all 3 apps!';
+          } else if (act === 'ADMIN_SAVE_COUPON') {
+            const code = String(input.code || 'SAVE20').trim().toUpperCase();
+            if (!syncState.promoCouponsByCode) syncState.promoCouponsByCode = {};
+            syncState.promoCouponsByCode[code] = {
+              code,
+              percentOff: Number(input.percentOff || 20),
+              maxDiscountInr: Number(input.maxDiscountInr || 40),
+              active: true,
+              updatedAtEpochMs: now,
+            };
+            message = `🏷️ Coupon ${code} synced to Customer App!`;
+          } else if (act === 'ADMIN_REVIEW_RIDER') {
+            const rKey = String(input.riderKey || '');
+            if (syncState.riderRegistrationsByKey && syncState.riderRegistrationsByKey[rKey]) {
+              syncState.riderRegistrationsByKey[rKey].status = String(input.status || 'APPROVED');
+              syncState.riderRegistrationsByKey[rKey].updatedAtEpochMs = now;
+              message = `Rider KYC marked ${syncState.riderRegistrationsByKey[rKey].status}`;
+            }
+          } else if (act === 'ADMIN_APPROVE_WITHDRAWAL') {
+            const wid = String(input.requestId || '');
+            if (syncState.withdrawalRequestsById && syncState.withdrawalRequestsById[wid]) {
+              syncState.withdrawalRequestsById[wid].status = 'PAID';
+              syncState.withdrawalRequestsById[wid].updatedAtEpochMs = now;
+              message = `💸 Payout #${wid} marked PAID`;
+            }
+          } else if (act === 'ADMIN_RESOLVE_TICKET') {
+            const tid = String(input.ticketId || '');
+            if (syncState.supportTicketsById && syncState.supportTicketsById[tid]) {
+              syncState.supportTicketsById[tid].status = 'RESOLVED';
+              syncState.supportTicketsById[tid].updatedAtEpochMs = now;
+              message = `✅ Ticket #${tid} resolved`;
+            }
+          } else if (act === 'ADMIN_RESET_ORDERS') {
+            syncState.ordersById = {};
+            syncState.chatMessagesById = {};
+            syncState.resetEpochMs = now;
+            message = '🧹 All test orders reset';
+          }
+
+          saveSyncState();
+          res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+          });
+          res.end(JSON.stringify({ ok: true, message, state: buildSyncResponsePayload() }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, error: 'Invalid preview action payload' }));
+        }
+      });
+      return;
+    }
+  }
+
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').toLowerCase();
+  const isPublicBrandDomain = rawHost.includes(BRAND_DOMAIN);
+  const viewMode = (params.get('view') || '').toLowerCase();
+  const isAiStudioOrLocal =
+    IS_AISTUDIO_CONTAINER || rawHost.includes('localhost') || rawHost.includes('127.0.0.1') || rawHost.includes('.run.app');
+  const showInteractivePreviewOnRoot =
+    pathname === '/' &&
+    viewMode !== 'public' &&
+    viewMode !== 'apks' &&
+    !isPublicBrandDomain &&
+    isAiStudioOrLocal;
+  const showApkSuiteOnRoot =
+    pathname === '/' &&
+    viewMode === 'apks' &&
+    !isPublicBrandDomain &&
+    isAiStudioOrLocal;
+
+  // Root URL on quickdelivery.co.in MUST show the official public brand page — NEVER expose
+  // internal Rider/Admin views or APK download links on the live customer domain.
+  // In AI Studio Preview / localhost, root / shows the Interactive 3-App Preview Hub
+  // unless ?view=apks (4-APK download center) or ?view=public (public brand portal) is passed.
+  const html = (isRoleApkRoute || showApkSuiteOnRoot)
     ? renderDownloadPageHtml(autoDownload, roleFilter)
+    : showInteractivePreviewOnRoot
+    ? readInteractivePreviewHtml()
     : renderFirebaseHostingHomeHtml();
   const buf = Buffer.from(html, 'utf-8');
   res.writeHead(200, {

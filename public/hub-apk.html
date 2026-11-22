@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="canonical" href="https://quickdelivery.co.in/" />
+  <title>Quick Delivery — All-in-One 3-App Hub (v6.7.1) • quickdelivery.co.in</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #022C22;
+      color: #F8FAFC;
+    }
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .header-box {
+      background: linear-gradient(135deg, #065F46, #042F2E);
+      border: 2px solid #34D399;
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+    }
+    .badge {
+      display: inline-block;
+      background: #10B981;
+      color: #022C22;
+      font-weight: 900;
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    h1 {
+      margin: 8px 0 6px 0;
+      font-size: 19px;
+      color: #ECFDF5;
+    }
+    p {
+      margin: 0;
+      font-size: 13px;
+      color: #A7F3D0;
+      line-height: 1.45;
+    }
+    #progress-panel {
+      display: none;
+      background: #0F172A;
+      border: 2px solid #10B981;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .prog-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: #34D399;
+      margin-bottom: 8px;
+    }
+    .prog-bar-bg {
+      width: 100%;
+      height: 16px;
+      background: #1E293B;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 8px;
+      border: 1px solid #334155;
+    }
+    .prog-bar-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #10B981, #38BDF8);
+      transition: width 0.2s ease;
+    }
+    .prog-stats {
+      font-size: 12px;
+      color: #E2E8F0;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .apk-card {
+      background: #0F172A;
+      border: 1.5px solid #1E293B;
+      border-radius: 16px;
+      padding: 15px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .apk-title {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+    .apk-desc {
+      font-size: 12px;
+      color: #94A3B8;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .dl-btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      padding: 14px;
+      border-radius: 12px;
+      font-weight: 900;
+      font-size: 14px;
+      text-decoration: none;
+      color: #FFFFFF;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      margin-bottom: 8px;
+    }
+    .direct-link {
+      display: block;
+      text-align: center;
+      font-size: 11px;
+      color: #93C5FD;
+      text-decoration: underline;
+    }
+    .guide-box {
+      background: #0F172A;
+      border: 1.5px solid #34D399;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .guide-box h2 {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+      color: #6EE7B7;
+    }
+    .step-list {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 13px;
+      color: #E2E8F0;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+        <span class="badge">Direct Instant APK Download • 1 Link = 1 Single App</span>
+        <a href="/?view=app" style="color:#6EE7B7;font-size:12px;font-weight:800;text-decoration:none;background:rgba(16,185,129,0.18);border:1px solid #34D399;padding:4px 10px;border-radius:8px;">← Live 3-App Preview</a>
+      </div>
+      <h1>Quick Delivery — All-in-One 3-App Hub (v6.7.1)</h1>
+      <p>Niche green button dabayein ya auto-download start hone dein — <b>Chrome seedha .apk file (31.0 MB) download karega</b>.</p>
+    </div>
+
+    <div id="progress-panel">
+      <div class="prog-title" id="prog-title">✅ Direct APK Download Started!</div>
+      <div class="prog-bar-bg">
+        <div class="prog-bar-fill" id="prog-fill"></div>
+      </div>
+      <div class="prog-stats" id="prog-stats">Chrome notification / Downloads me APK download ho raha hai...</div>
+    </div>
+
+    <div class="grid">
+      
+      <div class="apk-card" style="border-color: #8B5CF6; background: linear-gradient(180deg, #1E1B4B 0%, #0F172A 100%);">
+        <div class="apk-title" style="color: #C4B5FD;">📲 Quick Delivery All-in-One 3-App Hub • v6.7.1 • 31.0 MB</div>
+        <div class="apk-desc">Installs the unified <b>3-in-1 Test Hub</b> (Build <b>#6d70bca9</b>) with the top <b>Customer / Rider / Admin</b> switcher inside one app — check all 3 apps &amp; live sync on a single phone.</div>
+        <a class="dl-btn" style="background: #7C3AED;" href="/dl/QuickDelivery-AllInOne-Hub.apk?v=6.7.1-6d70bca9-1795326333722" download="QuickDelivery-AllInOne-Hub-v6.7.1.apk" onclick="onDirectApkClick('QuickDelivery-AllInOne-Hub-v6.7.1.apk')">
+          Download v6.7.1 All-in-One 3-App APK (Build #6d70bca9)
+        </a>
+        <a class="direct-link" href="/dl/QuickDelivery-AllInOne-Hub.apk?v=6.7.1-6d70bca9-1795326333722" download="QuickDelivery-AllInOne-Hub-v6.7.1.apk">
+          Direct Download: QuickDelivery-AllInOne-Hub-v6.7.1.apk
+        </a>
+      </div>
+      
+      
+      
+    </div>
+
+    <div class="guide-box">
+      <h2>✨ Quick Delivery Suite v6.7.1</h2>
+      <ol class="step-list">
+        <li><b>Quick Delivery (Customer):</b> Fast doorstep parcel booking, profile DP, saved addresses, phonebook receiver picker, live tracking &amp; OTP delivery verification.</li>
+        <li><b>Partner Quick Delivery (Rider):</b> Instant nearby pickup alerts, profile DP, duty switch, wallet &amp; trip earnings history, and direct bank payout requests.</li>
+        <li><b>Quick Delivery Admin:</b> Live orders &amp; rider KYC approval desk, payout management, fare &amp; feature switches, and cloud backup export.</li>
+      </ol>
+    </div>
+
+    <div style="margin-top: 16px; text-align: center; font-size: 12px; color: #A7F3D0; line-height: 1.8;">
+      <div><b>Official Domain:</b> <a href="https://quickdelivery.co.in" style="color: #6EE7B7;">quickdelivery.co.in</a> • <b>Support:</b> <a href="mailto:support@quickdelivery.co.in" style="color: #6EE7B7;">support@quickdelivery.co.in</a></div>
+      <a href="/privacy-policy" style="color: #6EE7B7; margin: 0 8px;">Privacy Policy</a> •
+      <a href="/terms" style="color: #6EE7B7; margin: 0 8px;">Terms of Service</a> •
+      <a href="/delete-account" style="color: #6EE7B7; margin: 0 8px;">Delete Account &amp; Data</a> •
+      <a href="/?view=public" style="color: #93C5FD; margin: 0 8px;">Public Brand Portal</a>
+    </div>
+  </div>
+
+  <script>
+    const AUTO_DOWNLOAD_FILE = "QuickDelivery-AllInOne-Hub.apk";
+
+    function onDirectApkClick(fileName) {
+      const panel = document.getElementById('progress-panel');
+      const titleEl = document.getElementById('prog-title');
+      const statsEl = document.getElementById('prog-stats');
+      if (panel && titleEl && statsEl) {
+        panel.style.display = 'block';
+        titleEl.textContent = 'Downloading ' + fileName + ' (' + '31.0 MB' + ')...';
+        statsEl.textContent = 'Check your Chrome notification bar or Downloads folder — ' + fileName + ' is downloading directly.';
+      }
+    }
+
+    if (AUTO_DOWNLOAD_FILE) {
+      window.addEventListener('DOMContentLoaded', () => {
+        onDirectApkClick(AUTO_DOWNLOAD_FILE);
+        setTimeout(() => {
+          window.location.href = '/dl/' + AUTO_DOWNLOAD_FILE + '?v=' + "6.7.1-6d70bca9-1795326333722";
+        }, 150);
+      });
+    }
+  </script>
+</body>
+</html>
