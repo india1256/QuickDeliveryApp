@@ -5,10 +5,13 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -41,6 +44,7 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
@@ -99,6 +103,12 @@ import com.example.data.cloud.RiderKycImageQualityVerifier
 import com.example.data.cloud.RiderRegistrationApprovalManager
 import com.example.data.cloud.RiderRegistrationRecord
 import com.example.data.model.VehicleType
+import com.example.ui.components.AdminExcelXlsxExporter
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.delay
 
 private enum class UploadTargetField {
@@ -109,10 +119,64 @@ private enum class UploadTargetField {
     LIVE_SELFIE
 }
 
-private fun decodeUriToBitmap(context: Context, uri: Uri): Bitmap? = runCatching {
+private fun decodeUriToBitmap(context: Context, uri: Uri, maxDimPx: Int = 1440): Bitmap? = runCatching {
+    val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.contentResolver.openInputStream(uri)?.use { stream ->
-        BitmapFactory.decodeStream(stream)
+        BitmapFactory.decodeStream(stream, null, boundsOpts)
     }
+    var sampleSize = 1
+    val rawMax = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
+    if (rawMax > maxDimPx && maxDimPx > 0) {
+        while ((rawMax / sampleSize) > maxDimPx * 2) {
+            sampleSize *= 2
+        }
+    }
+    val decodeOpts = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+        inPreferredConfig = Bitmap.Config.ARGB_8888
+    }
+    val rawBmp = context.contentResolver.openInputStream(uri)?.use { stream ->
+        BitmapFactory.decodeStream(stream, null, decodeOpts)
+    } ?: return null
+
+    val rotationDegrees = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { exifStream ->
+            val exif = ExifInterface(exifStream)
+            when (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+        } ?: 0f
+    }.getOrDefault(0f)
+
+    val orientedBmp = if (rotationDegrees != 0f) {
+        val matrix = Matrix().apply { postRotate(rotationDegrees) }
+        val rotated = Bitmap.createBitmap(rawBmp, 0, 0, rawBmp.width, rawBmp.height, matrix, true)
+        if (rotated != rawBmp) rawBmp.recycle()
+        rotated
+    } else {
+        rawBmp
+    }
+
+    val longestSide = maxOf(orientedBmp.width, orientedBmp.height)
+    if (longestSide > maxDimPx && longestSide > 0) {
+        val ratio = maxDimPx.toFloat() / longestSide.toFloat()
+        val dstW = (orientedBmp.width * ratio).toInt().coerceAtLeast(1)
+        val dstH = (orientedBmp.height * ratio).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(orientedBmp, dstW, dstH, true)
+        if (scaled != orientedBmp) orientedBmp.recycle()
+        scaled
+    } else {
+        orientedBmp
+    }
+}.getOrNull()
+
+private fun createTempKycCameraUri(context: Context, target: UploadTargetField): Uri? = runCatching {
+    val kycDir = File(context.cacheDir, "kyc_photos").apply { if (!exists()) mkdirs() }
+    val photoFile = File(kycDir, "kyc_${target.name.lowercase()}_${System.currentTimeMillis()}.jpg")
+    FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
 }.getOrNull()
 
 /**
@@ -249,17 +313,40 @@ fun RiderFirstTimeKycUploadScreen(
         }
     }
 
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+
     val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bmp: Bitmap? ->
-        assignBitmapForTarget(bmp)
+        contract = ActivityResultContracts.TakePicture()
+    ) { saved ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (saved && uri != null) {
+            val targetMaxDim = if (activeTarget == UploadTargetField.LIVE_SELFIE) 960 else 1440
+            val bmp = decodeUriToBitmap(context, uri, maxDimPx = targetMaxDim)
+            if (bmp != null) {
+                assignBitmapForTarget(bmp)
+            } else {
+                validationError = "Unable to read captured HD photo. Please try again or use Upload Photo."
+            }
+        }
+    }
+
+    val openPreparedCameraFor: (UploadTargetField) -> Unit = { target ->
+        val uri = createTempKycCameraUri(context, target)
+        if (uri != null) {
+            pendingCameraUri = uri
+            cameraLauncher.launch(uri)
+        } else {
+            validationError = "Unable to initialize camera storage. Please use Upload Photo."
+        }
     }
 
     val cameraPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            cameraLauncher.launch(null)
+        val target = activeTarget
+        if (granted && target != null) {
+            openPreparedCameraFor(target)
         } else {
             validationError = "Camera permission is needed to take a photo, or choose Upload Photo."
         }
@@ -269,7 +356,8 @@ fun RiderFirstTimeKycUploadScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            val bmp = decodeUriToBitmap(context, uri)
+            val targetMaxDim = if (activeTarget == UploadTargetField.LIVE_SELFIE) 960 else 1440
+            val bmp = decodeUriToBitmap(context, uri, maxDimPx = targetMaxDim)
             if (bmp != null) {
                 assignBitmapForTarget(bmp)
             } else {
@@ -283,7 +371,7 @@ fun RiderFirstTimeKycUploadScreen(
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
         if (granted) {
-            cameraLauncher.launch(null)
+            openPreparedCameraFor(target)
         } else {
             cameraPermLauncher.launch(Manifest.permission.CAMERA)
         }
@@ -1373,14 +1461,16 @@ fun AdminPendingRiderApprovalsSection(
 }
 
 @Composable
-private fun AdminKycPhotoZoomPreviewDialog(
+fun AdminKycPhotoZoomPreviewDialog(
     docTitle: String,
     bitmap: Bitmap,
     clarityInfo: String,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var savedNote by remember { mutableStateOf<String?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1396,7 +1486,7 @@ private fun AdminKycPhotoZoomPreviewDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1405,22 +1495,96 @@ private fun AdminKycPhotoZoomPreviewDialog(
                             text = docTitle,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Pinch to zoom • $clarityInfo",
+                            text = "Resolution: ${bitmap.width}×${bitmap.height}px • $clarityInfo",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF6EE7B7)
+                            color = Color(0xFF6EE7B7),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    TextButton(onClick = {
-                        scale = 1f
-                        offset = Offset.Zero
-                    }) {
-                        Text("Reset Zoom", color = Color(0xFF38BDF8))
+                    Button(
+                        onClick = {
+                            val jpegBytes = runCatching {
+                                ByteArrayOutputStream().use { out ->
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
+                                    out.toByteArray()
+                                }
+                            }.getOrNull()
+                            if (jpegBytes != null) {
+                                val slug = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                                val cleanDoc = docTitle.replace(Regex("[^A-Za-z0-9_-]"), "_").take(36)
+                                val savedPath = AdminExcelXlsxExporter.saveBytesToPublicPhoneDownloads(
+                                    context = context,
+                                    subFolder = "KYC",
+                                    fileName = "${cleanDoc}_$slug.jpg",
+                                    mimeType = "image/jpeg",
+                                    bytes = jpegBytes
+                                )
+                                savedNote = if (!savedPath.isNullOrBlank()) {
+                                    "✅ Saved HD photo to Phone: $savedPath"
+                                } else {
+                                    "⚠️ Unable to write photo to Phone Downloads"
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("admin_kyc_save_hd_photo_btn")
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Save HD", color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = "Close Zoom", tint = Color.White)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(1f to "1x Fit", 2f to "2x Zoom", 3f to "3x Zoom").forEach { (zoomVal, label) ->
+                        FilterChip(
+                            selected = kotlin.math.abs(scale - zoomVal) < 0.2f,
+                            onClick = {
+                                scale = zoomVal
+                                if (zoomVal == 1f) offset = Offset.Zero
+                            },
+                            label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = Color(0xFF1E293B),
+                                labelColor = Color(0xFFCBD5E1),
+                                selectedContainerColor = Color(0xFF0EA5E9),
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+
+                if (savedNote != null) {
+                    Surface(
+                        color = Color(0xFF064E3B),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = savedNote.orEmpty(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFA7F3D0),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
                     }
                 }
 
@@ -1430,7 +1594,7 @@ private fun AdminKycPhotoZoomPreviewDialog(
                         .fillMaxWidth()
                         .pointerInput(Unit) {
                             detectTransformGestures { _, pan, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(1f, 5f)
+                                scale = (scale * zoom).coerceIn(1f, 6f)
                                 offset = if (scale > 1.05f) offset + pan else Offset.Zero
                             }
                         },

@@ -3,6 +3,9 @@
     <cache-path
         name="pdf_exports"
         path="pdfs/" />
+    <cache-path
+        name="kyc_photos"
+        path="kyc_photos/" />
     <files-path
         name="internal_files"
         path="." />

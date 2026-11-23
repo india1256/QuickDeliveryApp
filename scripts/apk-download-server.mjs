@@ -299,7 +299,7 @@ let permanentCloudHydrated = false;
 // SERVER-SIDE ANTI-FAKE-ORDER & ANTI-LOAD SECURITY SHIELD
 // ============================================================================
 const SYNC_HMAC_SECRET = String(process.env.QD_SYNC_HMAC_SECRET || '').trim() || 'QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in';
-const MAX_SYNC_BODY_BYTES = 4 * 1024 * 1024; // 4 MB payload ceiling
+const MAX_SYNC_BODY_BYTES = 10 * 1024 * 1024; // 10 MB payload ceiling (supports HD Rider KYC docs)
 const MAX_SYNC_REQ_PER_MIN_PER_IP = 420; // supports 3+ phones behind shared Wi-Fi NAT polling ~1.8s plus bursts
 const MAX_HEAVY_REQ_PER_MIN_PER_IP = 30;
 const MAX_ACTIVE_PENDING_ORDERS_PER_ACTOR = 25;
@@ -2416,17 +2416,18 @@ const server = http.createServer((req, res) => {
         body += chunk;
         if (body.length > MAX_SYNC_BODY_BYTES) {
           payloadTooLarge = true;
-          recordSecurityBlock('BAD_PAYLOAD', getClientIp(req), 'Payload exceeded 4 MB ceiling');
+          recordSecurityBlock('BAD_PAYLOAD', getClientIp(req), 'Payload exceeded 10 MB ceiling');
           res.writeHead(413, {
             'Content-Type': 'application/json; charset=utf-8',
             'Access-Control-Allow-Origin': '*',
           });
-          res.end(JSON.stringify({ ok: false, error: 'Payload too large (max 4 MB).' }));
+          res.end(JSON.stringify({ ok: false, error: 'Payload too large (max 10 MB).' }));
           req.destroy();
         }
       });
       req.on('end', () => {
         if (payloadTooLarge) return;
+        const rejectedOrdersForResponse = [];
         try {
           const payload = JSON.parse(body || '{}');
           const now = Date.now();
@@ -2875,6 +2876,7 @@ const server = http.createServer((req, res) => {
               if (!antiSpamCheck.ok) {
                 console.warn('[LIVE-SYNC BLOCKED]', oid, antiSpamCheck.reason);
                 recordSecurityBlock('FAKE_ORDER_BLOCKED', incoming.customerPhone || senderDeviceId, antiSpamCheck.reason);
+                rejectedOrdersForResponse.push({ orderId: oid, reason: String(antiSpamCheck.reason || 'Blocked by firewall') });
                 continue;
               }
               const existing = syncState.ordersById[oid];
@@ -3061,7 +3063,9 @@ const server = http.createServer((req, res) => {
           saveSyncState();
         } catch {}
 
-        const out = JSON.stringify(buildSyncResponsePayload());
+        const syncResp = buildSyncResponsePayload();
+        syncResp.rejectedOrders = Array.isArray(rejectedOrdersForResponse) ? rejectedOrdersForResponse : [];
+        const out = JSON.stringify(syncResp);
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Cache-Control': 'no-store',

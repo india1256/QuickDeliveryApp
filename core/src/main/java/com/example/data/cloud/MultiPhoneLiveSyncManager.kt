@@ -58,6 +58,8 @@ data class LivePhoneSyncStatus(
     val rateLimitedRequestsCount: Int = 0,
     val rejectedInvalidPayloadsCount: Int = 0,
     val recentBlockedEvents: List<BlockedSecurityEventSummary> = emptyList(),
+    val syncedServerOrderIds: Set<String> = emptySet(),
+    val lastRejectedOrderReason: String = "",
     val lastSyncError: String = ""
 )
 
@@ -375,15 +377,15 @@ object MultiPhoneLiveSyncManager {
             val startMs = System.currentTimeMillis()
             val isPrimaryProductionEndpoint = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
                 endpoint.contains("onrender.com", ignoreCase = true)
-            // Render Free Tier cold-starts can take 15-35s after idle; give primary endpoints generous timeout so orders never silently fail to sync!
+            // Render Free Tier cold-starts can take 30-50s after idle; give primary endpoints generous timeout so orders never silently fail to sync!
             val epConnectTimeout = when {
-                isPrimaryProductionEndpoint && isCurrentlyDisconnected -> 15_000
-                isPrimaryProductionEndpoint -> 10_000
+                isPrimaryProductionEndpoint && isCurrentlyDisconnected -> 20_000
+                isPrimaryProductionEndpoint -> 12_000
                 else -> 2_500
             }
             val epReadTimeout = when {
-                isPrimaryProductionEndpoint && isCurrentlyDisconnected -> 28_000
-                isPrimaryProductionEndpoint -> 15_000
+                isPrimaryProductionEndpoint && isCurrentlyDisconnected -> 50_000
+                isPrimaryProductionEndpoint -> 20_000
                 else -> 3_000
             }
             val attempt = runCatching {
@@ -470,6 +472,26 @@ object MultiPhoneLiveSyncManager {
         }
 
         val remoteOrdersArr = root.optJSONArray("orders") ?: JSONArray()
+        val confirmedServerOrderIds = HashSet<String>(remoteOrdersArr.length())
+        for (idx in 0 until remoteOrdersArr.length()) {
+            val idStr = remoteOrdersArr.optJSONObject(idx)?.optString("orderId", "")?.trim().orEmpty()
+            if (idStr.isNotEmpty() && idStr !in DEMO_ORDER_IDS) {
+                confirmedServerOrderIds.add(idStr)
+            }
+        }
+        val rejectedOrdersArr = root.optJSONArray("rejectedOrders")
+        val latestRejectionReason = buildString {
+            if (rejectedOrdersArr != null && rejectedOrdersArr.length() > 0) {
+                val firstRej = rejectedOrdersArr.optJSONObject(0)
+                if (firstRej != null) {
+                    val rejId = firstRej.optString("orderId", "").trim()
+                    val rejReason = firstRej.optString("reason", "").trim()
+                    if (rejReason.isNotBlank()) {
+                        append(if (rejId.isNotBlank()) "$rejId: $rejReason" else rejReason)
+                    }
+                }
+            }
+        }
         if (mutableOrdersFlow != null && remoteOrdersArr.length() > 0) {
             val currentList = mutableOrdersFlow.value.filterNot { it.orderId in DEMO_ORDER_IDS }
             val currentById = currentList.associateBy { it.orderId }.toMutableMap()
@@ -683,6 +705,8 @@ object MultiPhoneLiveSyncManager {
             rateLimitedRequestsCount = rateLimitedCount,
             rejectedInvalidPayloadsCount = rejectedPayloadsCount,
             recentBlockedEvents = parsedEvents,
+            syncedServerOrderIds = confirmedServerOrderIds,
+            lastRejectedOrderReason = latestRejectionReason,
             lastSyncError = ""
         )
         }

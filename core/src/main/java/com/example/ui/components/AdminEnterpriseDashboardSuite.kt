@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -72,6 +73,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -153,6 +155,7 @@ import com.example.data.repository.SharedOrderRepository
 import com.example.security.RiderBatteryPowerMonitor
 import com.example.security.RiderBatteryPowerState
 import com.example.security.RiderOverspeedAlarmManager
+import com.example.ui.rider.AdminKycPhotoZoomPreviewDialog
 import com.example.security.RiderOverspeedState
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -4167,24 +4170,34 @@ private fun EnterpriseCustomersPage(
         val paymentPreference: String
     )
 
-    val customerDirectory = remember(orders, tipsByOrder) {
+    val context = LocalContext.current
+    val registeredCustomers = remember(orders.size) {
+        MotivationAndPromoManager.getRegisteredCustomersSnapshot(context)
+    }
+
+    val customerDirectory = remember(orders, tipsByOrder, registeredCustomers) {
         val list = mutableListOf<CustomerDirectoryRow>()
+        val regByPhone = registeredCustomers.associateBy { it.phone.removePrefix("+91").trim() }
         val grouped = orders.groupBy { it.customerPhone.removePrefix("+91").trim().ifBlank { it.customerId } }
+        val seenPhones = HashSet<String>()
 
         grouped.forEach { (phoneClean, custOrders) ->
             if (custOrders.isNotEmpty()) {
+                seenPhones.add(phoneClean)
                 val sample = custOrders.first()
                 val displayPhone = if (phoneClean.all(Char::isDigit) && phoneClean.length >= 10) "+91 $phoneClean" else sample.customerPhone.ifBlank { "Not Provided" }
                 val activeCachedPhone = MotivationAndPromoManager.cachedCustomerPhone.removePrefix("+91").trim()
-                val emailValue = if (activeCachedPhone.isNotBlank() && activeCachedPhone == phoneClean && MotivationAndPromoManager.cachedCustomerEmail.isNotBlank()) {
-                    MotivationAndPromoManager.cachedCustomerEmail
-                } else {
-                    "Not Shared"
+                val syncedEmail = regByPhone[phoneClean]?.email.orEmpty()
+                val emailValue = when {
+                    syncedEmail.isNotBlank() -> syncedEmail
+                    activeCachedPhone.isNotBlank() && activeCachedPhone == phoneClean && MotivationAndPromoManager.cachedCustomerEmail.isNotBlank() ->
+                        MotivationAndPromoManager.cachedCustomerEmail
+                    else -> "Not Shared"
                 }
                 list.add(
                     CustomerDirectoryRow(
                         customerId = sample.customerId,
-                        name = sample.customerName.ifBlank { "Customer" },
+                        name = sample.customerName.ifBlank { regByPhone[phoneClean]?.name.orEmpty().ifBlank { "Customer" } },
                         phone = displayPhone,
                         email = emailValue,
                         pickupAddress = sample.pickupAddress.fullAddress,
@@ -4194,6 +4207,29 @@ private fun EnterpriseCustomersPage(
                             .sumOf { parseOrderFareDouble(it.totalAmount) },
                         tipsInr = custOrders.sumOf { tipsByOrder[it.orderId] ?: 0 },
                         paymentPreference = sample.paymentMethod.name.replace("_", " ")
+                    )
+                )
+            }
+        }
+
+        registeredCustomers.forEachIndexed { idx, reg ->
+            val phoneClean = reg.phone.removePrefix("+91").trim()
+            val dedupKey = phoneClean.ifBlank { reg.email.lowercase() }
+            if (dedupKey.isNotBlank() && dedupKey !in seenPhones) {
+                seenPhones.add(dedupKey)
+                val displayPhone = if (phoneClean.all(Char::isDigit) && phoneClean.length >= 10) "+91 $phoneClean" else "Not Provided"
+                list.add(
+                    CustomerDirectoryRow(
+                        customerId = "CUST-${phoneClean.takeLast(4).ifBlank { (idx + 1).toString() }}",
+                        name = reg.name.ifBlank { "Registered Customer" },
+                        phone = displayPhone,
+                        email = reg.email.ifBlank { "Not Shared" },
+                        pickupAddress = "Registered Account (No orders placed yet)",
+                        dropAddress = "—",
+                        orderCount = 0,
+                        totalSpendInr = 0.0,
+                        tipsInr = 0,
+                        paymentPreference = "Not Ordered Yet"
                     )
                 )
             }
@@ -4391,6 +4427,17 @@ private fun EnterpriseKycPage(
     var kycSearch by remember { mutableStateOf("") }
     var kycFilter by remember { mutableStateOf("ALL") }
     var statusBanner by remember { mutableStateOf<String?>(null) }
+    var zoomPreviewDoc by remember { mutableStateOf<Triple<String, Bitmap, String>?>(null) }
+
+    if (zoomPreviewDoc != null) {
+        val (docLabel, docBitmap, clarityMeta) = zoomPreviewDoc!!
+        AdminKycPhotoZoomPreviewDialog(
+            docTitle = docLabel,
+            bitmap = docBitmap,
+            clarityInfo = clarityMeta,
+            onDismiss = { zoomPreviewDoc = null }
+        )
+    }
 
     val filteredRiders = remember(riders, kycSearch, kycFilter) {
         riders.filter { r ->
@@ -4546,6 +4593,93 @@ private fun EnterpriseKycPage(
                                 softWrap = false,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
+                        }
+                    }
+
+                    val matchedRegRecord = remember(regRecords, rider.riderId, rider.mobile, rider.name) {
+                        val cleanMobile = rider.mobile.filter(Char::isDigit).takeLast(10)
+                        regRecords.values.firstOrNull { reg ->
+                            (rider.riderId.isNotBlank() && reg.riderId.equals(rider.riderId, ignoreCase = true)) ||
+                                (cleanMobile.length == 10 && reg.phone.filter(Char::isDigit).takeLast(10) == cleanMobile) ||
+                                (rider.name.isNotBlank() && reg.name.equals(rider.name, ignoreCase = true))
+                        }
+                    }
+
+                    if (matchedRegRecord != null) {
+                        val kycThumbs = listOf(
+                            "Aadhaar" to matchedRegRecord.aadhaarImageBase64,
+                            "PAN" to matchedRegRecord.panImageBase64,
+                            "DL" to matchedRegRecord.dlImageBase64,
+                            "RC" to matchedRegRecord.rcImageBase64,
+                            "Selfie" to matchedRegRecord.selfieImageBase64
+                        ).filter { it.second.isNotBlank() }
+
+                        if (kycThumbs.isNotEmpty()) {
+                            Text(
+                                text = "Uploaded HD Documents (Tap to Zoom & Save to Phone):",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = SidebarDarkTeal
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                kycThumbs.forEach { (label, b64) ->
+                                    val bmp = remember(b64) { RiderRegistrationApprovalManager.decodeBase64ToBitmap(b64) }
+                                    if (bmp != null) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    zoomPreviewDoc = Triple(
+                                                        "${rider.name} — $label Photo",
+                                                        bmp,
+                                                        matchedRegRecord.clarityScoresSummary.ifBlank { "${bmp.width}×${bmp.height}px Clear" }
+                                                    )
+                                                }
+                                                .testTag("admin_registered_kyc_thumb_${rider.riderId}_${label.lowercase()}")
+                                        ) {
+                                            Box {
+                                                Image(
+                                                    bitmap = bmp.asImageBitmap(),
+                                                    contentDescription = "Zoom $label Photo",
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .size(68.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                )
+                                                Surface(
+                                                    color = Color.Black.copy(alpha = 0.55f),
+                                                    shape = CircleShape,
+                                                    modifier = Modifier
+                                                        .align(Alignment.BottomEnd)
+                                                        .padding(3.dp)
+                                                        .size(18.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.ZoomIn,
+                                                            contentDescription = "Zoom",
+                                                            tint = Color.White,
+                                                            modifier = Modifier.size(11.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Text(
+                                                text = "$label 🔍",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = SidebarDarkTeal,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -5826,8 +5960,13 @@ private fun EnterpriseReportsAndWorkbookPage(
                 }
 
                 masterExportResult?.let { res ->
+                    val locationNote = if (res.publicDownloadLocation.isNotBlank()) {
+                        "📁 Saved to Phone Storage: ${res.publicDownloadLocation} (${res.sheetCount} sheets • ${res.rowCount} rows)"
+                    } else {
+                        "✅ Generated ${res.fileName} (${res.sheetCount} sheets • ${res.rowCount} rows • ${res.sizeBytes} bytes) at ${res.absolutePath}"
+                    }
                     Text(
-                        text = "✅ Generated ${res.fileName} (${res.sheetCount} sheets • ${res.rowCount} rows • ${res.sizeBytes} bytes) at ${res.absolutePath}",
+                        text = locationNote,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF6EE7B7)

@@ -716,13 +716,28 @@ fun AdminServerHealthAndBackupCard(
                             isExporting = false
                             res.onSuccess { jsonStr ->
                                 val stamp = SimpleDateFormat("dd MMM, hh:mm a", Locale.US).format(Date())
+                                val fileStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                                val publicBackupPath = withContext(Dispatchers.IO) {
+                                    AdminExcelXlsxExporter.saveBytesToPublicPhoneDownloads(
+                                        context = context,
+                                        subFolder = "Backups",
+                                        fileName = "QuickDelivery_Backup_$fileStamp.json",
+                                        mimeType = "application/json",
+                                        bytes = jsonStr.toByteArray(Charsets.UTF_8)
+                                    )
+                                }
                                 prefs.edit()
                                     .putString(KEY_LAST_BACKUP_JSON, jsonStr)
                                     .putString(KEY_LAST_BACKUP_TIME, stamp)
                                     .apply()
                                 lastBackupTime = stamp
                                 hasLocalBackup = true
-                                onFeedback("💾 Cloud Backup saved safely on this phone ($stamp)!")
+                                val locMsg = if (!publicBackupPath.isNullOrBlank()) {
+                                    "💾 Backup saved to Phone: $publicBackupPath ($stamp)!"
+                                } else {
+                                    "💾 Cloud Backup saved safely on this phone ($stamp)!"
+                                }
+                                onFeedback(locMsg)
                             }.onFailure { err ->
                                 onFeedback("⚠️ Backup export failed: ${err.message ?: "Server unreachable"}")
                             }

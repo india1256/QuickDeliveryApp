@@ -224,7 +224,7 @@ object RiderRegistrationApprovalManager {
         }
     }
 
-    fun compressBitmapToBase64(bitmap: Bitmap?, maxDimPx: Int = 260, quality: Int = 52): String {
+    fun compressBitmapToBase64(bitmap: Bitmap?, maxDimPx: Int = 1280, quality: Int = 86): String {
         if (bitmap == null) return ""
         return runCatching {
             val w = bitmap.width.coerceAtLeast(1)
@@ -345,11 +345,11 @@ object RiderRegistrationApprovalManager {
                 aadhaarNumber = aadhaarNumber.trim(),
                 panNumber = panNumber.trim().uppercase(),
                 drivingLicenseNumber = drivingLicenseNumber.trim().uppercase(),
-                aadhaarImageBase64 = compressBitmapToBase64(aadhaarBitmap).ifBlank { existing?.aadhaarImageBase64.orEmpty() },
-                panImageBase64 = compressBitmapToBase64(panBitmap).ifBlank { existing?.panImageBase64.orEmpty() },
-                dlImageBase64 = compressBitmapToBase64(dlBitmap).ifBlank { existing?.dlImageBase64.orEmpty() },
-                rcImageBase64 = compressBitmapToBase64(rcBitmap).ifBlank { existing?.rcImageBase64.orEmpty() },
-                selfieImageBase64 = compressBitmapToBase64(selfieBitmap, maxDimPx = 220, quality = 55)
+                aadhaarImageBase64 = compressBitmapToBase64(aadhaarBitmap, maxDimPx = 1280, quality = 86).ifBlank { existing?.aadhaarImageBase64.orEmpty() },
+                panImageBase64 = compressBitmapToBase64(panBitmap, maxDimPx = 1280, quality = 86).ifBlank { existing?.panImageBase64.orEmpty() },
+                dlImageBase64 = compressBitmapToBase64(dlBitmap, maxDimPx = 1280, quality = 86).ifBlank { existing?.dlImageBase64.orEmpty() },
+                rcImageBase64 = compressBitmapToBase64(rcBitmap, maxDimPx = 1280, quality = 86).ifBlank { existing?.rcImageBase64.orEmpty() },
+                selfieImageBase64 = compressBitmapToBase64(selfieBitmap, maxDimPx = 800, quality = 82)
                     .ifBlank { existing?.selfieImageBase64.orEmpty() },
                 autoKycVerified = autoKycVerified,
                 autoVerificationReport = autoVerificationReport,

@@ -390,6 +390,12 @@ object MotivationAndPromoManager {
         return null
     }
 
+    fun getRegisteredCustomersSnapshot(context: Context): List<RegisteredAccountRecord> {
+        return loadRegisteredAccountsMap(context).values
+            .filter { it.role == "customer" }
+            .sortedByDescending { it.updatedAtEpochMs }
+    }
+
     fun exportRegisteredCustomersToJsonArray(context: Context): org.json.JSONArray {
         val arr = org.json.JSONArray()
         loadRegisteredAccountsMap(context).values

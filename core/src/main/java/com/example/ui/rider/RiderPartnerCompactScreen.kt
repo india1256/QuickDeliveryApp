@@ -2348,6 +2348,21 @@ fun RiderPartnerCompactScreen(
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                 )
                             }
+                            if (!riderSyncStatus.isConnected && riderSyncStatus.lastSyncError.isNotBlank()) {
+                                Text(
+                                    text = "Sync Note: ${riderSyncStatus.lastSyncError}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFB45309)
+                                )
+                            }
+                            if (currentRider?.isOnline == false) {
+                                Text(
+                                    text = "⚠️ Duty Switch is OFF — Turn ON the ONLINE switch above to receive loud order alerts.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFB91C1C)
+                                )
+                            }
                             if (hiddenByFilterCount > 0) {
                                 Button(
                                     onClick = {

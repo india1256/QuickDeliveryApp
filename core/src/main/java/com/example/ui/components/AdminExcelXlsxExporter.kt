@@ -2,8 +2,12 @@ package com.example.ui.components
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -78,7 +82,8 @@ data class XlsxExportResult(
     val rowCount: Int,
     val sheetCount: Int,
     val sizeBytes: Long,
-    val exportedAt: String
+    val exportedAt: String,
+    val publicDownloadLocation: String = ""
 )
 
 /**
@@ -173,6 +178,19 @@ object AdminExcelXlsxExporter {
             }
         }
 
+        val xlsxBytes = runCatching { outFile.readBytes() }.getOrNull()
+        val publicLocation = if (xlsxBytes != null) {
+            saveBytesToPublicPhoneDownloads(
+                context = context,
+                subFolder = "Reports",
+                fileName = fileName,
+                mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                bytes = xlsxBytes
+            ).orEmpty()
+        } else {
+            ""
+        }
+
         val totalRows = safeSheets.sumOf { it.rows.size }
         return XlsxExportResult(
             fileName = fileName,
@@ -180,8 +198,62 @@ object AdminExcelXlsxExporter {
             rowCount = totalRows,
             sheetCount = safeSheets.size,
             sizeBytes = outFile.length(),
-            exportedAt = humanTimestamp
+            exportedAt = humanTimestamp,
+            publicDownloadLocation = publicLocation
         )
+    }
+
+    /**
+     * Saves any exported report, backup JSON, or KYC HD image into the visible public
+     * Phone Downloads/QuickDelivery/<subFolder>/ folder so the founder can open & share
+     * files directly from the Android Files app.
+     */
+    fun saveBytesToPublicPhoneDownloads(
+        context: Context,
+        subFolder: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray
+    ): String? {
+        val cleanSub = subFolder.replace(Regex("[^A-Za-z0-9_-]"), "").ifBlank { "Exports" }
+        val cleanName = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        if (bytes.isEmpty() || cleanName.isBlank()) return null
+
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/QuickDelivery/$cleanSub"
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, cleanName)
+                    put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                    put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        out.write(bytes)
+                        out.flush()
+                    }
+                    values.clear()
+                    values.put(MediaStore.Downloads.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                    return@runCatching "$relativePath/$cleanName"
+                }
+            }
+            @Suppress("DEPRECATION")
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (downloadsDir != null) {
+                val targetDir = File(downloadsDir, "QuickDelivery/$cleanSub").apply { if (!exists()) mkdirs() }
+                val targetFile = File(targetDir, cleanName)
+                FileOutputStream(targetFile).use { fos ->
+                    fos.write(bytes)
+                    fos.flush()
+                }
+                return@runCatching "Downloads/QuickDelivery/$cleanSub/$cleanName"
+            }
+            null
+        }.getOrNull()
     }
 
     private fun writeZipEntry(zos: ZipOutputStream, entryName: String, content: String) {
@@ -476,10 +548,14 @@ fun AdminEnterprisePaginatedTableCard(
                                 color = Color(0xFF065F46)
                             )
                             Text(
-                                text = "Saved to: ${result.absolutePath} • Copied to Clipboard (${result.exportedAt})",
+                                text = if (result.publicDownloadLocation.isNotBlank()) {
+                                    "📁 Phone Storage: ${result.publicDownloadLocation} • Copied (${result.exportedAt})"
+                                } else {
+                                    "Saved to: ${result.absolutePath} • Copied (${result.exportedAt})"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color(0xFF047857),
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }

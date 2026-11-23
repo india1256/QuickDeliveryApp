@@ -722,6 +722,11 @@ test('11. Live Server PoC Verification: blocks unverified GOOGLE_SIGNIN credenti
       false,
       'Order from Admin-blocked phone MUST be rejected by server'
     );
+    assert.ok(
+      Array.isArray(fraudBody.rejectedOrders) &&
+        fraudBody.rejectedOrders.some((r) => r.orderId === 'QD-BLK-999' && typeof r.reason === 'string' && r.reason.length > 0),
+      'Server must return explicit rejection reason so Customer UI knows why order was blocked'
+    );
     const spoofedOrder = fraudBody.orders.find((o) => o.orderId === 'QD-SPF-888');
     assert.ok(spoofedOrder, 'Valid customer order created without forged payment flag');
     assert.equal(spoofedOrder.isPaidToCompany, false, 'Unpaid payment spoof without gatewayPaymentId MUST be downgraded');

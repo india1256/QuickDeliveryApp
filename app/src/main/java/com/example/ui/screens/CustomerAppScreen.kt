@@ -248,6 +248,7 @@ fun CustomerAppScreen(
     val isCustomerStorageGranted by MotivationAndPromoManager.customerStoragePermissionGranted.collectAsState()
     val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
     val walletBonusInr by QuickDeliveryOperationsManager.customerWalletBonusInr.collectAsState()
+    val customerSyncStatus by com.example.data.cloud.MultiPhoneLiveSyncManager.syncStatus.collectAsState()
 
     var isScheduledDelivery by rememberSaveable { mutableStateOf(false) }
     var scheduledDateLabel by rememberSaveable { mutableStateOf("Today") }
@@ -5388,6 +5389,71 @@ fun CustomerAppScreen(
                                         orderPendingCancellation = activeOrder
                                     }
                                 )
+
+                                val isLiveOnServer = activeOrder.orderId in customerSyncStatus.syncedServerOrderIds
+                                val rejectedMsg = customerSyncStatus.lastRejectedOrderReason
+                                    .takeIf { it.contains(activeOrder.orderId, ignoreCase = true) }
+                                Surface(
+                                    color = when {
+                                        rejectedMsg != null -> Color(0xFFFEE2E2)
+                                        isLiveOnServer -> Color(0xFFECFDF5)
+                                        else -> Color(0xFFFFFBEB)
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        when {
+                                            rejectedMsg != null -> Color(0xFFEF4444)
+                                            isLiveOnServer -> Color(0xFF10B981)
+                                            else -> Color(0xFFF59E0B)
+                                        }
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("customer_order_server_sync_status_card")
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = when {
+                                                rejectedMsg != null -> "⛔ Server Blocked Order: $rejectedMsg"
+                                                isLiveOnServer -> "🟢 Live on Server (${customerSyncStatus.activeEndpointHost.ifBlank { "quickdelivery.co.in" }}) — Nearby Riders can see & accept!"
+                                                else -> "⏳ Sending order to Live Server... ${customerSyncStatus.lastSyncError.ifBlank { "Waking server" }}"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = when {
+                                                rejectedMsg != null -> Color(0xFF991B1B)
+                                                isLiveOnServer -> Color(0xFF065F46)
+                                                else -> Color(0xFF92400E)
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        if (!isLiveOnServer) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            OutlinedButton(
+                                                onClick = {
+                                                    com.example.data.cloud.MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                modifier = Modifier.testTag("customer_retry_server_sync_btn")
+                                            ) {
+                                                Text(
+                                                    text = "Sync Now",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             CustomerProximityOtpAlertBanner(
