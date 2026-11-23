@@ -314,6 +314,40 @@ const heavyRequestBuckets = new Map();
 const newOrderBucketsByActor = new Map();
 const newOrderBucketsByIp = new Map();
 const recentRouteByActor = new Map();
+const adminLoginFailureBuckets = new Map();
+const MAX_ADMIN_LOGIN_FAILURES = 5;
+const ADMIN_LOGIN_WINDOW_MS = 5 * 60 * 1000;
+const ADMIN_LOGIN_LOCKOUT_MS = 60 * 1000;
+
+async function verifyGoogleIdTokenForAdmin(idToken, expectedEmail) {
+  const cleanToken = String(idToken || '').trim();
+  const cleanEmail = String(expectedEmail || '').trim().toLowerCase();
+  if (!cleanToken || cleanToken.length < 40 || !ADMIN_ALLOWLIST_EMAILS.has(cleanEmail)) {
+    return { ok: false, reason: 'Missing valid Google ID token for Admin verification.' };
+  }
+  try {
+    const resp = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(cleanToken)}`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!resp.ok) {
+      return { ok: false, reason: `Google token validation rejected (HTTP ${resp.status}).` };
+    }
+    const info = await resp.json();
+    const tokenEmail = String(info?.email || '').trim().toLowerCase();
+    const isVerified = info?.email_verified === true || String(info?.email_verified || '').toLowerCase() === 'true';
+    const expEpochMs = Number(info?.exp || 0) * 1000;
+    if (!isVerified || !tokenEmail || tokenEmail !== cleanEmail || !ADMIN_ALLOWLIST_EMAILS.has(tokenEmail)) {
+      return { ok: false, reason: 'Google account email does not match authorized Admin email.' };
+    }
+    if (expEpochMs > 0 && Date.now() > expEpochMs + 60000) {
+      return { ok: false, reason: 'Google Sign-In session expired. Please sign in with Google again.' };
+    }
+    return { ok: true, email: tokenEmail };
+  } catch {
+    return { ok: false, reason: 'Unable to reach Google token verification service. Use Email OTP instead.' };
+  }
+}
 
 const BLOCKED_FAKE_PHONES = new Set([
   '0000000000',
@@ -528,6 +562,22 @@ function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now, clientI
     }
   }
 
+  const blockedCsv = String(syncState.remoteFeatureFlags?.blockedCustomerPhonesCsv || '');
+  if (blockedCsv) {
+    const adminBlockedPhones = new Set(
+      blockedCsv
+        .split(',')
+        .map(s => s.replace(/\D/g, '').slice(-10))
+        .filter(s => s.length === 10)
+    );
+    if (phone10.length === 10 && adminBlockedPhones.has(phone10)) {
+      return { ok: false, reason: `Admin fraud blocklist rejected customer +91 ${phone10} on ${oid}` };
+    }
+    if (rawDropPhoneDigits.length >= 10 && adminBlockedPhones.has(rawDropPhoneDigits.slice(-10))) {
+      return { ok: false, reason: `Admin fraud blocklist rejected receiver +91 ${rawDropPhoneDigits.slice(-10)} on ${oid}` };
+    }
+  }
+
   const riderPhoneDigits = String(incoming.assignedRiderPhone || '').replace(/\D/g, '');
   const riderPhone10 = riderPhoneDigits.length >= 10 ? riderPhoneDigits.slice(-10) : riderPhoneDigits;
   if (phone10.length === 10 && riderPhone10.length === 10 && phone10 === riderPhone10) {
@@ -537,7 +587,14 @@ function validateIncomingOrderForAntiSpam(incoming, senderDeviceId, now, clientI
   const totalInr = parseMoneyInr(incoming.totalAmount);
   const commInr = parseMoneyInr(incoming.platformCommission);
   const riderInr = parseMoneyInr(incoming.riderEarning);
-  if (totalInr < 15 || totalInr > 50000 || Math.abs(commInr + riderInr - totalInr) > 5.0) {
+  if (
+    totalInr < 15 ||
+    totalInr > 50000 ||
+    commInr < 0 ||
+    riderInr < 0 ||
+    commInr > totalInr * 0.55 ||
+    Math.abs(commInr + riderInr - totalInr) > 5.0
+  ) {
     return { ok: false, reason: `Invalid or tampered fare split (total=${totalInr}) on ${oid}` };
   }
 
@@ -2416,6 +2473,7 @@ const server = http.createServer((req, res) => {
 
           const normalizedSenderRole = String(payload.role || 'UNIFIED').trim().toUpperCase();
           const isAdminOrUnified = normalizedSenderRole === 'ADMIN' || normalizedSenderRole === 'UNIFIED';
+          const senderIpForAudit = getClientIp(req);
 
           if (isAdminOrUnified && payload.resetEpochMs && Number(payload.resetEpochMs) > syncState.resetEpochMs) {
             syncState.resetEpochMs = Number(payload.resetEpochMs);
@@ -2435,10 +2493,32 @@ const server = http.createServer((req, res) => {
               const rKey = String(reg.riderKey);
               const existingReg = syncState.riderRegistrationsByKey[rKey];
               if (!existingReg || Number(reg.updatedAtEpochMs || 0) >= Number(existingReg.updatedAtEpochMs || 0)) {
-                syncState.riderRegistrationsByKey[rKey] = {
-                  ...(existingReg || {}),
-                  ...reg,
-                };
+                const reqStatus = String(reg.approvalStatus || 'NEEDS_KYC').trim().toUpperCase();
+                if (!isAdminOrUnified) {
+                  const prevStatus = String(existingReg?.approvalStatus || 'NEEDS_KYC').trim().toUpperCase();
+                  const tryingPrivilegeEscalation =
+                    (reqStatus === 'APPROVED' || reqStatus === 'REJECTED') && reqStatus !== prevStatus;
+                  if (tryingPrivilegeEscalation) {
+                    recordSecurityBlock(
+                      'PRIVILEGE_ESCALATION_BLOCKED',
+                      payload.deviceId || senderIpForAudit,
+                      `Non-admin (${normalizedSenderRole}) attempted Rider KYC ${reqStatus} on ${rKey}`
+                    );
+                    continue;
+                  }
+                  const safeStatus = existingReg ? prevStatus : (reqStatus === 'PENDING_APPROVAL' ? 'PENDING_APPROVAL' : 'NEEDS_KYC');
+                  syncState.riderRegistrationsByKey[rKey] = {
+                    ...(existingReg || {}),
+                    ...reg,
+                    approvalStatus: safeStatus,
+                    adminRemarks: existingReg?.adminRemarks || '',
+                  };
+                } else {
+                  syncState.riderRegistrationsByKey[rKey] = {
+                    ...(existingReg || {}),
+                    ...reg,
+                  };
+                }
               }
             }
           }
@@ -2488,7 +2568,22 @@ const server = http.createServer((req, res) => {
               const wid = String(w.requestId);
               const prev = syncState.withdrawalRequestsById[wid];
               if (!prev || Number(w.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
-                syncState.withdrawalRequestsById[wid] = w;
+                const reqWStatus = String(w.status || 'PENDING').trim().toUpperCase();
+                if (!isAdminOrUnified) {
+                  const prevWStatus = String(prev?.status || 'PENDING').trim().toUpperCase();
+                  if ((reqWStatus === 'PAID' || reqWStatus === 'APPROVED' || reqWStatus === 'REJECTED') && reqWStatus !== prevWStatus) {
+                    recordSecurityBlock(
+                      'PRIVILEGE_ESCALATION_BLOCKED',
+                      payload.deviceId || senderIpForAudit,
+                      `Non-admin (${normalizedSenderRole}) attempted Withdrawal ${reqWStatus} on ${wid}`
+                    );
+                    continue;
+                  }
+                  if (prev && (prevWStatus === 'PAID' || prevWStatus === 'REJECTED')) continue;
+                  syncState.withdrawalRequestsById[wid] = { ...w, status: 'PENDING', adminNote: prev?.adminNote || '' };
+                } else {
+                  syncState.withdrawalRequestsById[wid] = w;
+                }
               }
             }
           }
@@ -2516,7 +2611,22 @@ const server = http.createServer((req, res) => {
               const sid = String(s.settlementId);
               const prev = syncState.codSettlementsById[sid];
               if (!prev || Number(s.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
-                syncState.codSettlementsById[sid] = s;
+                const reqSStatus = String(s.status || 'PENDING_ADMIN').trim().toUpperCase();
+                if (!isAdminOrUnified) {
+                  const prevSStatus = String(prev?.status || 'PENDING_ADMIN').trim().toUpperCase();
+                  if ((reqSStatus === 'VERIFIED' || reqSStatus === 'APPROVED') && reqSStatus !== prevSStatus) {
+                    recordSecurityBlock(
+                      'PRIVILEGE_ESCALATION_BLOCKED',
+                      payload.deviceId || senderIpForAudit,
+                      `Non-admin (${normalizedSenderRole}) attempted COD Settlement ${reqSStatus} on ${sid}`
+                    );
+                    continue;
+                  }
+                  if (prev && prevSStatus === 'VERIFIED') continue;
+                  syncState.codSettlementsById[sid] = { ...s, status: 'PENDING_ADMIN' };
+                } else {
+                  syncState.codSettlementsById[sid] = s;
+                }
               }
             }
           }
@@ -2528,7 +2638,22 @@ const server = http.createServer((req, res) => {
               const did = String(d.disputeId);
               const prev = syncState.disputeRecordsById[did];
               if (!prev || Number(d.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
-                syncState.disputeRecordsById[did] = d;
+                const reqDStatus = String(d.status || 'OPEN').trim().toUpperCase();
+                if (!isAdminOrUnified) {
+                  const prevDStatus = String(prev?.status || 'OPEN').trim().toUpperCase();
+                  if ((reqDStatus === 'REFUNDED' || reqDStatus === 'REJECTED') && reqDStatus !== prevDStatus) {
+                    recordSecurityBlock(
+                      'PRIVILEGE_ESCALATION_BLOCKED',
+                      payload.deviceId || senderIpForAudit,
+                      `Non-admin (${normalizedSenderRole}) attempted Dispute ${reqDStatus} on ${did}`
+                    );
+                    continue;
+                  }
+                  if (prev && (prevDStatus === 'REFUNDED' || prevDStatus === 'REJECTED')) continue;
+                  syncState.disputeRecordsById[did] = { ...d, status: 'OPEN' };
+                } else {
+                  syncState.disputeRecordsById[did] = d;
+                }
               }
             }
           }
@@ -2666,7 +2791,26 @@ const server = http.createServer((req, res) => {
               const aid = String(acc.accountId);
               const prev = syncState.b2bAccountsById[aid];
               if (!prev || Number(acc.updatedAtEpochMs || 0) >= Number(prev.updatedAtEpochMs || 0)) {
-                syncState.b2bAccountsById[aid] = acc;
+                const reqB2bStatus = String(acc.status || 'PENDING_ADMIN_APPROVAL').trim().toUpperCase();
+                if (!isAdminOrUnified) {
+                  const prevB2bStatus = String(prev?.status || 'PENDING_ADMIN_APPROVAL').trim().toUpperCase();
+                  if ((reqB2bStatus === 'APPROVED' || reqB2bStatus === 'SUSPENDED') && reqB2bStatus !== prevB2bStatus) {
+                    recordSecurityBlock(
+                      'PRIVILEGE_ESCALATION_BLOCKED',
+                      payload.deviceId || senderIpForAudit,
+                      `Non-admin (${normalizedSenderRole}) attempted B2B ${reqB2bStatus} on ${aid}`
+                    );
+                    continue;
+                  }
+                  if (prev && prevB2bStatus === 'APPROVED') continue;
+                  syncState.b2bAccountsById[aid] = {
+                    ...acc,
+                    status: 'PENDING_ADMIN_APPROVAL',
+                    approvedCreditLimitInr: 0,
+                  };
+                } else {
+                  syncState.b2bAccountsById[aid] = acc;
+                }
               }
             }
           }
@@ -2735,9 +2879,20 @@ const server = http.createServer((req, res) => {
               }
               const existing = syncState.ordersById[oid];
               if (!existing) {
-                if (incoming.orderStatus === 'RIDER_ASSIGNED' && senderRole !== 'RIDER' && senderRole !== 'ADMIN' && senderRole !== 'UNIFIED') {
+                const cleanGatewayPayId = String(incoming.gatewayPaymentId || '').trim();
+                const isPrepaidSpoofByCustomer =
+                  senderRole === 'CUSTOMER' &&
+                  (incoming.isPaidToCompany === true || incoming.paymentStatus === 'VERIFIED_PAID_TO_COMPANY') &&
+                  cleanGatewayPayId.length < 6;
+                if (isPrepaidSpoofByCustomer) {
+                  recordSecurityBlock('FAKE_ORDER_BLOCKED', incoming.customerPhone || senderDeviceId, `Blocked unpaid CUSTOMER payment spoof on ${oid}`);
+                }
+                const sanitizedNewOrder = isPrepaidSpoofByCustomer
+                  ? { ...incoming, isPaidToCompany: false, paymentStatus: 'UNPAID_CASH_DUE' }
+                  : incoming;
+                if (sanitizedNewOrder.orderStatus === 'RIDER_ASSIGNED' && senderRole !== 'RIDER' && senderRole !== 'ADMIN' && senderRole !== 'UNIFIED') {
                   syncState.ordersById[oid] = {
-                    ...incoming,
+                    ...sanitizedNewOrder,
                     orderStatus: 'SEARCHING_RIDER',
                     statusRank: 1,
                     assignedRiderId: '',
@@ -2749,7 +2904,7 @@ const server = http.createServer((req, res) => {
                   };
                 } else {
                   syncState.ordersById[oid] = {
-                    ...incoming,
+                    ...sanitizedNewOrder,
                     createdByDeviceId: senderDeviceId,
                     updatedAtEpochMs: now,
                   };
@@ -2784,6 +2939,26 @@ const server = http.createServer((req, res) => {
                 if (senderRole === 'CUSTOMER' && isRiderLifecycleStatus && inStatus !== exStatus) {
                   recordSecurityBlock('FAKE_ORDER_BLOCKED', senderDeviceId, `Blocked CUSTOMER role status forgery (${exStatus} -> ${inStatus}) on ${oid}`);
                   continue;
+                }
+
+                // When Pickup/Drop OTP protection is enabled on server, verify OTP match on status advancement
+                if (!isAdminOrUnified && syncState.remoteFeatureFlags?.pickupDropOtpEnabled) {
+                  const expectedPickupOtp = String(existing.pickupOtp || '').trim();
+                  const expectedDeliveryOtp = String(existing.deliveryOtp || '').trim();
+                  if (inStatus === 'PICKED_UP' && exRank < 4 && /^\d{4}$/.test(expectedPickupOtp)) {
+                    const proofOtp = String(incoming.pickupProof?.verifiedOtp || '').trim();
+                    if (proofOtp !== expectedPickupOtp) {
+                      recordSecurityBlock('FAKE_ORDER_BLOCKED', senderDeviceId, `Blocked invalid Pickup OTP bypass on ${oid}`);
+                      continue;
+                    }
+                  }
+                  if (inStatus === 'DELIVERED' && exRank < 6 && /^\d{4}$/.test(expectedDeliveryOtp)) {
+                    const proofOtp = String(incoming.deliveryProof?.verifiedOtp || '').trim();
+                    if (proofOtp !== expectedDeliveryOtp) {
+                      recordSecurityBlock('FAKE_ORDER_BLOCKED', senderDeviceId, `Blocked invalid Delivery OTP bypass on ${oid}`);
+                      continue;
+                    }
+                  }
                 }
 
                 const isRiderRejectionRollback =
@@ -3486,12 +3661,14 @@ const server = http.createServer((req, res) => {
       body += chunk;
       if (body.length > 32 * 1024) req.destroy();
     });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const parsed = JSON.parse(body || '{}');
         const deviceId = String(parsed.deviceId || '');
         const sigCheck = verifySyncHmacHeaders(req, deviceId, 'ADMIN');
         if (!sigCheck.ok) {
+          recordSecurityBlock('INVALID_SIG', getClientIp(req), `Admin credentials save sig failed: ${sigCheck.reason}`);
+          saveSyncState();
           res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
           res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
           return;
@@ -3502,6 +3679,7 @@ const server = http.createServer((req, res) => {
         const hashHex = String(parsed.hashHex || '').trim().toLowerCase();
         const authProof = String(parsed.authProof || '').trim().toUpperCase();
         const currentPassword = String(parsed.currentPassword || '');
+        const googleIdToken = String(parsed.googleIdToken || '').trim();
 
         if (!/^[a-z0-9._-]{4,32}$/.test(userId)) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
@@ -3509,6 +3687,8 @@ const server = http.createServer((req, res) => {
           return;
         }
         if (!ADMIN_ALLOWLIST_EMAILS.has(recoveryEmail)) {
+          recordSecurityBlock('INVALID_SIG', getClientIp(req), `Non-allowlisted Admin email blocked: ${recoveryEmail}`);
+          saveSyncState();
           res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
           res.end(JSON.stringify({ ok: false, error: 'Only allowlisted Admin emails can configure Admin login.' }));
           return;
@@ -3523,6 +3703,8 @@ const server = http.createServer((req, res) => {
         const verifiedRec = syncState.verifiedEmails && syncState.verifiedEmails[recoveryEmail];
         const hasRecentOtp = Boolean(verifiedRec && (Date.now() - Number(verifiedRec.verifiedAtEpochMs || 0)) <= 15 * 60 * 1000);
         let authorizedToSave = false;
+        let authRejectReason = 'Verification required (Email OTP, Google ID Token, or Current Password) to update Admin credentials.';
+
         if (authProof === 'EMAIL_OTP' && hasRecentOtp) {
           authorizedToSave = true;
         } else if (authProof === 'CURRENT_PASSWORD') {
@@ -3537,12 +3719,22 @@ const server = http.createServer((req, res) => {
         } else if (authProof === 'SETTINGS_INITIAL_SETUP' && !existing) {
           authorizedToSave = true;
         } else if (authProof === 'GOOGLE_SIGNIN') {
-          authorizedToSave = true;
+          if (hasRecentOtp) {
+            authorizedToSave = true;
+          } else if (googleIdToken) {
+            const gCheck = await verifyGoogleIdTokenForAdmin(googleIdToken, recoveryEmail);
+            authorizedToSave = gCheck.ok;
+            if (!gCheck.ok) authRejectReason = gCheck.reason;
+          } else {
+            authRejectReason = 'Google ID token verification or Email OTP is required to save Admin credentials.';
+          }
         }
 
         if (!authorizedToSave) {
+          recordSecurityBlock('INVALID_SIG', getClientIp(req), `Admin credentials overwrite rejected (${authProof})`);
+          saveSyncState();
           res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-          res.end(JSON.stringify({ ok: false, error: 'Verification required (Email OTP or Current Password) to update Admin credentials.' }));
+          res.end(JSON.stringify({ ok: false, error: authRejectReason }));
           return;
         }
 
@@ -3582,10 +3774,22 @@ const server = http.createServer((req, res) => {
         const deviceId = String(parsed.deviceId || '');
         const sigCheck = verifySyncHmacHeaders(req, deviceId, 'ADMIN');
         if (!sigCheck.ok) {
+          recordSecurityBlock('INVALID_SIG', getClientIp(req), `Admin verify sig failed: ${sigCheck.reason}`);
+          saveSyncState();
           res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
           res.end(JSON.stringify({ ok: false, error: sigCheck.reason }));
           return;
         }
+        const now = Date.now();
+        const lockKey = `${getClientIp(req)}|${deviceId || 'unknown'}`;
+        const failRec = adminLoginFailureBuckets.get(lockKey);
+        if (failRec && failRec.lockedUntilMs > now) {
+          const waitSec = Math.ceil((failRec.lockedUntilMs - now) / 1000);
+          res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: `Admin login locked due to failed tries. Retry in ${waitSec}s.` }));
+          return;
+        }
+
         const existing = syncState.adminCredentials;
         if (!existing || !existing.userId || !existing.saltHex || !existing.hashHex) {
           res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
@@ -3600,10 +3804,24 @@ const server = http.createServer((req, res) => {
         const b = Buffer.from(String(existing.hashHex), 'utf8');
         const hashMatches = a.length === b.length && crypto.timingSafeEqual(a, b);
         if (!idMatches || !hashMatches) {
-          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-          res.end(JSON.stringify({ ok: false, error: 'Incorrect Admin User ID or Password.' }));
+          const activeFails = failRec && (now - failRec.firstFailAtMs) < ADMIN_LOGIN_WINDOW_MS ? failRec.count + 1 : 1;
+          const firstFailAtMs = failRec && (now - failRec.firstFailAtMs) < ADMIN_LOGIN_WINDOW_MS ? failRec.firstFailAtMs : now;
+          const lockedUntilMs = activeFails >= MAX_ADMIN_LOGIN_FAILURES ? now + ADMIN_LOGIN_LOCKOUT_MS : 0;
+          adminLoginFailureBuckets.set(lockKey, { count: activeFails, firstFailAtMs, lockedUntilMs });
+          if (lockedUntilMs > now) {
+            recordSecurityBlock('RATE_LIMIT', lockKey, `Admin password brute-force lockout (${activeFails} failed attempts)`);
+            saveSyncState();
+          }
+          res.writeHead(lockedUntilMs > now ? 429 : 401, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({
+            ok: false,
+            error: lockedUntilMs > now
+              ? 'Too many wrong Admin login attempts. Locked for 60 seconds.'
+              : 'Incorrect Admin User ID or Password.',
+          }));
           return;
         }
+        adminLoginFailureBuckets.delete(lockKey);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({
           ok: true,
@@ -3711,6 +3929,10 @@ const server = http.createServer((req, res) => {
         const qdOrderId = String(paymentEntity?.notes?.qdOrderId || evt.orderId || '');
         if (qdOrderId && syncState.ordersById[qdOrderId]) {
           syncState.ordersById[qdOrderId].paymentStatus = 'VERIFIED_PAID_TO_COMPANY';
+          syncState.ordersById[qdOrderId].isPaidToCompany = true;
+          if (paymentEntity?.id) {
+            syncState.ordersById[qdOrderId].gatewayPaymentId = String(paymentEntity.id);
+          }
           syncState.ordersById[qdOrderId].updatedAtEpochMs = Date.now();
           saveSyncState();
         }

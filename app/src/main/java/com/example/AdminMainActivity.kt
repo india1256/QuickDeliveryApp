@@ -57,7 +57,11 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -91,6 +95,7 @@ import com.example.security.OrderAlertSoundManager
 import com.example.security.QuickDeliveryCrashShield
 import com.example.ui.auth.GoogleSignInButton
 import com.example.ui.auth.QuickDeliveryCloudSyncBar
+import com.example.ui.auth.QuickDeliveryGoogleAuthTokenCache
 import com.example.ui.components.AdminEnterpriseControlCenter
 import com.example.ui.components.CrashRecoveryDialogOverlay
 import com.example.ui.components.FcmOrderNotificationManager
@@ -135,6 +140,23 @@ class AdminMainActivity : ComponentActivity() {
                     val remoteFlags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
                     val isAdminAuthorized = QuickDeliveryOperationsManager.isEmailAllowlistedForAdmin(activeAdminEmail)
                     var unlockedAdminPin by remember(activeAdminEmail) { mutableStateOf("") }
+                    var lastBackgroundEpochMs by remember { mutableLongStateOf(0L) }
+                    val lifecycleOwner = LocalLifecycleOwner.current
+                    DisposableEffect(lifecycleOwner, remoteFlags.adminSecurityPin) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_STOP) {
+                                lastBackgroundEpochMs = System.currentTimeMillis()
+                            } else if (event == Lifecycle.Event.ON_START &&
+                                remoteFlags.adminSecurityPin.length == 4 &&
+                                lastBackgroundEpochMs > 0L &&
+                                (System.currentTimeMillis() - lastBackgroundEpochMs) >= 3 * 60 * 1000L
+                            ) {
+                                unlockedAdminPin = ""
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                    }
                     val requiresPinUnlock = remoteFlags.adminSecurityPin.length == 4 &&
                         unlockedAdminPin != remoteFlags.adminSecurityPin
 
@@ -922,7 +944,7 @@ private fun AdminCredentialsAuthScreen(
                                 authError = null
                             },
                             enabled = !isBusy,
-                            label = { Text("New Password (min 6 chars) *") },
+                            label = { Text("New Password (min 8 chars, letters + numbers) *") },
                             placeholder = { Text("Create strong password") },
                             leadingIcon = {
                                 Icon(Icons.Default.Key, contentDescription = null, tint = Color(0xFF0F766E))
@@ -1030,16 +1052,26 @@ private fun AdminCredentialsAuthScreen(
                                         recoveryEmail = ownerEmail
                                     )
                                     savedRes.onSuccess { saved ->
-                                        // Push salted stretched hash to private backend for multi-phone login
-                                        MultiPhoneLiveSyncManager.saveAdminCredentialsToServer(
+                                        // Push salted stretched hash + verified proof token to private backend for multi-phone login
+                                        val serverSaveRes = MultiPhoneLiveSyncManager.saveAdminCredentialsToServer(
                                             context = context,
                                             userId = saved.userId,
                                             recoveryEmail = saved.recoveryEmail,
                                             saltHex = saved.saltHex,
                                             hashHex = saved.hashHex,
-                                            authProof = verifiedProofType
+                                            authProof = verifiedProofType,
+                                            googleIdToken = if (verifiedProofType == "GOOGLE_SIGNIN") {
+                                                QuickDeliveryGoogleAuthTokenCache.lastGoogleIdToken
+                                            } else {
+                                                null
+                                            }
                                         )
                                         isBusy = false
+                                        if (serverSaveRes.isFailure && verifiedProofType == "GOOGLE_SIGNIN") {
+                                            authError = serverSaveRes.exceptionOrNull()?.message
+                                                ?: "Server could not verify Google token. Please verify via Email OTP above."
+                                            return@onSuccess
+                                        }
                                         onAdminAuthenticated(saved.recoveryEmail, keepSignedIn)
                                     }.onFailure { err ->
                                         isBusy = false
@@ -1047,7 +1079,7 @@ private fun AdminCredentialsAuthScreen(
                                     }
                                 }
                             },
-                            enabled = !isBusy && setupUserId.length >= 4 && setupPassword.length >= 6 && setupConfirmPassword.isNotEmpty(),
+                            enabled = !isBusy && setupUserId.length >= 4 && setupPassword.length >= 8 && setupConfirmPassword.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E)),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier

@@ -469,3 +469,298 @@ test('10. Strict Order-Only Chatbot & Post-Sign-Up App Guide with Skip: verifies
   assert.match(riderSource, /QuickDeliveryNewUserAppGuideScreen/);
   assert.match(riderSource, /rider_top_header_order_bot_btn/);
 });
+
+test('11. Live Server PoC Verification: blocks unverified GOOGLE_SIGNIN credential overwrite, non-admin RBAC escalation, Admin brute-force, blocked customer numbers, unpaid payment spoofs, and OTP bypasses', async () => {
+  const { spawn } = await import('node:child_process');
+  const crypto = await import('node:crypto');
+  const path = await import('node:path');
+  const testPort = 39876;
+  const testSecret = 'QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in';
+  const tempStateFile = path.join('/tmp', `qd-sec-poc-${Date.now()}.json`);
+
+  const signHeaders = (deviceId, role) => {
+    const ts = Date.now();
+    const canonical = `${deviceId}|${role}|${ts}`;
+    const sig = crypto.createHmac('sha256', testSecret).update(canonical).digest('hex');
+    return {
+      'Content-Type': 'application/json',
+      'X-QD-Sync-Ts': String(ts),
+      'X-QD-Sync-Sig': sig,
+    };
+  };
+
+  const child = spawn('node', ['scripts/apk-download-server.mjs'], {
+    env: {
+      ...process.env,
+      APP_PORT: String(testPort),
+      SYNC_STATE_FILE: tempStateFile,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Test server startup timed out')), 8000);
+      child.stdout.on('data', (chunk) => {
+        if (String(chunk).includes(`http://0.0.0.0:${testPort}`)) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`Server exited early with code ${code}`));
+      });
+    });
+
+    const baseUrl = `http://127.0.0.1:${testPort}`;
+
+    // 11a. PoC: Unverified GOOGLE_SIGNIN credential overwrite MUST be rejected (HTTP 403)
+    const saltHex = crypto.randomBytes(16).toString('hex');
+    let hashBuf = Buffer.from(`QD_ADMIN_V1|${saltHex}|StrongPass99`, 'utf8');
+    for (let i = 0; i < 10000; i++) {
+      hashBuf = crypto.createHash('sha256').update(hashBuf).digest();
+    }
+    const forgedCredRes = await fetch(`${baseUrl}/api/admin/credentials/save`, {
+      method: 'POST',
+      headers: signHeaders('attacker-dev-1', 'ADMIN'),
+      body: JSON.stringify({
+        deviceId: 'attacker-dev-1',
+        userId: 'attacker_admin',
+        recoveryEmail: 'ravindergupta141@gmail.com',
+        saltHex,
+        hashHex: hashBuf.toString('hex'),
+        authProof: 'GOOGLE_SIGNIN',
+      }),
+    });
+    assert.equal(forgedCredRes.status, 403, 'Forged GOOGLE_SIGNIN without verified ID token must return 403');
+
+    // Legitimate first-time setup with SETTINGS_INITIAL_SETUP initializes creds once, then second overwrite is rejected (403)
+    const initSave = await fetch(`${baseUrl}/api/admin/credentials/save`, {
+      method: 'POST',
+      headers: signHeaders('admin-dev-1', 'ADMIN'),
+      body: JSON.stringify({
+        deviceId: 'admin-dev-1',
+        userId: 'owner_admin',
+        recoveryEmail: 'ravindergupta141@gmail.com',
+        saltHex,
+        hashHex: hashBuf.toString('hex'),
+        authProof: 'SETTINGS_INITIAL_SETUP',
+      }),
+    });
+    assert.equal(initSave.status, 200);
+
+    const secondOverwrite = await fetch(`${baseUrl}/api/admin/credentials/save`, {
+      method: 'POST',
+      headers: signHeaders('attacker-dev-2', 'ADMIN'),
+      body: JSON.stringify({
+        deviceId: 'attacker-dev-2',
+        userId: 'hijack_admin',
+        recoveryEmail: 'ravindergupta141@gmail.com',
+        saltHex,
+        hashHex: hashBuf.toString('hex'),
+        authProof: 'SETTINGS_INITIAL_SETUP',
+      }),
+    });
+    assert.equal(secondOverwrite.status, 403, 'Repeated SETTINGS_INITIAL_SETUP must be rejected once configured');
+
+    // 11b. PoC: Server-side Admin brute-force lockout after 5 wrong password attempts -> 6th returns HTTP 429
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const wrongLogin = await fetch(`${baseUrl}/api/admin/credentials/verify`, {
+        method: 'POST',
+        headers: signHeaders('brute-dev-1', 'ADMIN'),
+        body: JSON.stringify({
+          deviceId: 'brute-dev-1',
+          identifier: 'owner_admin',
+          password: `WrongPass${attempt}`,
+        }),
+      });
+      assert.equal(wrongLogin.status, attempt === 5 ? 429 : 401);
+    }
+    const lockedLogin = await fetch(`${baseUrl}/api/admin/credentials/verify`, {
+      method: 'POST',
+      headers: signHeaders('brute-dev-1', 'ADMIN'),
+      body: JSON.stringify({
+        deviceId: 'brute-dev-1',
+        identifier: 'owner_admin',
+        password: 'StrongPass99',
+      }),
+    });
+    assert.equal(lockedLogin.status, 429, 'Locked out Admin verify must reject even correct password during cooldown');
+
+    // 11c. PoC: Non-admin (RIDER / CUSTOMER) RBAC escalation attempts in /api/live-sync are stripped/blocked
+    const escalationRes = await fetch(`${baseUrl}/api/live-sync`, {
+      method: 'POST',
+      headers: signHeaders('rogue-rider-1', 'RIDER'),
+      body: JSON.stringify({
+        deviceId: 'rogue-rider-1',
+        role: 'RIDER',
+        riderRegistrations: [
+          {
+            riderKey: '9820112233',
+            riderId: 'RIDER-ROGUE',
+            name: 'Rogue Rider',
+            phone: '9820112233',
+            approvalStatus: 'APPROVED',
+            updatedAtEpochMs: Date.now(),
+          },
+        ],
+        withdrawalRequests: [
+          {
+            requestId: 'WD-ROGUE-1',
+            riderId: 'RIDER-ROGUE',
+            amountInr: 9500,
+            payoutDestination: 'rogue@upi',
+            status: 'PAID',
+            updatedAtEpochMs: Date.now(),
+          },
+        ],
+        codSettlements: [
+          {
+            settlementId: 'SET-ROGUE-1',
+            riderId: 'RIDER-ROGUE',
+            amountInr: 200,
+            status: 'VERIFIED',
+            updatedAtEpochMs: Date.now(),
+          },
+        ],
+      }),
+    });
+    assert.equal(escalationRes.status, 200);
+    const escPayload = await escalationRes.json();
+    assert.equal(
+      escPayload.riderRegistrations.some((r) => r.riderKey === '9820112233' && r.approvalStatus === 'APPROVED'),
+      false,
+      'Non-admin RIDER must NOT self-approve KYC'
+    );
+    assert.equal(
+      escPayload.withdrawalRequests.some((w) => w.requestId === 'WD-ROGUE-1' && w.status === 'PAID'),
+      false,
+      'Non-admin RIDER must NOT self-mark withdrawal PAID'
+    );
+    assert.equal(
+      escPayload.codSettlements.some((s) => s.settlementId === 'SET-ROGUE-1' && s.status === 'VERIFIED'),
+      false,
+      'Non-admin RIDER must NOT self-verify COD settlement'
+    );
+
+    // 11d. PoC: Admin adds blocked customer phone + enables Pickup/Drop OTP -> server blocks order & OTP bypass & unpaid payment spoof
+    const adminFlagsRes = await fetch(`${baseUrl}/api/live-sync`, {
+      method: 'POST',
+      headers: signHeaders('admin-dev-1', 'ADMIN'),
+      body: JSON.stringify({
+        deviceId: 'admin-dev-1',
+        role: 'ADMIN',
+        remoteFeatureFlags: {
+          flagsSchemaVersion: 7,
+          pickupDropOtpEnabled: true,
+          blockedCustomerPhonesCsv: '9811122233',
+          updatedAtEpochMs: Date.now(),
+        },
+        orders: [
+          {
+            orderId: 'QD-SEC-101',
+            customerName: 'Aarav Patel',
+            customerPhone: '9822233344',
+            pickupFullAddress: 'MG Road Metro Station Gate 2',
+            dropFullAddress: 'Indiranagar 100ft Road Block 3',
+            vehicleType: 'BIKE',
+            orderStatus: 'ARRIVED_AT_PICKUP',
+            statusRank: 3,
+            totalAmount: '₹100',
+            platformCommission: '₹20',
+            riderEarning: '₹80',
+            pickupOtp: '4321',
+            deliveryOtp: '8765',
+          },
+        ],
+      }),
+    });
+    assert.equal(adminFlagsRes.status, 200);
+
+    // Blocked phone order + unpaid payment spoof + wrong OTP bypass
+    const fraudRes = await fetch(`${baseUrl}/api/live-sync`, {
+      method: 'POST',
+      headers: signHeaders('cust-dev-9', 'CUSTOMER'),
+      body: JSON.stringify({
+        deviceId: 'cust-dev-9',
+        role: 'CUSTOMER',
+        orders: [
+          {
+            orderId: 'QD-BLK-999',
+            customerName: 'Blocked Fraud',
+            customerPhone: '9811122233',
+            pickupFullAddress: 'Koramangala 4th Block',
+            dropFullAddress: 'Whitefield Main Road',
+            vehicleType: 'BIKE',
+            totalAmount: '₹120',
+            platformCommission: '₹24',
+            riderEarning: '₹96',
+          },
+          {
+            orderId: 'QD-SPF-888',
+            customerName: 'Rohan Sharma',
+            customerPhone: '9833344455',
+            pickupFullAddress: 'HSR Layout Sector 2',
+            dropFullAddress: 'BTM Layout Stage 1',
+            vehicleType: 'BIKE',
+            paymentMethod: 'UPI_INSTANT_PAY',
+            paymentStatus: 'VERIFIED_PAID_TO_COMPANY',
+            isPaidToCompany: true,
+            gatewayPaymentId: '',
+            totalAmount: '₹100',
+            platformCommission: '₹20',
+            riderEarning: '₹80',
+          },
+        ],
+      }),
+    });
+    assert.equal(fraudRes.status, 200);
+    const fraudBody = await fraudRes.json();
+    assert.equal(
+      fraudBody.orders.some((o) => o.orderId === 'QD-BLK-999'),
+      false,
+      'Order from Admin-blocked phone MUST be rejected by server'
+    );
+    const spoofedOrder = fraudBody.orders.find((o) => o.orderId === 'QD-SPF-888');
+    assert.ok(spoofedOrder, 'Valid customer order created without forged payment flag');
+    assert.equal(spoofedOrder.isPaidToCompany, false, 'Unpaid payment spoof without gatewayPaymentId MUST be downgraded');
+
+    // Wrong Pickup OTP transition must be blocked
+    const badOtpRes = await fetch(`${baseUrl}/api/live-sync`, {
+      method: 'POST',
+      headers: signHeaders('rider-dev-5', 'RIDER'),
+      body: JSON.stringify({
+        deviceId: 'rider-dev-5',
+        role: 'RIDER',
+        orders: [
+          {
+            orderId: 'QD-SEC-101',
+            customerName: 'Aarav Patel',
+            customerPhone: '9822233344',
+            pickupFullAddress: 'MG Road Metro Station Gate 2',
+            dropFullAddress: 'Indiranagar 100ft Road Block 3',
+            vehicleType: 'BIKE',
+            orderStatus: 'PICKED_UP',
+            statusRank: 4,
+            totalAmount: '₹100',
+            platformCommission: '₹20',
+            riderEarning: '₹80',
+            pickupProof: { verifiedOtp: '0000' },
+          },
+        ],
+      }),
+    });
+    const badOtpBody = await badOtpRes.json();
+    const targetOrd = badOtpBody.orders.find((o) => o.orderId === 'QD-SEC-101');
+    assert.equal(targetOrd.orderStatus, 'ARRIVED_AT_PICKUP', 'Wrong Pickup OTP must NOT advance status to PICKED_UP');
+    assert.ok(badOtpBody.securityStats.blockedFakeOrders >= 1);
+    assert.ok(Array.isArray(badOtpBody.securityStats.recentBlockedEvents));
+    assert.ok(badOtpBody.securityStats.recentBlockedEvents.length >= 1);
+  } finally {
+    child.kill('SIGTERM');
+    try {
+      fs.unlinkSync(tempStateFile);
+    } catch {}
+  }
+});

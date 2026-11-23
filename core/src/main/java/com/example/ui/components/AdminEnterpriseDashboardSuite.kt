@@ -6137,8 +6137,10 @@ private fun EnterpriseSettingsPage(
         contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 0. Live 3-Phone Server Connectivity & Anti-Fake-Order Security Card
+        // 0. Live 3-Phone Server Connectivity & Anti-Fake-Order Security Firewall Card
         item(key = "settings_live_sync_security_card") {
+            val remoteFlagsForFirewall by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+            var showThreatLog by remember { mutableStateOf(false) }
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 shape = RoundedCornerShape(16.dp),
@@ -6158,7 +6160,7 @@ private fun EnterpriseSettingsPage(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "🌐 Live 3-Phone Server Sync & Anti-Spam Shield",
+                                text = "🌐 Live 3-Phone Server Sync & Security Firewall",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = SidebarDarkTeal
@@ -6197,7 +6199,7 @@ private fun EnterpriseSettingsPage(
                         color = Color(0xFF334155)
                     )
                     Text(
-                        text = "🛡️ Server Firewall Active: Blocked Fake Orders = ${liveSyncStatus.blockedFakeOrdersCount} • Rate-Limited Floods = ${liveSyncStatus.rateLimitedRequestsCount}",
+                        text = "🛡️ Firewall Blocked: Fake Orders = ${liveSyncStatus.blockedFakeOrdersCount} • Rate-Limited = ${liveSyncStatus.rateLimitedRequestsCount} • Unauthorized/Tamper = ${liveSyncStatus.rejectedInvalidPayloadsCount}",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF0F766E)
@@ -6212,22 +6214,116 @@ private fun EnterpriseSettingsPage(
                         )
                     }
 
-                    Button(
-                        onClick = {
-                            MultiPhoneLiveSyncManager.triggerImmediateSync(context)
-                            syncTestFeedback = "✅ Live ping sent at ${liveSyncStatus.lastSyncTimeLabel} — Roles online: ${liveSyncStatus.connectedRolesSummary}"
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("admin_test_3phone_sync_btn")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "Test 3-Phone Live Server Connection Now",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                        Button(
+                            onClick = {
+                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                syncTestFeedback = "✅ Live ping sent at ${liveSyncStatus.lastSyncTimeLabel} — Roles online: ${liveSyncStatus.connectedRolesSummary}"
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_test_3phone_sync_btn")
+                        ) {
+                            Text(
+                                text = "Test Live Sync",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                maxLines = 1
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { showThreatLog = !showThreatLog },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_toggle_threat_log_btn")
+                        ) {
+                            Text(
+                                text = if (showThreatLog) "Hide Threat Log" else "Threat Log (${liveSyncStatus.recentBlockedEvents.size})",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    if (showThreatLog) {
+                        Surface(
+                            color = Color(0xFFF8FAFC),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("admin_threat_log_panel")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "Live Server Security Audit Trail",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = SidebarDarkTeal
+                                )
+                                if (liveSyncStatus.recentBlockedEvents.isEmpty()) {
+                                    Text(
+                                        text = "No fake-order, brute-force, or unauthorized tamper events recorded yet.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF64748B)
+                                    )
+                                } else {
+                                    liveSyncStatus.recentBlockedEvents.take(8).forEach { ev ->
+                                        val digits10 = ev.actor.filter(Char::isDigit).takeLast(10)
+                                        val canBlockActorPhone = digits10.length == 10 &&
+                                            digits10.first() in '6'..'9' &&
+                                            !remoteFlagsForFirewall.isCustomerPhoneBlocked(digits10)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "[${ev.type}] ${ev.actor}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = DashCrimson
+                                                )
+                                                Text(
+                                                    text = ev.detail,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color(0xFF475569)
+                                                )
+                                            }
+                                            if (canBlockActorPhone) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        val currentBlocked = remoteFlagsForFirewall.getBlockedCustomerPhonesList()
+                                                        val updatedCsv = (currentBlocked + digits10).distinct().joinToString(",")
+                                                        QuickDeliveryOperationsManager.updateRemoteFeatureFlagsFromAdmin(
+                                                            context = context,
+                                                            updated = remoteFlagsForFirewall.copy(blockedCustomerPhonesCsv = updatedCsv),
+                                                            repository = repository
+                                                        )
+                                                        syncTestFeedback = "🚫 +91 $digits10 added to Fraud Blocklist & synced to server"
+                                                    },
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                    modifier = Modifier.height(30.dp)
+                                                ) {
+                                                    Text("Block", style = MaterialTheme.typography.labelSmall, color = DashCrimson, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                        HorizontalDivider(color = Color(0xFFE2E8F0))
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

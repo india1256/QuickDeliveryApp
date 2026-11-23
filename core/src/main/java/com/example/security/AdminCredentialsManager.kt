@@ -76,10 +76,21 @@ object AdminCredentialsManager {
         return null
     }
 
+    private val commonWeakPasswords = setOf(
+        "12345678", "123456789", "1234567890", "password", "password1", "admin123",
+        "admin1234", "qwerty123", "quickdelivery", "welcome123", "passw0rd"
+    )
+
     fun validatePassword(password: String): String? {
-        if (password.length < 6) return "Password must be at least 6 characters."
+        if (password.length < 8) return "Password must be at least 8 characters."
         if (password.length > 64) return "Password cannot exceed 64 characters."
         if (password != password.trim()) return "Password cannot start or end with spaces."
+        if (!password.any { it.isLetter() } || !password.any { it.isDigit() }) {
+            return "Password must include at least one letter and one number."
+        }
+        if (password.lowercase() in commonWeakPasswords) {
+            return "Password is too common. Please choose a stronger password."
+        }
         return null
     }
 

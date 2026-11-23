@@ -87,6 +87,11 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
+object QuickDeliveryGoogleAuthTokenCache {
+    @Volatile
+    var lastGoogleIdToken: String? = null
+}
+
 /**
  * Safely unwraps localized/themed ContextWrapper chains (such as LocalizedActivityContextWrapper)
  * to retrieve the underlying host Activity required by Jetpack Credential Manager.
@@ -141,6 +146,7 @@ fun attemptAutoSignIn(
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                QuickDeliveryGoogleAuthTokenCache.lastGoogleIdToken = googleIdToken
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                 Firebase.auth.signInWithCredential(authCredential).await()
                 onAuthSuccess()
@@ -251,6 +257,7 @@ fun onGoogleSignInClicked(
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                QuickDeliveryGoogleAuthTokenCache.lastGoogleIdToken = googleIdToken
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                 Firebase.auth.signInWithCredential(authCredential).await()
                 onAuthSuccess()
@@ -292,6 +299,7 @@ fun signOut(
     onSignOutComplete: () -> Unit,
     scope: CoroutineScope
 ) {
+    QuickDeliveryGoogleAuthTokenCache.lastGoogleIdToken = null
     runCatching { Firebase.auth.signOut() }
     scope.launch {
         try {

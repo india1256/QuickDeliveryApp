@@ -747,7 +747,7 @@ fun AdminRemoteFeatureSwitchesCard(
                                 credError = null
                             },
                             enabled = !isSavingCreds,
-                            label = { Text("New Password (min 6 chars) *") },
+                            label = { Text("New Password (min 8 chars, letters + numbers) *") },
                             trailingIcon = {
                                 IconButton(onClick = { showNewPass = !showNewPass }) {
                                     Icon(
@@ -851,7 +851,7 @@ fun AdminRemoteFeatureSwitchesCard(
                                     }
                                 }
                             },
-                            enabled = !isSavingCreds && newUserIdInput.length >= 4 && newPassInput.length >= 6 && confirmPassInput.isNotEmpty(),
+                            enabled = !isSavingCreds && newUserIdInput.length >= 4 && newPassInput.length >= 8 && confirmPassInput.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(containerColor = CtrlTeal),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier

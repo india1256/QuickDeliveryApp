@@ -38,6 +38,13 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class BlockedSecurityEventSummary(
+    val type: String,
+    val actor: String,
+    val detail: String,
+    val atIso: String
+)
+
 data class LivePhoneSyncStatus(
     val isConnected: Boolean = false,
     val activePhoneRole: String = "UNIFIED",
@@ -49,6 +56,8 @@ data class LivePhoneSyncStatus(
     val lastLatencyMs: Long = 0L,
     val blockedFakeOrdersCount: Int = 0,
     val rateLimitedRequestsCount: Int = 0,
+    val rejectedInvalidPayloadsCount: Int = 0,
+    val recentBlockedEvents: List<BlockedSecurityEventSummary> = emptyList(),
     val lastSyncError: String = ""
 )
 
@@ -643,6 +652,23 @@ object MultiPhoneLiveSyncManager {
         val secStatsObj = root.optJSONObject("securityStats")
         val blockedOrdersCount = secStatsObj?.optInt("blockedFakeOrders", 0) ?: 0
         val rateLimitedCount = secStatsObj?.optInt("rateLimitedRequests", 0) ?: 0
+        val rejectedPayloadsCount = secStatsObj?.optInt("rejectedInvalidPayloads", 0) ?: 0
+        val recentEventsArr = secStatsObj?.optJSONArray("recentBlockedEvents")
+        val parsedEvents = buildList {
+            if (recentEventsArr != null) {
+                for (i in 0 until minOf(recentEventsArr.length(), 15)) {
+                    val evObj = recentEventsArr.optJSONObject(i) ?: continue
+                    add(
+                        BlockedSecurityEventSummary(
+                            type = evObj.optString("type", "BLOCKED"),
+                            actor = evObj.optString("actor", "unknown"),
+                            detail = evObj.optString("detail", ""),
+                            atIso = evObj.optString("atIso", "")
+                        )
+                    )
+                }
+            }
+        }
         val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
         _syncStatus.value = LivePhoneSyncStatus(
             isConnected = true,
@@ -655,6 +681,8 @@ object MultiPhoneLiveSyncManager {
             lastLatencyMs = winningLatencyMs,
             blockedFakeOrdersCount = blockedOrdersCount,
             rateLimitedRequestsCount = rateLimitedCount,
+            rejectedInvalidPayloadsCount = rejectedPayloadsCount,
+            recentBlockedEvents = parsedEvents,
             lastSyncError = ""
         )
         }
@@ -933,7 +961,8 @@ object MultiPhoneLiveSyncManager {
         saltHex: String,
         hashHex: String,
         authProof: String,
-        currentPassword: String? = null
+        currentPassword: String? = null,
+        googleIdToken: String? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         postSignedAuthJson(
             context = context,
@@ -948,6 +977,9 @@ object MultiPhoneLiveSyncManager {
                 put("authProof", authProof.trim().uppercase())
                 if (!currentPassword.isNullOrEmpty()) {
                     put("currentPassword", currentPassword)
+                }
+                if (!googleIdToken.isNullOrBlank()) {
+                    put("googleIdToken", googleIdToken.trim())
                 }
             }
         )
