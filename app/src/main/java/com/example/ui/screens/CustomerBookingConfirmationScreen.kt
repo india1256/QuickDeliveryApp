@@ -1066,38 +1066,57 @@ fun CustomerBookingConfirmationScreen(
                 }
             }
 
-            // 5. SECURITY & ZERO-PARTIALITY GUARANTEE
+            // 5. SECURITY, ILLEGAL ITEMS DECLARATION & ZERO-PARTIALITY GUARANTEE
             item(key = "confirmation_security_card") {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = SoftOrangeSurface),
-                    border = BorderStroke(1.dp, BrandOrange.copy(alpha = 0.25f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = SoftOrangeSurface),
+                        border = BorderStroke(1.dp, BrandOrange.copy(alpha = 0.25f)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Security,
-                            contentDescription = null,
-                            tint = BrandOrange,
-                            modifier = Modifier.size(26.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Zero Partiality Dispatch Guarantee",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = DeepNavy
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = null,
+                                tint = BrandOrange,
+                                modifier = Modifier.size(26.dp)
                             )
-                            Text(
-                                text = "Your order will be instantly broadcast to the nearest verified fleet rider with GPS live tracking.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = SlateMuted
-                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Zero Partiality Dispatch Guarantee",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DeepNavy
+                                )
+                                Text(
+                                    text = "Your order is protected by GPS tracking, 4-digit OTP handover, & Rider KYC Accountability (Theft/Tampering triggers FIR + 100% recovery from Rider).",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = SlateMuted
+                                )
+                            }
                         }
+                    }
+
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF2F2)),
+                        border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("confirmation_sender_illegal_goods_notice")
+                    ) {
+                        Text(
+                            text = "⚖️ Sender Legal Declaration: Sending illegal, narcotics, weapons, explosives, or contraband items is strictly prohibited. 100% legal & criminal responsibility rests solely on the Customer (Sender) — zero liability on Quick Delivery or the Rider.",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF991B1B),
+                            modifier = Modifier.padding(12.dp)
+                        )
                     }
                 }
             }

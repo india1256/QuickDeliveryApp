@@ -2710,25 +2710,7 @@ fun CustomerAppScreen(
             contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Post-Delivery Celebratory Motivational Notification Banner (sent automatically to Customer after every delivery!)
-            if (!customerPostDeliveryMotivation.isNullOrBlank()) {
-                item(key = "customer_post_delivery_motivation_item") {
-                    DualDeliveryCelebrationMotivationBanner(
-                        roleLabel = "CUSTOMER",
-                        message = customerPostDeliveryMotivation,
-                        accentColor = PrimaryTeal,
-                        onDismiss = { MotivationAndPromoManager.dismissCustomerPostDeliveryMotivation() },
-                        onClick = {
-                            MotivationAndPromoManager.dismissCustomerPostDeliveryMotivation()
-                            if (activeOrder != null) {
-                                currentStep = 3
-                            } else {
-                                showOrderHistoryScreen = true
-                            }
-                        }
-                    )
-                }
-            }
+            // Clean Customer Home Feed: Pickup -> Drop -> Vehicle -> Book upfront without celebration clutter
 
             // Background MultiPhoneLiveSyncManager stays active silently; technical latency strip hidden from customer UI.
 
@@ -5537,6 +5519,38 @@ fun CustomerAppScreen(
                                         text = "🧾 Share Digital Bill on WhatsApp (Free)",
                                         fontWeight = FontWeight.ExtraBold,
                                         color = Color.White
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        pickupAddressText = activeOrder.pickupAddress.fullAddress
+                                        pickupLandmark = activeOrder.pickupAddress.landmark
+                                        pickupLat = activeOrder.pickupAddress.lat
+                                        pickupLng = activeOrder.pickupAddress.lng
+                                        dropAddressText = activeOrder.dropAddress.fullAddress
+                                        dropLandmark = activeOrder.dropAddress.landmark
+                                        dropLat = activeOrder.dropAddress.lat
+                                        dropLng = activeOrder.dropAddress.lng
+                                        selectedVehicle = activeOrder.vehicleType
+                                        selectedPackageType = activeOrder.packageDetails.packageType
+                                        packageWeightKg = activeOrder.packageDetails.weightKg
+                                        packageDescription = activeOrder.packageDetails.description
+                                        currentStep = 1
+                                        isErrorBanner = false
+                                        statusBanner = "🔁 Route & parcel loaded from Order #${activeOrder.orderId} — Review and book again!"
+                                    },
+                                    border = BorderStroke(1.2.dp, PrimaryTeal),
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp)
+                                        .testTag("customer_book_again_btn_${activeOrder.orderId}")
+                                ) {
+                                    Text(
+                                        text = "🔁 Book Again (Repeat Same Order)",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = PrimaryTeal
                                     )
                                 }
 

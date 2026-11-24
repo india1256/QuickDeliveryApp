@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Bolt
@@ -51,9 +52,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,16 +66,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.cloud.MultiPhoneLiveSyncManager
 import com.example.data.cloud.QuickDeliveryOperationsManager
+import com.example.data.cloud.RiderRegistrationApprovalManager
 import com.example.data.model.CustomerOrder
 import com.example.data.model.OrderProofRegistry
 import com.example.data.model.OrderStatus
 import com.example.data.model.RiderProfile
 import com.example.data.model.RiderVerificationStatus
+import com.example.data.repository.SharedOrderRepository
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -492,11 +500,23 @@ fun AdminOrderDetailBottomSheet(
     onForceCancel: (CustomerOrder) -> Unit,
     onForceReleaseToQueue: ((CustomerOrder) -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val timelineEventsMap by QuickDeliveryOperationsManager.timelineEventsByOrder.collectAsState()
     val pickupProofsMap by OrderProofRegistry.pickupProofsByOrder.collectAsState()
     val deliveryProofsMap by OrderProofRegistry.deliveryProofsByOrder.collectAsState()
     val unreachableMap by QuickDeliveryOperationsManager.unreachableByOrder.collectAsState()
+    val chatByOrder by OrderLiveChatManager.messagesByOrder.collectAsState()
+    var adminActionBanner by remember(order.orderId) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(order.orderId) {
+        OrderLiveChatManager.ensureLoaded(context)
+        OrderLiveChatManager.bindFirestoreRealtimeListener(context, order)
+    }
+
+    val orderChatMessages = remember(chatByOrder, order.orderId) {
+        chatByOrder[order.orderId].orEmpty()
+    }
     val auditTimeline = remember(order, timelineEventsMap, pickupProofsMap, deliveryProofsMap, unreachableMap) {
         QuickDeliveryOperationsManager.buildCombinedTimelineForOrder(
             order = order,
@@ -741,6 +761,265 @@ fun AdminOrderDetailBottomSheet(
                         if (index < auditTimeline.lastIndex) {
                             HorizontalDivider(color = palette.hairlineBorder.copy(alpha = 0.6f))
                         }
+                    }
+                }
+            }
+
+            // Full Customer <-> Rider Chat Audit Transcript (Admin Read-Only Visibility)
+            Surface(
+                color = palette.surfaceSubtle,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, palette.accentIndigo.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_order_chat_transcript_${order.orderId}")
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Chat,
+                                contentDescription = null,
+                                tint = palette.accentIndigo,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Customer ↔ Rider Chat Transcript",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = palette.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Surface(
+                            color = palette.accentIndigo.copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(999.dp)
+                        ) {
+                            Text(
+                                text = "${orderChatMessages.size} Msgs",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = palette.accentIndigo,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    if (orderChatMessages.isEmpty()) {
+                        Text(
+                            text = "No live chat messages recorded between Customer & Rider for #${order.orderId} yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.textSecondary
+                        )
+                    } else {
+                        orderChatMessages.forEach { msg ->
+                            val isCustomerMsg = msg.senderRole.equals("CUSTOMER", ignoreCase = true)
+                            Surface(
+                                color = if (isCustomerMsg) Color(0xFFF0FDFA) else Color(0xFFFFF7ED),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isCustomerMsg) Color(0xFF99F6E4) else Color(0xFFFED7AA)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${msg.senderRole.uppercase()} • ${msg.senderName}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = if (isCustomerMsg) Color(0xFF0F766E) else Color(0xFF9A3412)
+                                        )
+                                        Text(
+                                            text = msg.timestampLabel,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFF64748B)
+                                        )
+                                    }
+                                    Text(
+                                        text = msg.messageText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Dispute, Theft FIR Recovery & Illegal Parcel Enforcement Desk
+            Surface(
+                color = palette.surfaceSubtle,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, palette.accentCrimson.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_order_fraud_policy_actions_${order.orderId}")
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Gavel,
+                            contentDescription = null,
+                            tint = palette.accentCrimson,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Theft, Damage & Illegal Parcel Policy Actions",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = palette.textPrimary
+                        )
+                    }
+                    Text(
+                        text = "Rider theft/tampering = FIR + KYC Blacklist + 100% shipment recovery from Rider. Illegal/contraband items = 100% Customer legal responsibility.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.textSecondary
+                    )
+
+                    if (adminActionBanner != null) {
+                        Text(
+                            text = adminActionBanner.orEmpty(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = palette.accentEmerald
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                RiderRegistrationApprovalManager.ensureLoaded(context)
+                                val regMatch = RiderRegistrationApprovalManager.registrationsByKey.value.values.firstOrNull { reg ->
+                                    reg.riderId == order.assignedRiderId ||
+                                        (!order.assignedRiderPhone.isNullOrBlank() &&
+                                            reg.phone.takeLast(10) == order.assignedRiderPhone.orEmpty().filter(Char::isDigit).takeLast(10))
+                                }
+                                if (regMatch != null) {
+                                    RiderRegistrationApprovalManager.rejectRiderByAdmin(
+                                        context = context,
+                                        riderKey = regMatch.riderKey,
+                                        reason = "BLACKLISTED: Parcel Theft/Tampering on #${order.orderId} — Police FIR + 100% Shipment Value Recovery (${order.totalAmount})",
+                                        rejectedDocFields = listOf("AADHAAR", "PAN", "DL", "RC", "SELFIE")
+                                    )
+                                }
+                                QuickDeliveryOperationsManager.submitOrderDispute(
+                                    context = context,
+                                    orderId = order.orderId,
+                                    customerPhone = order.customerPhone,
+                                    customerName = order.customerName,
+                                    reason = "[THEFT/TAMPER FIR RECOVERY] Rider ${order.assignedRiderName ?: "Unassigned"} (${order.assignedRiderId ?: "N/A"}) liable for 100% shipment amount ${order.totalAmount} + Police FIR",
+                                    photoProofSummary = pickupProofsMap[order.orderId]?.packagePhotoSummary ?: "Pickup & GPS evidence locked"
+                                )
+                                MultiPhoneLiveSyncManager.triggerImmediateSync(context)
+                                adminActionBanner = "⚖️ Theft FIR & ${order.totalAmount} Rider Recovery logged + KYC Blacklisted."
+                            },
+                            border = BorderStroke(1.dp, palette.accentCrimson),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_order_theft_recovery_btn_${order.orderId}")
+                        ) {
+                            Text(
+                                text = "⚖️ Rider Theft Recovery",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = palette.accentCrimson,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                QuickDeliveryOperationsManager.submitOrderDispute(
+                                    context = context,
+                                    orderId = order.orderId,
+                                    customerPhone = order.customerPhone,
+                                    customerName = order.customerName,
+                                    reason = "[ACCIDENT / TRANSIT DAMAGE AUDIT] Damage claim logged by Admin Desk for #${order.orderId}",
+                                    photoProofSummary = deliveryProofsMap[order.orderId]?.deliveryPhotoSummary ?: pickupProofsMap[order.orderId]?.packagePhotoSummary.orEmpty()
+                                )
+                                adminActionBanner = "⚠️ Accident / Damage Claim logged in Dispute Desk."
+                            },
+                            border = BorderStroke(1.dp, palette.accentAmber),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("admin_order_damage_claim_btn_${order.orderId}")
+                        ) {
+                            Text(
+                                text = "⚠️ Damage Claim",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = palette.accentAmber,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            val flags = QuickDeliveryOperationsManager.remoteFeatureFlags.value
+                            val digits10 = order.customerPhone.filter(Char::isDigit).takeLast(10)
+                            if (digits10.length == 10) {
+                                val updatedCsv = (flags.getBlockedCustomerPhonesList() + digits10).distinct().joinToString(",")
+                                QuickDeliveryOperationsManager.updateRemoteFeatureFlagsFromAdmin(
+                                    context = context,
+                                    updated = flags.copy(blockedCustomerPhonesCsv = updatedCsv),
+                                    repository = SharedOrderRepository.getInstance(context)
+                                )
+                            }
+                            if (order.orderStatus != OrderStatus.DELIVERED && order.orderStatus != OrderStatus.CANCELLED) {
+                                QuickDeliveryOperationsManager.cancelOrderWithReason(
+                                    context = context,
+                                    repository = SharedOrderRepository.getInstance(context),
+                                    orderId = order.orderId,
+                                    reason = "HOLD: Prohibited/Illegal Item Violation (100% Legal Liability on Sender/Customer)",
+                                    cancelledByRole = "ADMIN"
+                                )
+                            }
+                            QuickDeliveryOperationsManager.submitSupportTicket(
+                                context = context,
+                                senderRole = "ADMIN",
+                                senderName = "Compliance Officer",
+                                senderPhone = order.customerPhone,
+                                orderId = order.orderId,
+                                category = "Illegal / Prohibited Goods Violation",
+                                message = "Customer ${order.customerName} flagged under 100% Sender Illegal-Parcel Liability Policy; zero liability on Quick Delivery or Rider."
+                            )
+                            adminActionBanner = "🚫 Customer blocked & order held under Illegal Goods Sender-Liability Policy."
+                        },
+                        border = BorderStroke(1.dp, Color(0xFF7C3AED)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_order_illegal_customer_hold_btn_${order.orderId}")
+                    ) {
+                        Text(
+                            text = "🚫 Flag Customer Illegal Parcel (100% Sender Responsibility)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF6D28D9)
+                        )
                     }
                 }
             }

@@ -809,3 +809,133 @@ test('12. Official Branded Email, Invoice Logo, Parcel Damage Policy & Full Admi
   assert.match(radarSource, /activeOrders\.take\(12\)/);
   assert.equal(adminSource.includes('orders = filteredRecentOrders.take(5)'), false, 'Admin dashboard must show all filtered orders below Radar');
 });
+
+test('13. Post-Delivery Rider Phone Masking, Admin Chat Audit, Strong Policies & Stage 3 Upgrades', async () => {
+  const { spawn } = await import('node:child_process');
+  const crypto = await import('node:crypto');
+  const path = await import('node:path');
+  const os = await import('node:os');
+
+  const serverSource = fs.readFileSync('./scripts/apk-download-server.mjs', 'utf8');
+  const guardSource = fs.readFileSync('./core/src/main/java/com/example/security/QuickDeliverySecurityGuard.kt', 'utf8');
+  const sheetsSource = fs.readFileSync('./core/src/main/java/com/example/ui/components/AdminExecutiveThemeAndSheets.kt', 'utf8');
+  const riderSource = fs.readFileSync('./core/src/main/java/com/example/ui/rider/RiderPartnerCompactScreen.kt', 'utf8');
+  const customerSource = fs.readFileSync('./app/src/main/java/com/example/ui/screens/CustomerAppScreen.kt', 'utf8');
+  const customerEnhSource = fs.readFileSync('./app/src/main/java/com/example/ui/screens/CustomerEnhancementCards.kt', 'utf8');
+  const policySource = fs.readFileSync('./core/src/main/java/com/example/ui/components/SpeedIntroAuthAndMotivationComponents.kt', 'utf8');
+
+  // Client & Server security masking + Stage 3 upgrades
+  assert.match(guardSource, /fun maskCustomerPhoneForRider\(/);
+  assert.match(riderSource, /rider_post_delivery_masked_phone_/);
+  assert.match(riderSource, /rider_report_damaged_parcel_btn_/);
+  assert.match(sheetsSource, /OrderLiveChatManager\.messagesByOrder/);
+  assert.match(sheetsSource, /admin_order_chat_transcript_/);
+  assert.match(sheetsSource, /admin_order_theft_recovery_btn_/);
+  assert.match(sheetsSource, /admin_order_illegal_customer_hold_btn_/);
+  assert.match(customerSource, /customer_book_again_btn_/);
+  assert.match(customerEnhSource, /Parcel Damage Protection Cover/);
+  assert.match(policySource, /100% of the shipment value \+ loss compensation/);
+  assert.match(policySource, /100% legal, criminal, and financial responsibility rests solely on that Customer/);
+
+  // Live Server check: RIDER sees unmasked customerPhone while IN_TRANSIT, masked ******XXXX once DELIVERED
+  const testPort = 43990 + Math.floor(Math.random() * 400);
+  const tempStateFile = path.join(os.tmpdir(), `qd-sec13-state-${Date.now()}.json`);
+  fs.writeFileSync(
+    tempStateFile,
+    JSON.stringify({
+      ordersById: {
+        'QD-MASK-LIVE': {
+          orderId: 'QD-MASK-LIVE',
+          orderStatus: 'IN_TRANSIT',
+          customerName: 'Kiran Rao',
+          customerPhone: '9845099887',
+          receiverPhone: '9845011223',
+          updatedAtEpochMs: Date.now(),
+        },
+        'QD-MASK-DONE': {
+          orderId: 'QD-MASK-DONE',
+          orderStatus: 'DELIVERED',
+          customerName: 'Neha Verma',
+          customerPhone: '9845099887',
+          receiverPhone: '9845011223',
+          updatedAtEpochMs: Date.now() - 1000,
+        },
+      },
+      devicesById: {},
+      securityStats: {},
+    }),
+    'utf8'
+  );
+
+  const child = spawn('node', ['scripts/apk-download-server.mjs', '--serve'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      APP_PORT: String(testPort),
+      SYNC_STATE_FILE: tempStateFile,
+      PUBLIC_BRAND_ORIGIN: 'https://quickdelivery.co.in',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const signHeaders = (deviceId, role) => {
+    const ts = Date.now();
+    const sig = crypto
+      .createHmac('sha256', 'QD_LIVE_SYNC_GUARD_2026_quickdelivery.co.in')
+      .update(`${deviceId}|${role}|${ts}`)
+      .digest('hex');
+    return {
+      'Content-Type': 'application/json',
+      'X-QD-App-Role': role,
+      'X-QD-Sync-Ts': String(ts),
+      'X-QD-Sync-Sig': sig,
+    };
+  };
+
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Test 13 server startup timed out')), 8000);
+      child.stdout.on('data', (chunk) => {
+        if (String(chunk).includes(`http://0.0.0.0:${testPort}`)) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`Server exited early with code ${code}`));
+      });
+    });
+
+    const baseUrl = `http://127.0.0.1:${testPort}`;
+
+    const riderSyncRes = await fetch(`${baseUrl}/api/live-sync`, {
+      method: 'POST',
+      headers: signHeaders('rider-phone-mask-1', 'RIDER'),
+      body: JSON.stringify({ deviceId: 'rider-phone-mask-1', role: 'RIDER' }),
+    });
+    assert.equal(riderSyncRes.status, 200);
+    const riderData = await riderSyncRes.json();
+    const liveOrd = riderData.orders.find((o) => o.orderId === 'QD-MASK-LIVE');
+    const doneOrd = riderData.orders.find((o) => o.orderId === 'QD-MASK-DONE');
+    assert.equal(liveOrd.customerPhone, '9845099887', 'Live order must keep full phone for Rider');
+    assert.equal(doneOrd.customerPhone, '******9887', 'Delivered order must mask Customer phone for Rider');
+    assert.equal(doneOrd.receiverPhone, '******1223', 'Delivered order must mask Receiver phone for Rider');
+
+    const adminSyncRes = await fetch(`${baseUrl}/api/live-sync`, {
+      method: 'POST',
+      headers: signHeaders('admin-phone-audit-1', 'ADMIN'),
+      body: JSON.stringify({ deviceId: 'admin-phone-audit-1', role: 'ADMIN' }),
+    });
+    const adminData = await adminSyncRes.json();
+    const adminDoneOrd = adminData.orders.find((o) => o.orderId === 'QD-MASK-DONE');
+    assert.equal(adminDoneOrd.customerPhone, '9845099887', 'Admin audit keeps full number');
+
+    assert.match(serverSource, /100% financial recovery of the shipment amount/);
+  } finally {
+    child.kill('SIGTERM');
+    try {
+      fs.unlinkSync(tempStateFile);
+    } catch {}
+  }
+});

@@ -2,6 +2,7 @@ package com.example.security
 
 import android.content.Context
 import android.util.Base64
+import com.example.data.model.OrderStatus
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import javax.crypto.Mac
@@ -328,6 +329,38 @@ object QuickDeliverySecurityGuard {
         val cust = sanitizePhoneNumber(customerPhone)
         val rider = sanitizePhoneNumber(riderPhone)
         return cust.length == 10 && rider.length == 10 && cust == rider
+    }
+
+    /**
+     * Returns true once an order reaches a terminal stage (DELIVERED or CANCELLED),
+     * after which the Rider Partner must never see or dial the Customer's full phone number.
+     */
+    fun isOrderTerminalForRiderPhoneMask(status: OrderStatus): Boolean =
+        status == OrderStatus.DELIVERED || status == OrderStatus.CANCELLED
+
+    fun isOrderTerminalForRiderPhoneMask(statusName: String?): Boolean {
+        val normalized = statusName?.trim()?.uppercase().orEmpty()
+        return normalized == "DELIVERED" || normalized == "CANCELLED"
+    }
+
+    /**
+     * Allows Riders to see & call the Customer's phone ONLY while the order is live.
+     * Once DELIVERED or CANCELLED, masks the number strictly to last 4 digits (`******XXXX`).
+     */
+    fun maskCustomerPhoneForRider(rawPhone: String?, status: OrderStatus): String {
+        val cleanRaw = rawPhone?.trim().orEmpty()
+        if (cleanRaw.isEmpty()) return ""
+        if (!isOrderTerminalForRiderPhoneMask(status)) return cleanRaw
+        val digits = cleanRaw.filter { it.isDigit() }
+        return if (digits.length >= 4) "******${digits.takeLast(4)}" else "******"
+    }
+
+    fun maskCustomerPhoneForRider(rawPhone: String?, statusName: String?): String {
+        val cleanRaw = rawPhone?.trim().orEmpty()
+        if (cleanRaw.isEmpty()) return ""
+        if (!isOrderTerminalForRiderPhoneMask(statusName)) return cleanRaw
+        val digits = cleanRaw.filter { it.isDigit() }
+        return if (digits.length >= 4) "******${digits.takeLast(4)}" else "******"
     }
 
     private val ifscRegex = Regex("^[A-Z]{4}0[A-Z0-9]{6}$")

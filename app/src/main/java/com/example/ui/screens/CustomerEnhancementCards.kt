@@ -529,7 +529,7 @@ fun CustomerParcelInsuranceCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Secure Parcel Coverage",
+                        text = "Parcel Damage Protection Cover",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.ExtraBold,
                         color = EnhNavy,
@@ -554,7 +554,7 @@ fun CustomerParcelInsuranceCard(
                     }
                 }
                 Text(
-                    text = "Covers accidental damage or loss up to ₹5,000 during transit",
+                    text = "Optional cover up to ₹5,000 against accidental transit damage or loss",
                     style = MaterialTheme.typography.labelSmall,
                     color = EnhSlate
                 )

@@ -279,7 +279,7 @@ fun AdminRemoteFeatureSwitchesCard(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf(10, 15, 25, 50).forEach { fee ->
+                    listOf(9, 15, 25, 50).forEach { fee ->
                         FilterChip(
                             selected = flags.insuranceFeeInr == fee,
                             onClick = {

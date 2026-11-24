@@ -1969,37 +1969,7 @@ fun RiderPartnerCompactScreen(
             contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Post-Delivery Celebratory Motivational Notification Banner (sent automatically after every delivery!)
-            if (!riderPostDeliveryMotivation.isNullOrBlank()) {
-                item(key = "rider_post_delivery_motivation_item") {
-                    DualDeliveryCelebrationMotivationBanner(
-                        roleLabel = "RIDER",
-                        message = riderPostDeliveryMotivation,
-                        accentColor = RiderOrange,
-                        onDismiss = { MotivationAndPromoManager.dismissRiderPostDeliveryMotivation() },
-                        onClick = {
-                            MotivationAndPromoManager.dismissRiderPostDeliveryMotivation()
-                            showEarningsDashboard = true
-                        }
-                    )
-                }
-            }
-
-            // Clean Rider App layout: no extra FCM diagnostic banner clutter on top
-
-            // Rotating Rider Motivation Banner (shown with a new message every time an order is picked up!)
-            if (riderPickupMotivationMessage != null) {
-                item {
-                    RiderMotivationNotificationBanner(
-                        message = riderPickupMotivationMessage,
-                        onDismiss = { riderPickupMotivationMessage = null },
-                        onClick = {
-                            riderPickupMotivationMessage = null
-                            showEarningsDashboard = true
-                        }
-                    )
-                }
-            }
+            // Clean Rider App layout: Duty Switch + Today Earnings + Live Incoming Orders + COD Alert (no celebratory clutter)
 
             // Porter ID Suspended Warning Card (balance <= -200)
             if (isSuspended) {
@@ -3335,22 +3305,119 @@ private fun RiderProgressiveOrderCard(
                 }
             }
 
-            // 2. Quick Call Customer + Toggle Chat Row
+            // 2. Quick Call Customer (Live Orders Only — Masked Post-Delivery) + Toggle Chat Row
+            val isTerminalOrderForPrivacy = QuickDeliverySecurityGuard.isOrderTerminalForRiderPhoneMask(order.orderStatus)
+            val maskedCustomerPhoneForRider = QuickDeliverySecurityGuard.maskCustomerPhoneForRider(
+                order.customerPhone,
+                order.orderStatus
+            )
+            var showDamageReportDialog by remember { mutableStateOf(false) }
+            var selectedDamageReason by remember { mutableStateOf("Seal Already Broken / Open Before Pickup") }
+            var customDamageNote by remember { mutableStateOf("") }
+
+            if (showDamageReportDialog) {
+                AlertDialog(
+                    onDismissRequest = { showDamageReportDialog = false },
+                    title = { Text("Report Damaged / Open Parcel (#${order.orderId})", fontWeight = FontWeight.ExtraBold) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Log pre-pickup parcel condition with timestamped proof so Admin is alerted before you carry it.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF475569)
+                            )
+                            listOf(
+                                "Seal Already Broken / Open Before Pickup",
+                                "Parcel Wet / Crushed / Leaking",
+                                "Suspected Restricted / Unsafe Packaging"
+                            ).forEach { reasonOpt ->
+                                FilterChip(
+                                    selected = selectedDamageReason == reasonOpt,
+                                    onClick = { selectedDamageReason = reasonOpt },
+                                    label = { Text(reasonOpt, style = MaterialTheme.typography.labelSmall) }
+                                )
+                            }
+                            OutlinedTextField(
+                                value = customDamageNote,
+                                onValueChange = { customDamageNote = it },
+                                label = { Text("Additional Note (Optional)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val detailNote = if (customDamageNote.isBlank()) selectedDamageReason else "$selectedDamageReason — ${customDamageNote.trim()}"
+                                QuickDeliveryOperationsManager.submitOrderDispute(
+                                    context = cardContext,
+                                    orderId = order.orderId,
+                                    customerPhone = order.customerPhone,
+                                    customerName = order.customerName,
+                                    reason = "[RIDER PRE-PICKUP DAMAGE REPORT] $detailNote",
+                                    photoProofSummary = photoProofNote ?: orderPickupProof?.packagePhotoSummary ?: "Pre-pickup Rider inspection logged"
+                                )
+                                QuickDeliveryOperationsManager.submitSupportTicket(
+                                    context = cardContext,
+                                    senderRole = "RIDER",
+                                    senderName = order.assignedRiderName ?: riderDisplayName,
+                                    senderPhone = "",
+                                    orderId = order.orderId,
+                                    category = "Pre-Pickup Damaged/Open Parcel",
+                                    message = "Reported by Rider before pickup: $detailNote"
+                                )
+                                showDamageReportDialog = false
+                                onNavigationMessage("⚠️ Pre-Pickup Damage Report logged & synced to Admin Support.")
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                            modifier = Modifier.testTag("rider_confirm_damage_report_btn_${order.orderId}")
+                        ) {
+                            Text("Submit Report to Admin", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showDamageReportDialog = false }) { Text("Cancel") }
+                    }
+                )
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(modifier = Modifier.weight(1.3f)) {
-                    DirectDialPadCallButton(
-                        orderId = order.orderId,
-                        callerRole = "RIDER",
-                        callerName = order.assignedRiderName ?: riderDisplayName,
-                        receiverRole = "Customer",
-                        receiverName = order.customerName,
-                        phoneNumber = order.customerPhone,
-                        buttonTestTag = "rider_call_customer_dial_btn_${order.orderId}"
-                    )
+                    if (!isTerminalOrderForPrivacy) {
+                        DirectDialPadCallButton(
+                            orderId = order.orderId,
+                            callerRole = "RIDER",
+                            callerName = order.assignedRiderName ?: riderDisplayName,
+                            receiverRole = "Customer",
+                            receiverName = order.customerName,
+                            phoneNumber = order.customerPhone,
+                            buttonTestTag = "rider_call_customer_dial_btn_${order.orderId}"
+                        )
+                    } else {
+                        Surface(
+                            color = Color(0xFFF1F5F9),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rider_post_delivery_masked_phone_${order.orderId}")
+                        ) {
+                            Text(
+                                text = "🔒 Number Masked: $maskedCustomerPhoneForRider",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF475569),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp)
+                            )
+                        }
+                    }
                 }
                 OutlinedButton(
                     onClick = { showChatSection = !showChatSection },
@@ -3376,9 +3443,40 @@ private fun RiderProgressiveOrderCard(
                 )
             }
 
+            // Security Deposit / Anti-Theft & Pre-Pickup Protection Notice
+            Surface(
+                color = Color(0xFFF8FAFC),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "🛡️ Safety Rule: Theft/tampering triggers KYC blacklist, Police FIR & 100% shipment recovery from Rider. Prohibited/illegal parcel liability rests 100% on Sender.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF334155),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                )
+            }
+
             if ((order.orderStatus == OrderStatus.RIDER_ASSIGNED || order.orderStatus == OrderStatus.ARRIVED_AT_PICKUP) &&
                 orderPickupProof == null
             ) {
+                OutlinedButton(
+                    onClick = { showDamageReportDialog = true },
+                    border = BorderStroke(1.dp, Color(0xFFD97706)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB45309)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rider_report_damaged_parcel_btn_${order.orderId}")
+                ) {
+                    Text(
+                        text = "⚠️ Report Damaged / Open Parcel Before Pickup",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
                 OutlinedButton(
                     onClick = { onRejectOrder() },
                     border = BorderStroke(1.dp, Color(0xFFDC2626)),

@@ -1348,7 +1348,7 @@ function buildOfficialQuickDeliveryEmail({ subject, textBody = '', htmlBody = ''
       <td style="padding:14px 22px 18px 22px;background:#f8fafc;border-top:1px solid #e2e8f0;">
         <div style="font-size:12px;font-weight:700;color:#0f172a;margin-bottom:6px;">Quick Delivery Official Information, Safety &amp; Terms</div>
         <div style="font-size:11px;line-height:1.6;color:#475569;margin-bottom:8px;">
-          Every Quick Delivery parcel order includes pre-pickup safety checks, live GPS tracking, 4-digit OTP handover, and strict zero-tolerance enforcement against parcel tampering, theft, or mishandling.
+          Every Quick Delivery parcel order includes pre-pickup safety checks, live GPS tracking, post-delivery phone privacy masking, and strict zero-tolerance enforcement: confirmed Rider tampering/theft triggers Police FIR + KYC blacklist + 100% shipment value recovery, while any illegal/prohibited parcel contents remain 100% the Sender/Customer&#39;s legal responsibility.
         </div>
         <div style="font-size:11px;line-height:1.8;color:#334155;">
           <a href="${aboutUrl}" style="color:#00796B;font-weight:700;text-decoration:none;">📱 App Info &amp; How It Works</a>
@@ -1978,8 +1978,9 @@ function renderLegalPageHtml(kind = 'privacy') {
       <div class="card">
         <h2>Parcel Safety, Tampering, Theft &amp; Accident Protection</h2>
         <ul>
-          <li><b>Zero-Tolerance Tamper &amp; Theft Policy:</b> Opening, replacing, stealing, or mishandling a sealed parcel results in immediate Rider account suspension, Aadhaar/DL/RC KYC blacklisting, payout hold, and legal police FIR cooperation with full GPS &amp; photo evidence.</li>
-          <li><b>Road Accident or Transit Damage:</b> Partners must report incidents immediately with live photos via In-App Support or <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a>. Verified claims are escalated to Admin Operations for settlement &amp; resolution within 24–48 hours.</li>
+          <li><b>Zero-Tolerance Tamper, Theft &amp; 100% Value Recovery:</b> Opening, replacing, stealing, or mishandling a sealed parcel results in immediate Rider account termination, national Aadhaar/DL/RC KYC blacklisting, payout hold, formal Police FIR with GPS &amp; photo evidence, and <b>100% shipment value + loss recovery from the Rider Partner</b>.</li>
+          <li><b>Illegal / Prohibited Goods (100% Customer Responsibility):</b> Narcotics, weapons, explosives, contraband, or stolen goods are strictly banned. Any illegal shipment is 100% the legal &amp; criminal responsibility of the Customer (Sender) — zero liability falls on Quick Delivery or the Rider.</li>
+          <li><b>Road Accident or Transit Damage:</b> Partners must report incidents immediately with live photos via In-App Support or <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a>. Verified claims are audited by Admin Operations within 24–48 hours.</li>
         </ul>
         <p style="margin-top:10px;"><a href="/terms">Read Complete Terms of Service →</a> • <a href="/privacy-policy">Read Privacy Policy →</a></p>
       </div>`
@@ -1990,14 +1991,14 @@ function renderLegalPageHtml(kind = 'privacy') {
       <div class="card">
         <h2>1. Mandatory Consent, Account Isolation &amp; Permissions</h2>
         <p>Users must read and explicitly accept the Privacy Policy (<a href="${BRAND_ORIGIN}/privacy-policy">${BRAND_ORIGIN}/privacy-policy</a>) &amp; Terms (<a href="${BRAND_ORIGIN}/terms">${BRAND_ORIGIN}/terms</a>) before signing up. Each customer account is strictly isolated by its 10-digit mobile number or verified email so order history, live tracking, and saved addresses remain private to that account. Location, Camera, and Notification permissions are required post-login to operate parcel pickup, GPS tracking, and proof-of-delivery features.</p>
-        <h2>2. Parcel Booking &amp; Prohibited Items</h2>
-        <p>Quick Delivery (${BRAND_DOMAIN}) provides on-demand local parcel pickup and drop-off services (maximum 20 kg per shipment). Prohibited, illegal, flammable, hazardous, stolen, or restricted goods are strictly banned; the sender bears full legal responsibility for declared contents.</p>
-        <h2>3. OTP Handover, Wait-Time &amp; Cancellation</h2>
-        <p>Orders require 4-digit Pickup and Drop OTP + digital signature verification. Pre-pickup cancellations after partner dispatch and pickup wait time beyond the free grace window may incur policy fees when enabled by Admin.</p>
+        <h2>2. Parcel Booking &amp; Illegal / Prohibited Items (100% Customer Liability)</h2>
+        <p>Quick Delivery (${BRAND_DOMAIN}) provides on-demand local parcel pickup and drop-off services (maximum 20 kg per shipment). Narcotics, illegal drugs, weapons, explosives, flammable, stolen, or prohibited contraband goods are strictly banned. <b>If a Customer ships any illegal or prohibited item, 100% legal, criminal, and civil responsibility rests solely with that Customer (Sender) — Quick Delivery Logistics and the assigned Rider Partner bear zero liability for concealed illegal contents.</b></p>
+        <h2>3. OTP Handover, Privacy Phone Masking &amp; Cancellation</h2>
+        <p>Orders require 4-digit Pickup and Drop OTP + digital signature verification. To safeguard user privacy, Customer mobile numbers are visible to the assigned Rider only while an order is live and are automatically masked to the last 4 digits (<code>******XXXX</code>) immediately after delivery or cancellation, while in-app Rider–Customer chat remains auditable by Admin Operations. Pre-pickup cancellations after partner dispatch and wait time beyond the free grace window may incur policy fees when enabled by Admin.</p>
         <h2>4. Partner Safety, KYC &amp; Fair Settlement</h2>
-        <p>Delivery partners receive 80% of base trip fare plus 100% of customer tips. Partners must maintain valid KYC documents, wear helmets/safety gear, obey traffic laws, and upload genuine camera delivery proofs.</p>
-        <h2>5. Parcel Tampering, Theft, Loss &amp; Accident Damage Protection Policy</h2>
-        <p>Delivery Partners must transport sealed parcels safely without opening, altering, substituting, or withholding contents. <b>(a) Tampering or Theft:</b> Any confirmed parcel tampering, theft, or intentional non-delivery triggers immediate permanent account termination, national KYC blacklist flagging, pending wallet payout freeze, recovery liability, and formal law-enforcement FIR filing using timestamped GPS, camera pickup proofs, and verified Aadhaar/DL/RC records. <b>(b) Road Accident / Unintentional Transit Damage:</b> Partners must promptly notify Admin Support &amp; capture accident/parcel damage photos in-app; Quick Delivery Logistics audits pre-pickup vs post-incident photos to process verified damage claims and dispute settlements transparently via <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a>.</p>
+        <p>Delivery partners receive 80% of base trip fare plus 100% of customer tips. Partners must maintain valid KYC documents, wear helmets/safety gear, obey traffic laws, and report any open/damaged parcel before pickup via the Pre-Pickup Damage Report button.</p>
+        <h2>5. Parcel Tampering, Theft, Loss, 100% Recovery &amp; Accident Protection Policy</h2>
+        <p>Delivery Partners must transport sealed parcels safely without opening, altering, substituting, or withholding contents. <b>(a) Tampering, Fraud or Theft:</b> Any confirmed parcel tampering, theft, or intentional non-delivery triggers immediate permanent account termination, national Aadhaar/DL/RC KYC blacklisting, pending wallet payout freeze, formal law-enforcement Police FIR filing using timestamped GPS, camera proofs, and chat logs, <b>AND 100% financial recovery of the shipment amount &amp; loss directly payable by the Rider Partner</b>. <b>(b) Road Accident / Unintentional Transit Damage:</b> Partners must promptly notify Admin Support &amp; capture accident/parcel damage photos in-app; Quick Delivery Logistics audits pre-pickup vs post-incident photos to process verified damage claims and Optional Parcel Protection Cover settlements transparently via <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a>.</p>
       </div>`
     : `
       <h1>Privacy Policy — Quick Delivery Suite</h1>
@@ -2482,7 +2483,34 @@ if (process.argv.includes('--configure-nginx') || (process.env.GITHUB_ACTIONS ==
   process.exit(0);
 }
 
-function buildSyncResponsePayload() {
+function maskPhoneLast4(rawPhone) {
+  const clean = String(rawPhone || '').trim();
+  if (!clean) return '';
+  const digits = clean.replace(/\D+/g, '');
+  return digits.length >= 4 ? `******${digits.slice(-4)}` : '******';
+}
+
+function maskOrderPiiForRole(orderObj, viewerRole = 'UNIFIED') {
+  if (!orderObj || typeof orderObj !== 'object') return orderObj;
+  const normalizedRole = String(viewerRole || 'UNIFIED').trim().toUpperCase();
+  const status = String(orderObj.orderStatus || '').trim().toUpperCase();
+  const isTerminal = status === 'DELIVERED' || status === 'CANCELLED';
+  if (normalizedRole !== 'RIDER' || !isTerminal) {
+    return orderObj;
+  }
+  const cloned = { ...orderObj };
+  if (cloned.customerPhone) cloned.customerPhone = maskPhoneLast4(cloned.customerPhone);
+  if (cloned.receiverPhone) cloned.receiverPhone = maskPhoneLast4(cloned.receiverPhone);
+  if (cloned.pickupAddress && typeof cloned.pickupAddress === 'object' && cloned.pickupAddress.contactPhone) {
+    cloned.pickupAddress = { ...cloned.pickupAddress, contactPhone: maskPhoneLast4(cloned.pickupAddress.contactPhone) };
+  }
+  if (cloned.dropAddress && typeof cloned.dropAddress === 'object' && cloned.dropAddress.contactPhone) {
+    cloned.dropAddress = { ...cloned.dropAddress, contactPhone: maskPhoneLast4(cloned.dropAddress.contactPhone) };
+  }
+  return cloned;
+}
+
+function buildSyncResponsePayload(viewerRole = 'UNIFIED') {
   const now = Date.now();
   const connectedDevices = [];
   for (const [devId, devInfo] of Object.entries(syncState.devicesById)) {
@@ -2492,15 +2520,16 @@ function buildSyncResponsePayload() {
       delete syncState.devicesById[devId];
     }
   }
+  const normalizedRole = String(viewerRole || 'UNIFIED').trim().toUpperCase();
   return {
     ok: true,
     serverTimeEpochMs: now,
     resetEpochMs: syncState.resetEpochMs,
     securityStats: ensureSecurityStats(),
     connectedDevices,
-    orders: Object.values(syncState.ordersById).sort(
-      (a, b) => Number(b.updatedAtEpochMs || 0) - Number(a.updatedAtEpochMs || 0)
-    ),
+    orders: Object.values(syncState.ordersById)
+      .sort((a, b) => Number(b.updatedAtEpochMs || 0) - Number(a.updatedAtEpochMs || 0))
+      .map(ord => maskOrderPiiForRole(ord, normalizedRole)),
     riderRegistrations: Object.values(syncState.riderRegistrationsByKey || {}),
     registeredCustomers: Object.values(syncState.customerAccountsByKey || {}),
     promoCoupons: Object.values(syncState.promoCouponsByCode || {}),
@@ -3212,7 +3241,13 @@ const server = http.createServer((req, res) => {
           saveSyncState();
         } catch {}
 
-        const syncResp = buildSyncResponsePayload();
+        const senderRoleHeader = String(req.headers['x-qd-app-role'] || 'UNIFIED').trim().toUpperCase();
+        let responseRole = senderRoleHeader;
+        try {
+          const parsedRole = JSON.parse(body || '{}').role;
+          if (parsedRole) responseRole = String(parsedRole).trim().toUpperCase();
+        } catch {}
+        const syncResp = buildSyncResponsePayload(responseRole);
         syncResp.rejectedOrders = Array.isArray(rejectedOrdersForResponse) ? rejectedOrdersForResponse : [];
         const out = JSON.stringify(syncResp);
         res.writeHead(200, {

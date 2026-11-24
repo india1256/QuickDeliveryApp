@@ -84,6 +84,7 @@ data class ActiveRiderMapNavigationSession(
     val orderId: String,
     val customerName: String,
     val customerPhone: String,
+    val orderStatus: OrderStatus = OrderStatus.RIDER_ASSIGNED,
     val targetType: RiderNavigationTargetType,
     val targetAddress: String,
     val targetLandmark: String,
@@ -136,6 +137,7 @@ object RiderMapNavigationManager {
             orderId = order.orderId,
             customerName = order.customerName,
             customerPhone = order.customerPhone,
+            orderStatus = order.orderStatus,
             targetType = resolvedTarget,
             targetAddress = if (isPickup) order.pickupAddress.fullAddress else order.dropAddress.fullAddress,
             targetLandmark = if (isPickup) order.pickupAddress.landmark else order.dropAddress.landmark,
@@ -843,8 +845,12 @@ fun RiderLiveTurnByTurnMapNavigationModal(
                                     fontWeight = FontWeight.ExtraBold,
                                     color = Color(0xFF059669)
                                 )
+                                val safeCustomerPhone = com.example.security.QuickDeliverySecurityGuard.maskCustomerPhoneForRider(
+                                    session.customerPhone,
+                                    session.orderStatus
+                                )
                                 Text(
-                                    text = "Fastest Direct Route • Customer: ${session.customerName} (${session.customerPhone})",
+                                    text = "Fastest Direct Route • Customer: ${session.customerName} ($safeCustomerPhone)",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color(0xFF475569)
                                 )

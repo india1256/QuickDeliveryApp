@@ -873,6 +873,7 @@ fun QuickDeliveryEnterpriseAdminSuite(
                         } else {
                             selectedDateRange
                         }
+                        var developerDemoModeEnabled by rememberSaveable { mutableStateOf(false) }
 
                         when (currentPage) {
                             AdminDedicatedPage.DASHBOARD -> EnterpriseDashboardOverviewPage(
@@ -902,6 +903,7 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                 isDesktop = isDesktop,
                                 palette = palette,
                                 repository = repository,
+                                showDemoControls = developerDemoModeEnabled,
                                 onNavigateToPage = { currentPage = it }
                             )
 
@@ -1044,6 +1046,8 @@ fun QuickDeliveryEnterpriseAdminSuite(
                                 onRefreshAdminToken = {
                                     adminSessionToken = repository.issueAdminPreviewSessionToken()
                                 },
+                                developerDemoModeEnabled = developerDemoModeEnabled,
+                                onToggleDeveloperDemoMode = { developerDemoModeEnabled = it },
                                 onResetOrders = onResetOrders,
                                 onExitToCustomer = onExitToCustomer
                             )
@@ -1543,6 +1547,7 @@ private fun EnterpriseDashboardOverviewPage(
     isDesktop: Boolean,
     palette: AdminExecColors,
     repository: SharedOrderRepository,
+    showDemoControls: Boolean = false,
     onNavigateToPage: (AdminDedicatedPage) -> Unit
 ) {
     val context = LocalContext.current
@@ -1938,7 +1943,8 @@ private fun EnterpriseDashboardOverviewPage(
                 lastAutoActionLog = lastAutoActionLog,
                 onExecuteAutoStepNow = onExecuteAutoStepNow,
                 onSpawnNewLiveOrder = onSpawnNewLiveOrder,
-                onOpenFullTracking = { onNavigateToPage(AdminDedicatedPage.LIVE_TRACKING) }
+                onOpenFullTracking = { onNavigateToPage(AdminDedicatedPage.LIVE_TRACKING) },
+                showDemoControls = showDemoControls
             )
         }
 
@@ -2713,7 +2719,8 @@ private fun DashboardLiveOrdersRidersMapCard(
     lastAutoActionLog: String,
     onExecuteAutoStepNow: () -> Unit,
     onSpawnNewLiveOrder: () -> Unit,
-    onOpenFullTracking: () -> Unit
+    onOpenFullTracking: () -> Unit,
+    showDemoControls: Boolean = false
 ) {
     val radarTransition = rememberInfiniteTransition(label = "dashboardMapPulse")
     val routeProgress by radarTransition.animateFloat(
@@ -2835,48 +2842,50 @@ private fun DashboardLiveOrdersRidersMapCard(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = onExecuteAutoStepNow,
-                    colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("admin_execute_auto_step_btn")
+            if (showDemoControls) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "Advance Active Order",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                    Button(
+                        onClick = onExecuteAutoStepNow,
+                        colors = ButtonDefaults.buttonColors(containerColor = SidebarActiveTeal),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("admin_execute_auto_step_btn")
+                    ) {
+                        Text(
+                            text = "Advance Active Order",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
-                Button(
-                    onClick = onSpawnNewLiveOrder,
-                    colors = ButtonDefaults.buttonColors(containerColor = DashOrange),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("admin_spawn_auto_order_btn")
-                ) {
-                    Text(
-                        text = "Sync Cloud Orders",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Button(
+                        onClick = onSpawnNewLiveOrder,
+                        colors = ButtonDefaults.buttonColors(containerColor = DashOrange),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("admin_spawn_auto_order_btn")
+                    ) {
+                        Text(
+                            text = "Sync Cloud Orders",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -6315,6 +6324,8 @@ private fun EnterpriseSettingsPage(
     onToggleSensitivePii: (Boolean) -> Unit,
     adminSessionToken: String,
     onRefreshAdminToken: () -> Unit,
+    developerDemoModeEnabled: Boolean = false,
+    onToggleDeveloperDemoMode: (Boolean) -> Unit = {},
     onResetOrders: () -> Unit,
     onExitToCustomer: () -> Unit
 ) {
@@ -6653,6 +6664,22 @@ private fun EnterpriseSettingsPage(
                                     )
                                 }
                             }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Developer / Demo Testing Controls", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Text("Show manual simulation buttons under Overview Radar when testing", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B))
+                        }
+                        Switch(
+                            checked = developerDemoModeEnabled,
+                            onCheckedChange = onToggleDeveloperDemoMode,
+                            modifier = Modifier.testTag("admin_developer_demo_mode_switch")
                         )
                     }
 
