@@ -2955,11 +2955,12 @@ fun QuickDeliveryPrivacyPolicyDialog(
                         "2. Essential Permissions Only:\n" +
                         "   • Location (GPS): Used only while the app is open/on active delivery for accurate pickup/drop addresses, fare distance, and live rider tracking.\n" +
                         "   • Camera: Triggered only when you capture parcel safety photos, pickup/delivery proofs, or Rider KYC selfies.\n" +
-                        "   • Phone Storage / Media: Used strictly to store encrypted offline backups of your profile, saved addresses, and order history in Phone Storage (Documents/QuickDelivery) and attach KYC/parcel photos.\n" +
+                        "   • Phone Storage / Media: Used strictly to store encrypted offline backups and Invoices/Reports in Phone Storage (Downloads/QuickDelivery) and attach KYC/parcel photos.\n" +
                         "   • Notifications: Used for instant order updates, OTP alerts, and live Rider-Customer chat.\n\n" +
                         "3. Prohibited Parcels & Liability: Sending illegal, hazardous, flammable, stolen, or prohibited goods is strictly banned. Senders are solely liable for accurate parcel declaration.\n\n" +
-                        "4. Payments, Cancellation & Rider Terms: Fair fare splits, OTP + Digital Signature Proof-of-Delivery, pickup wait-time & cancellation rules, and traffic/KYC compliance apply.\n\n" +
-                        "5. Data Security: All traffic uses HTTPS/TLS encryption and HMAC-SHA256 verification. We never sell personal data to third parties.",
+                        "4. Parcel Tampering, Theft & Accident Protection Policy: Delivery Partners must never open, swap, or withhold any parcel. Confirmed tampering or theft triggers immediate account termination, Aadhaar/DL/RC KYC blacklisting, payout freeze, and formal police FIR support with GPS & photo evidence. In case of road accident or transit damage, Partners must upload instant proof photos and notify Support (${com.example.data.cloud.QuickDeliveryBrandLinks.SUPPORT_EMAIL}) for claim audit.\n\n" +
+                        "5. Payments, Cancellation & Rider Terms: Fair fare splits, OTP + Digital Signature Proof-of-Delivery, pickup wait-time & cancellation rules, and traffic/KYC compliance apply.\n\n" +
+                        "6. Data Security & App Guide: All traffic uses HTTPS/TLS encryption and HMAC-SHA256 verification. Full info: ${com.example.data.cloud.QuickDeliveryBrandLinks.PUBLIC_BASE_URL}/about",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF334155)
                 )

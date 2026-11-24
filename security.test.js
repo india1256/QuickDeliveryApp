@@ -762,10 +762,50 @@ test('11. Live Server PoC Verification: blocks unverified GOOGLE_SIGNIN credenti
     assert.ok(badOtpBody.securityStats.blockedFakeOrders >= 1);
     assert.ok(Array.isArray(badOtpBody.securityStats.recentBlockedEvents));
     assert.ok(badOtpBody.securityStats.recentBlockedEvents.length >= 1);
+    // Verify live HTTP endpoints for /brand-logo.jpg, /about, and /terms parcel damage policy
+    const logoRes = await fetch(`${baseUrl}/brand-logo.jpg`);
+    assert.equal(logoRes.status, 200, '/brand-logo.jpg must serve official logo');
+    const logoBytes = await logoRes.arrayBuffer();
+    assert.ok(logoBytes.byteLength > 1000, 'Brand logo bytes must be non-empty');
+
+    const aboutRes = await fetch(`${baseUrl}/about`);
+    assert.equal(aboutRes.status, 200, '/about must render official app info page');
+    const aboutHtml = await aboutRes.text();
+    assert.match(aboutHtml, /About Quick Delivery/);
+    assert.match(aboutHtml, /brand-logo\.jpg/);
+
+    const termsRes = await fetch(`${baseUrl}/terms`);
+    assert.equal(termsRes.status, 200);
+    const termsHtml = await termsRes.text();
+    assert.match(termsHtml, /Parcel Tampering, Theft, Loss/);
   } finally {
     child.kill('SIGTERM');
     try {
       fs.unlinkSync(tempStateFile);
     } catch {}
   }
+});
+
+test('12. Official Branded Email, Invoice Logo, Parcel Damage Policy & Full Admin Radar Orders Verification', () => {
+  const serverSource = fs.readFileSync('./scripts/apk-download-server.mjs', 'utf8');
+  const pdfSource = fs.readFileSync('./core/src/main/java/com/example/security/QuickDeliveryPdfGenerator.kt', 'utf8');
+  const radarSource = fs.readFileSync('./core/src/main/java/com/example/ui/components/AdminLiveVectorCityMapCanvas.kt', 'utf8');
+  const adminSource = fs.readFileSync('./core/src/main/java/com/example/ui/components/AdminEnterpriseDashboardSuite.kt', 'utf8');
+  const customerSource = fs.readFileSync('./app/src/main/java/com/example/ui/screens/CustomerAppScreen.kt', 'utf8');
+
+  // Branded email wrapper applied globally in sendQuickDeliveryEmail
+  assert.match(serverSource, /function buildOfficialQuickDeliveryEmail\(/);
+  assert.match(serverSource, /brand-logo\.jpg/);
+  assert.match(serverSource, /App Info &amp; How It Works/);
+  assert.match(serverSource, /Terms &amp; Parcel Damage Policy/);
+
+  // Brand logo in PDF Receipts + Customer Invoice Dialog
+  assert.match(pdfSource, /loadCircularBrandLogoBitmap/);
+  assert.match(pdfSource, /cute_scooter_bunny_logo_1794655841710/);
+  assert.match(customerSource, /QuickDeliveryCuteBunnyLogo\(/);
+
+  // Admin Radar renders all live orders + Admin Overview shows all filtered orders directly below
+  assert.equal(radarSource.includes('activeOrders.take(4)'), false, 'Radar must not hard-cap active orders at 4');
+  assert.match(radarSource, /activeOrders\.take\(12\)/);
+  assert.equal(adminSource.includes('orders = filteredRecentOrders.take(5)'), false, 'Admin dashboard must show all filtered orders below Radar');
 });

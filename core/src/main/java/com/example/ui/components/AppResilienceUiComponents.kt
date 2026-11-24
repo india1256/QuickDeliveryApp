@@ -3,12 +3,20 @@ package com.example.ui.components
 import android.content.Context
 import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -271,6 +279,16 @@ fun CustomerSearchingCountdownCard(
     val timerText = String.format(Locale.US, "%02d:%02d", mins, secs)
     val progress = (elapsedSec.toFloat() / targetWindowSec.toFloat()).coerceIn(0f, 1f)
     val isHighWait = elapsedSec >= targetWindowSec
+    val radarAnim = rememberInfiniteTransition(label = "customerSearchRadar")
+    val radarWave by radarAnim.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "radarWave"
+    )
 
     Card(
         colors = CardDefaults.cardColors(
@@ -294,6 +312,23 @@ fun CustomerSearchingCountdownCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Canvas(modifier = Modifier.size(34.dp)) {
+                        val baseColor = if (isHighWait) ResCrimson else ResAmber
+                        drawCircle(
+                            color = baseColor.copy(alpha = (1f - radarWave) * 0.45f),
+                            radius = (size.minDimension / 2f) * radarWave
+                        )
+                        drawCircle(
+                            color = baseColor,
+                            radius = 6f
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (isHighWait) {

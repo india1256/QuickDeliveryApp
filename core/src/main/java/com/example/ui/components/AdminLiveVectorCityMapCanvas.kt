@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.graphics.Paint as AndroidPaint
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -17,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,6 +31,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,6 +58,14 @@ fun AdminLiveVectorCityMapCanvas(
     mapHeight: Dp = 185.dp,
     modifier: Modifier = Modifier
 ) {
+    val labelTextPaint = remember {
+        AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = 22f
+            isFakeBoldText = true
+            textAlign = AndroidPaint.Align.CENTER
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -247,16 +258,19 @@ fun AdminLiveVectorCityMapCanvas(
                 drawCircle(color = Color(0xFF34D399), radius = 4f, center = Offset(rx, ry))
             }
 
-            // 9. REAL Active Order Curved Bezier Delivery Routes + Teardrop Pins + Pulsing Rider Puck
+            // 9. REAL Active Order Curved Bezier Delivery Routes + Teardrop Pins + Pulsing Rider Puck + #OrderId Pill
             // Strictly draws ONLY real active orders (ZERO dummy routes when activeOrders is empty)
-            activeOrders.take(4).forEachIndexed { idx, order ->
+            val radarOrders = activeOrders.take(12)
+            radarOrders.forEachIndexed { idx, order ->
                 val hashSeed = (order.orderId.hashCode() and 0x7FFFFFFF) % 100
-                val startX = w * (0.14f + idx * 0.16f + (hashSeed % 5) * 0.01f).coerceIn(0.10f, 0.48f)
-                val startY = h * (0.78f - (idx % 2) * 0.44f).coerceIn(0.24f, 0.82f)
-                val endX = w * (0.86f - idx * 0.13f).coerceIn(0.52f, 0.90f)
-                val endY = h * (0.24f + (idx % 2) * 0.48f).coerceIn(0.22f, 0.80f)
+                val rowIdx = idx / 3
+                val colIdx = idx % 3
+                val startX = w * (0.12f + colIdx * 0.14f + (hashSeed % 5) * 0.012f).coerceIn(0.09f, 0.46f)
+                val startY = h * (0.24f + ((idx + rowIdx) % 3) * 0.24f).coerceIn(0.20f, 0.80f)
+                val endX = w * (0.88f - colIdx * 0.12f - (hashSeed % 4) * 0.01f).coerceIn(0.54f, 0.91f)
+                val endY = h * (0.76f - ((idx + rowIdx) % 3) * 0.24f).coerceIn(0.20f, 0.82f)
                 val ctrlX = (startX + endX) * 0.5f
-                val ctrlY = ((startY + endY) * 0.5f) + if (idx % 2 == 0) -h * 0.24f else h * 0.22f
+                val ctrlY = ((startY + endY) * 0.5f) + if (idx % 2 == 0) -h * 0.20f else h * 0.20f
 
                 val routePath = Path().apply {
                     moveTo(startX, startY)
@@ -274,7 +288,7 @@ fun AdminLiveVectorCityMapCanvas(
                     path = routePath,
                     color = Color(0xFF2DD4BF),
                     style = Stroke(
-                        width = 3.2f,
+                        width = 3.0f,
                         cap = StrokeCap.Round,
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(11f, 7f), 0f)
                     )
@@ -313,7 +327,7 @@ fun AdminLiveVectorCityMapCanvas(
                 drawCircle(color = Color.White, radius = 3.5f, center = Offset(endX, endY - 10f))
 
                 // Exact quadratic Bezier point for live moving Rider vehicle puck
-                val t = ((sweepProgress + idx * 0.27f) % 1f)
+                val t = ((sweepProgress + idx * 0.21f) % 1f)
                 val oneMinusT = 1f - t
                 val rx = oneMinusT * oneMinusT * startX + 2f * oneMinusT * t * ctrlX + t * t * endX
                 val ry = oneMinusT * oneMinusT * startY + 2f * oneMinusT * t * ctrlY + t * t * endY
@@ -323,6 +337,31 @@ fun AdminLiveVectorCityMapCanvas(
                 drawCircle(color = Color.White, radius = 8f, center = Offset(rx, ry))
                 drawCircle(color = Color(0xFF059669), radius = 5f, center = Offset(rx, ry))
                 drawCircle(color = Color(0xFFFEF08A), radius = 2f, center = Offset(rx, ry))
+
+                // Compact live Order ID tag directly above moving rider marker
+                val shortTag = "#${order.orderId.takeLast(6)}"
+                val pillW = (shortTag.length * 13f + 18f).coerceAtLeast(66f)
+                val pillLeft = (rx - pillW / 2f).coerceIn(6f, w - pillW - 6f)
+                val pillTop = (ry - 34f).coerceIn(28f, h - 24f)
+                drawRoundRect(
+                    color = Color(0xFF022C22).copy(alpha = 0.90f),
+                    topLeft = Offset(pillLeft, pillTop),
+                    size = Size(pillW, 22f),
+                    cornerRadius = CornerRadius(11f, 11f)
+                )
+                drawRoundRect(
+                    color = Color(0xFF34D399).copy(alpha = 0.8f),
+                    topLeft = Offset(pillLeft, pillTop),
+                    size = Size(pillW, 22f),
+                    cornerRadius = CornerRadius(11f, 11f),
+                    style = Stroke(width = 1.2f)
+                )
+                drawContext.canvas.nativeCanvas.drawText(
+                    shortTag,
+                    pillLeft + pillW / 2f,
+                    pillTop + 16f,
+                    labelTextPaint
+                )
             }
         }
 

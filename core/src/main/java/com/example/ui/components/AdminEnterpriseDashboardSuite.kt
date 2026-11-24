@@ -1942,10 +1942,10 @@ private fun EnterpriseDashboardOverviewPage(
             )
         }
 
-        // 4. Professional Live Orders & Enterprise Dispatch Cards
+        // 4. Professional Live Orders & Enterprise Dispatch Cards (All orders right below Radar)
         item(key = "dashboard_live_dispatch_cards") {
             DashboardEnterpriseDispatchCardsSection(
-                orders = filteredRecentOrders.take(5),
+                orders = filteredRecentOrders,
                 riders = riders,
                 tipsByOrder = tipsByOrder,
                 hasSensitivePiiPermission = hasSensitivePiiPermission,
@@ -2543,13 +2543,13 @@ private fun DashboardEnterpriseDispatchCardsSection(
                     AdminIconBadge(icon = Icons.Default.LocalShipping, tint = palette.accentTeal, sizeDp = 34)
                     Column {
                         Text(
-                            text = "Live Orders & Dispatch",
+                            text = "All Orders Full Details & Live Dispatch (${orders.size})",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = palette.textPrimary
                         )
                         Text(
-                            text = "Tap any order to inspect timeline, OTPs & reassign",
+                            text = "Complete order route, Customer/Rider phone, package, payment & OTP — tap to reassign or edit",
                             style = MaterialTheme.typography.labelSmall,
                             color = palette.textSecondary
                         )
@@ -2650,11 +2650,27 @@ private fun DashboardEnterpriseDispatchCardsSection(
                         }
 
                         Text(
-                            text = "${order.customerName} (${maskPhoneForAdmin(order.customerPhone, hasSensitivePiiPermission)})  •  Rider: ${order.assignedRiderName ?: "Searching"}",
+                            text = "👤 Customer: ${order.customerName} (${maskPhoneForAdmin(order.customerPhone, hasSensitivePiiPermission)})  •  🛵 Rider: ${order.assignedRiderName ?: "Searching nearby..."}",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = palette.textPrimary,
-                            maxLines = 1,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Text(
+                            text = "📍 Pickup: ${order.pickupAddress.fullAddress}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.textSecondary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Text(
+                            text = "🏁 Drop: ${order.dropAddress.fullAddress}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.textSecondary,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
 
@@ -2664,7 +2680,7 @@ private fun DashboardEnterpriseDispatchCardsSection(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "${order.pickupAddress.fullAddress.substringBefore(",")} → ${order.dropAddress.fullAddress.substringBefore(",")}",
+                                text = "📦 ${order.packageDetails.packageType.title} (${order.packageDetails.weightKg} kg) • 💳 ${order.paymentMethod.shortBadge}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = palette.textSecondary,
                                 maxLines = 1,
@@ -2673,7 +2689,7 @@ private fun DashboardEnterpriseDispatchCardsSection(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = String.format(Locale.US, "%s (80%% ₹%.0f)", order.totalAmount, earn80),
+                                text = String.format(Locale.US, "%s • Rider ₹%.0f", order.totalAmount, earn80),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = palette.accentTeal,
@@ -2776,8 +2792,48 @@ private fun DashboardLiveOrdersRidersMapCard(
                 sweepProgress = routeProgress,
                 topStartLabel = lastAutoActionLog,
                 bottomEndLabel = if (activeOrders.isNotEmpty()) "🟢 Live GPS Synced" else "📡 Radar Active",
-                mapHeight = 185.dp
+                mapHeight = 195.dp
             )
+
+            // Live Radar Active Orders Telemetry Strip directly inside Radar card
+            if (activeOrders.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    activeOrders.forEach { liveOrd ->
+                        Surface(
+                            color = Color(0xFF0A2E3B),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFF2DD4BF).copy(alpha = 0.55f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = "#${liveOrd.orderId} • ${liveOrd.orderStatus.displayTitle}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF5EEAD4),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                Text(
+                                    text = "${liveOrd.assignedRiderName ?: "Searching Rider"} • ${liveOrd.totalAmount}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFE2E8F0),
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

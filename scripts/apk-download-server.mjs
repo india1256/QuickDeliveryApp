@@ -1293,7 +1293,96 @@ async function sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subjec
   return trimmed.slice(0, 140) || 'OK';
 }
 
-async function sendEmailViaBrevoApi({ apiKey, fromEmail, fromName = 'Quick Delivery', toEmail, subject, textBody, htmlBody }) {
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildOfficialQuickDeliveryEmail({ subject, textBody = '', htmlBody = '', type = 'GENERAL' }) {
+  const safeTypeLabel =
+    type === 'EMAIL_OTP'
+      ? 'OFFICIAL SECURITY VERIFICATION'
+      : type === 'SUPPORT_TICKET'
+      ? 'OFFICIAL SUPPORT DESK'
+      : 'OFFICIAL NOTIFICATION';
+  const safeSubject = escapeHtml(subject || 'Quick Delivery Notification');
+  const brandLogoUrl = `https://${BRAND_DOMAIN}/brand-logo.jpg`;
+  const aboutUrl = `https://${BRAND_DOMAIN}/about`;
+  const termsUrl = `https://${BRAND_DOMAIN}/terms`;
+  const privacyUrl = `https://${BRAND_DOMAIN}/privacy-policy`;
+
+  const innerHtml = htmlBody && htmlBody.trim().length > 0
+    ? htmlBody
+    : `<div style="font-size:14px;line-height:1.6;color:#1e293b;white-space:pre-line;">${escapeHtml(textBody)}</div>`;
+
+  const wrappedHtml = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1.0" /><title>${safeSubject}</title></head>
+<body style="margin:0;padding:18px;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#0f172a;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:580px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #cbd5e1;">
+    <tr>
+      <td style="background:linear-gradient(135deg,#0D1B2A,#00695C);padding:18px 22px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+          <tr>
+            <td width="56" valign="middle">
+              <img src="${brandLogoUrl}" alt="Quick Delivery Logo" width="46" height="46" style="display:block;border-radius:50%;border:2px solid #FF7A1A;background:#FCF4E1;object-fit:cover;" />
+            </td>
+            <td valign="middle" style="padding-left:12px;">
+              <div style="font-size:18px;font-weight:800;color:#ffffff;letter-spacing:0.2px;">Quick Delivery</div>
+              <div style="font-size:11px;font-weight:700;color:#FDBA74;letter-spacing:0.6px;margin-top:2px;">FAST. SIMPLE. SECURE. • ${safeTypeLabel}</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:22px 22px 14px 22px;">
+        ${innerHtml}
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:14px 22px 18px 22px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+        <div style="font-size:12px;font-weight:700;color:#0f172a;margin-bottom:6px;">Quick Delivery Official Information, Safety &amp; Terms</div>
+        <div style="font-size:11px;line-height:1.6;color:#475569;margin-bottom:8px;">
+          Every Quick Delivery parcel order includes pre-pickup safety checks, live GPS tracking, 4-digit OTP handover, and strict zero-tolerance enforcement against parcel tampering, theft, or mishandling.
+        </div>
+        <div style="font-size:11px;line-height:1.8;color:#334155;">
+          <a href="${aboutUrl}" style="color:#00796B;font-weight:700;text-decoration:none;">📱 App Info &amp; How It Works</a>
+          &nbsp;•&nbsp;
+          <a href="${termsUrl}" style="color:#00796B;font-weight:700;text-decoration:none;">📜 Terms &amp; Parcel Damage Policy</a>
+          &nbsp;•&nbsp;
+          <a href="${privacyUrl}" style="color:#00796B;font-weight:700;text-decoration:none;">🔒 Privacy Policy</a>
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-top:8px;">
+          Official Support Desk: <a href="mailto:${BRAND_SUPPORT_EMAIL}" style="color:#0f172a;font-weight:700;">${BRAND_SUPPORT_EMAIL}</a> • Web: <a href="https://${BRAND_DOMAIN}" style="color:#0f172a;">${BRAND_DOMAIN}</a>
+        </div>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const footerText = [
+    '',
+    '--------------------------------------------------',
+    'Quick Delivery Official • Fast. Simple. Secure.',
+    `App Info & Overview : ${aboutUrl}`,
+    `Terms & Damage Policy: ${termsUrl}`,
+    `Privacy Policy      : ${privacyUrl}`,
+    `Official Support    : ${BRAND_SUPPORT_EMAIL}`,
+  ].join('\n');
+
+  const cleanText = String(textBody || '').trim();
+  const wrappedText = cleanText.includes(aboutUrl) ? cleanText : `${cleanText}${footerText}`;
+
+  return { htmlBody: wrappedHtml, textBody: wrappedText };
+}
+
+async function sendEmailViaBrevoApi({ apiKey, fromEmail, fromName = 'Quick Delivery Official', toEmail, subject, textBody, htmlBody }) {
   const payload = {
     sender: { name: fromName, email: fromEmail },
     to: [{ email: toEmail }],
@@ -1319,7 +1408,7 @@ async function sendEmailViaBrevoApi({ apiKey, fromEmail, fromName = 'Quick Deliv
   return bodyText.trim().slice(0, 140) || 'OK';
 }
 
-async function sendEmailViaResendApi({ apiKey, fromEmail, fromName = 'Quick Delivery', toEmail, subject, textBody, htmlBody }) {
+async function sendEmailViaResendApi({ apiKey, fromEmail, fromName = 'Quick Delivery Official', toEmail, subject, textBody, htmlBody }) {
   const payload = {
     from: `${fromName} <${fromEmail}>`,
     to: [toEmail],
@@ -1355,7 +1444,10 @@ async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '
   const smtpPort = Number(String(process.env.SUPPORT_SMTP_PORT || '465').trim()) || 465;
   const webhookUrl = String(process.env.SUPPORT_EMAIL_WEBHOOK_URL || '').trim();
   const fromEmail = OTP_FROM_EMAIL;
-  const fromName = String(process.env.OTP_FROM_NAME || 'Quick Delivery').trim() || 'Quick Delivery';
+  const fromName = String(process.env.OTP_FROM_NAME || 'Quick Delivery Official').trim() || 'Quick Delivery Official';
+  const branded = buildOfficialQuickDeliveryEmail({ subject, textBody, htmlBody, type });
+  const finalTextBody = branded.textBody;
+  const finalHtmlBody = branded.htmlBody;
 
   // 1. Authoritative Production Transactional Email API: Brevo (300/day free, HTTPS port 443)
   if (brevoApiKey) {
@@ -1366,8 +1458,8 @@ async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '
         fromName,
         toEmail,
         subject,
-        textBody,
-        htmlBody,
+        textBody: finalTextBody,
+        htmlBody: finalHtmlBody,
       });
       lastEmailDiagnostics = { channel: 'BREVO_API', status: 'OK', responsePreview, error: null, updatedAtIso: new Date().toISOString() };
       return { deliveryChannel: 'BREVO_API', fromEmail };
@@ -1387,8 +1479,8 @@ async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '
         fromName,
         toEmail,
         subject,
-        textBody,
-        htmlBody,
+        textBody: finalTextBody,
+        htmlBody: finalHtmlBody,
       });
       lastEmailDiagnostics = { channel: 'RESEND_API', status: 'OK', responsePreview, error: null, updatedAtIso: new Date().toISOString() };
       return { deliveryChannel: 'RESEND_API', fromEmail };
@@ -1402,7 +1494,7 @@ async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '
   // 3. Fallback: HTTPS Webhook (Google Apps Script, port 443)
   if (webhookUrl) {
     try {
-      const responsePreview = await sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subject, textBody, htmlBody, type, extra });
+      const responsePreview = await sendEmailViaHttpsWebhook({ webhookUrl, fromEmail, toEmail, subject, textBody: finalTextBody, htmlBody: finalHtmlBody, type, extra });
       lastEmailDiagnostics = { channel: 'WEBHOOK', status: 'OK', responsePreview, error: null, updatedAtIso: new Date().toISOString() };
       return { deliveryChannel: 'WEBHOOK', fromEmail };
     } catch (whErr) {
@@ -1427,8 +1519,8 @@ async function sendQuickDeliveryEmail({ toEmail, subject, textBody, htmlBody = '
           fromEmail,
           toEmail,
           subject,
-          textBody,
-          htmlBody,
+          textBody: finalTextBody,
+          htmlBody: finalHtmlBody,
         });
         lastEmailDiagnostics = { channel: `SMTP_${port}`, status: 'OK', error: null, updatedAtIso: new Date().toISOString() };
         return {
@@ -1844,11 +1936,14 @@ function renderDownloadPageHtml(autoDownloadFile = '', singleRoleFilter = '') {
 function renderLegalPageHtml(kind = 'privacy') {
   const isTerms = kind === 'terms';
   const isDelete = kind === 'delete';
-  const slug = isDelete ? '/delete-account' : isTerms ? '/terms' : '/privacy-policy';
+  const isAbout = kind === 'about' || kind === 'support';
+  const slug = isDelete ? '/delete-account' : isTerms ? '/terms' : isAbout ? '/about' : '/privacy-policy';
   const title = isDelete
     ? `Quick Delivery (${BRAND_DOMAIN}) — Account & Data Deletion Request`
     : isTerms
-    ? `Quick Delivery (${BRAND_DOMAIN}) — Terms of Service`
+    ? `Quick Delivery (${BRAND_DOMAIN}) — Terms of Service & Parcel Protection Policy`
+    : isAbout
+    ? `Quick Delivery (${BRAND_DOMAIN}) — Official App Info, Safety & Terms`
     : `Quick Delivery (${BRAND_DOMAIN}) — Privacy Policy`;
 
   const bodyContent = isDelete
@@ -1868,6 +1963,26 @@ function renderLegalPageHtml(kind = 'privacy') {
         <h2>Option 2: Web &amp; Server Data Deletion Request</h2>
         <p>To request permanent erasure of any cloud order logs or partner records stored on our dispatch servers, email <a href="mailto:${BRAND_SUPPORT_EMAIL}?subject=Quick%20Delivery%20Account%20Deletion%20Request">${BRAND_SUPPORT_EMAIL}</a> from your registered email address with your 10-digit mobile number. Verified requests are processed within 7 business days.</p>
       </div>`
+    : isAbout
+    ? `
+      <h1>About Quick Delivery — Official App &amp; Support Center</h1>
+      <p><b>Official Brand Portal:</b> <a href="${BRAND_ORIGIN}">${BRAND_ORIGIN}</a> • <b>Official Support:</b> <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a></p>
+      <div class="card">
+        <h2>How Quick Delivery Works</h2>
+        <ul>
+          <li><b>1. Transparent Booking &amp; Fare Seal:</b> Enter pickup &amp; drop locations, choose Bike, Scooter, Auto, or Mini-Truck (up to 20 kg), and lock an upfront fare with GST invoice support.</li>
+          <li><b>2. Pre-Pickup Photo &amp; GPS Verification:</b> Capture parcel safety photos before dispatch, track the assigned verified Rider on live map telemetry, and share the 4-digit Pickup OTP only at physical handover.</li>
+          <li><b>3. Verified Delivery Proof &amp; Digital Receipt:</b> Delivery closes only after 4-digit Drop OTP / digital recipient signature and proof capture, generating an official Quick Delivery PDF Tax Invoice.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>Parcel Safety, Tampering, Theft &amp; Accident Protection</h2>
+        <ul>
+          <li><b>Zero-Tolerance Tamper &amp; Theft Policy:</b> Opening, replacing, stealing, or mishandling a sealed parcel results in immediate Rider account suspension, Aadhaar/DL/RC KYC blacklisting, payout hold, and legal police FIR cooperation with full GPS &amp; photo evidence.</li>
+          <li><b>Road Accident or Transit Damage:</b> Partners must report incidents immediately with live photos via In-App Support or <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a>. Verified claims are escalated to Admin Operations for settlement &amp; resolution within 24–48 hours.</li>
+        </ul>
+        <p style="margin-top:10px;"><a href="/terms">Read Complete Terms of Service →</a> • <a href="/privacy-policy">Read Privacy Policy →</a></p>
+      </div>`
     : isTerms
     ? `
       <h1>Terms of Service — Quick Delivery Suite</h1>
@@ -1881,6 +1996,8 @@ function renderLegalPageHtml(kind = 'privacy') {
         <p>Orders require 4-digit Pickup and Drop OTP + digital signature verification. Pre-pickup cancellations after partner dispatch and pickup wait time beyond the free grace window may incur policy fees when enabled by Admin.</p>
         <h2>4. Partner Safety, KYC &amp; Fair Settlement</h2>
         <p>Delivery partners receive 80% of base trip fare plus 100% of customer tips. Partners must maintain valid KYC documents, wear helmets/safety gear, obey traffic laws, and upload genuine camera delivery proofs.</p>
+        <h2>5. Parcel Tampering, Theft, Loss &amp; Accident Damage Protection Policy</h2>
+        <p>Delivery Partners must transport sealed parcels safely without opening, altering, substituting, or withholding contents. <b>(a) Tampering or Theft:</b> Any confirmed parcel tampering, theft, or intentional non-delivery triggers immediate permanent account termination, national KYC blacklist flagging, pending wallet payout freeze, recovery liability, and formal law-enforcement FIR filing using timestamped GPS, camera pickup proofs, and verified Aadhaar/DL/RC records. <b>(b) Road Accident / Unintentional Transit Damage:</b> Partners must promptly notify Admin Support &amp; capture accident/parcel damage photos in-app; Quick Delivery Logistics audits pre-pickup vs post-incident photos to process verified damage claims and dispute settlements transparently via <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a>.</p>
       </div>`
     : `
       <h1>Privacy Policy — Quick Delivery Suite</h1>
@@ -1913,6 +2030,8 @@ function renderLegalPageHtml(kind = 'privacy') {
   <style>
     body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #042F2E; color: #F8FAFC; line-height: 1.6; }
     .wrap { max-width: 720px; margin: 0 auto; }
+    .brand-bar { display: flex; align-items: center; gap: 12px; background: #064E3B; border: 1px solid #34D399; border-radius: 14px; padding: 12px 16px; margin-bottom: 14px; }
+    .brand-bar img { width: 46px; height: 46px; border-radius: 50%; border: 2px solid #FF7A1A; background: #FCF4E1; object-fit: cover; }
     .card { background: #0F172A; border: 1px solid #1E293B; border-radius: 14px; padding: 18px; margin-top: 14px; }
     h1 { color: #6EE7B7; font-size: 22px; margin-bottom: 6px; }
     h2 { color: #38BDF8; font-size: 16px; margin: 12px 0 6px; }
@@ -1922,9 +2041,17 @@ function renderLegalPageHtml(kind = 'privacy') {
 </head>
 <body>
   <div class="wrap">
+    <div class="brand-bar">
+      <img src="/brand-logo.jpg" alt="Quick Delivery Official Logo" />
+      <div>
+        <div style="font-size:17px;font-weight:800;color:#ECFDF5;">Quick Delivery Official</div>
+        <div style="font-size:11px;font-weight:700;color:#FDBA74;">FAST. SIMPLE. SECURE. • ${BRAND_DOMAIN}</div>
+      </div>
+    </div>
     ${bodyContent}
     <div class="nav">
       <a href="/">Home (${BRAND_DOMAIN})</a> •
+      <a href="/about">App Info &amp; Support</a> •
       <a href="/privacy-policy">Privacy Policy</a> •
       <a href="/terms">Terms of Service</a> •
       <a href="/delete-account">Delete Account</a>
@@ -1947,8 +2074,10 @@ function renderFirebaseHostingHomeHtml() {
     body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #022C22; color: #F8FAFC; line-height: 1.55; }
     .wrap { max-width: 740px; margin: 0 auto; }
     .hero { background: linear-gradient(135deg, #065F46, #042F2E); border: 2px solid #34D399; border-radius: 18px; padding: 24px; margin-bottom: 16px; }
+    .hero-head { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+    .hero-logo { width: 58px; height: 58px; border-radius: 50%; border: 2.5px solid #FF7A1A; background: #FCF4E1; object-fit: cover; flex-shrink: 0; }
     .badge { display: inline-block; background: #10B981; color: #022C22; font-weight: 800; font-size: 11px; padding: 4px 10px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.4px; }
-    h1 { margin: 10px 0 6px; font-size: 26px; color: #ECFDF5; }
+    h1 { margin: 4px 0 4px; font-size: 26px; color: #ECFDF5; }
     .card { background: #0F172A; border: 1px solid #1E293B; border-radius: 14px; padding: 18px; margin-bottom: 12px; }
     h2 { margin: 0 0 8px; font-size: 16px; color: #6EE7B7; }
     p { margin: 6px 0; color: #CBD5E1; font-size: 14px; }
@@ -1961,8 +2090,13 @@ function renderFirebaseHostingHomeHtml() {
 <body>
   <div class="wrap">
     <div class="hero">
-      <span class="badge">Official Brand Portal • ${BRAND_DOMAIN}</span>
-      <h1>Quick Delivery</h1>
+      <div class="hero-head">
+        <img class="hero-logo" src="/brand-logo.jpg" alt="Quick Delivery Official Logo" />
+        <div>
+          <span class="badge">Official Brand Portal • ${BRAND_DOMAIN}</span>
+          <h1>Quick Delivery</h1>
+        </div>
+      </div>
       <p style="color:#D1FAE5;font-size:15px;"><b>FAST. SIMPLE. SECURE.</b> On-demand local doorstep parcel pickup &amp; delivery up to 20 kg with live GPS tracking, verified handover proofs, and instant transparent fares.</p>
     </div>
     <div class="card">
@@ -1975,7 +2109,8 @@ function renderFirebaseHostingHomeHtml() {
     </div>
     <div class="card">
       <h2>Customer Support &amp; Legal Compliance</h2>
-      <a class="pill" href="/privacy-policy">Privacy Policy</a>
+      <a class="pill" href="/about">App Info &amp; Safety</a>
+      <a class="pill" href="/privacy-policy" style="background:#0F766E;">Privacy Policy</a>
       <a class="pill" href="/terms" style="background:#0D9488;">Terms of Service</a>
       <a class="pill" href="/delete-account" style="background:#B91C1C;">Delete Account &amp; Data</a>
       <p style="margin-top:12px;font-size:13px;color:#94A3B8;">Need help with a parcel or account? Contact <a href="mailto:${BRAND_SUPPORT_EMAIL}">${BRAND_SUPPORT_EMAIL}</a></p>
@@ -2037,6 +2172,8 @@ function configureNginxDirectApkServing() {
     const htmlPrivacy = renderLegalPageHtml('privacy');
     const htmlTerms = renderLegalPageHtml('terms');
     const htmlDelete = renderLegalPageHtml('delete');
+    const htmlAbout = renderLegalPageHtml('about');
+    const logoSrc = path.join(ROOT, 'app', 'src', 'main', 'res', 'drawable', 'cute_scooter_bunny_logo_1794655841710.jpg');
 
     if (fs.existsSync('/var/www/assets')) {
       fs.writeFileSync(
@@ -2052,6 +2189,10 @@ function configureNginxDirectApkServing() {
       fs.writeFileSync('/var/www/assets/privacy-policy.html', htmlPrivacy, 'utf-8');
       fs.writeFileSync('/var/www/assets/terms.html', htmlTerms, 'utf-8');
       fs.writeFileSync('/var/www/assets/delete-account.html', htmlDelete, 'utf-8');
+      fs.writeFileSync('/var/www/assets/about.html', htmlAbout, 'utf-8');
+      if (fs.existsSync(logoSrc)) {
+        try { fs.copyFileSync(logoSrc, '/var/www/assets/brand-logo.jpg'); } catch {}
+      }
     }
     try {
       fs.mkdirSync(path.join(ROOT, 'public'), { recursive: true });
@@ -2063,6 +2204,10 @@ function configureNginxDirectApkServing() {
       fs.writeFileSync(path.join(ROOT, 'public', 'privacy-policy.html'), htmlPrivacy, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'terms.html'), htmlTerms, 'utf-8');
       fs.writeFileSync(path.join(ROOT, 'public', 'delete-account.html'), htmlDelete, 'utf-8');
+      fs.writeFileSync(path.join(ROOT, 'public', 'about.html'), htmlAbout, 'utf-8');
+      if (fs.existsSync(logoSrc)) {
+        fs.copyFileSync(logoSrc, path.join(ROOT, 'public', 'brand-logo.jpg'));
+      }
 
       // Generate Firebase Hosting static bundle (dist/) ready for `firebase deploy --only hosting` on quickdelivery.co.in
       const distDir = path.join(ROOT, 'dist');
@@ -2071,6 +2216,10 @@ function configureNginxDirectApkServing() {
       fs.writeFileSync(path.join(distDir, 'privacy-policy.html'), htmlPrivacy, 'utf-8');
       fs.writeFileSync(path.join(distDir, 'terms.html'), htmlTerms, 'utf-8');
       fs.writeFileSync(path.join(distDir, 'delete-account.html'), htmlDelete, 'utf-8');
+      fs.writeFileSync(path.join(distDir, 'about.html'), htmlAbout, 'utf-8');
+      if (fs.existsSync(logoSrc)) {
+        fs.copyFileSync(logoSrc, path.join(distDir, 'brand-logo.jpg'));
+      }
     } catch {}
 
     const apkBlock = `
@@ -3369,23 +3518,26 @@ const server = http.createServer((req, res) => {
         const textBody = [
           `Hello,`,
           ``,
-          `Your Quick Delivery (${roleLabel}) Email Verification OTP is: ${otpCode}`,
+          `Your Quick Delivery (${roleLabel}) Official Verification OTP is: ${otpCode}`,
           ``,
-          `This code is valid for 10 minutes. Do not share this code with anyone.`,
+          `This code is valid for 10 minutes. Never share this OTP with any caller or third party.`,
+          `Safety & Terms Notice: All shipments include GPS tracking, camera proof, 4-digit handover OTP, and zero-tolerance parcel tamper protection.`,
+          `Need help? Email ${BRAND_SUPPORT_EMAIL}`,
           ``,
           `Regards,`,
           `Quick Delivery Security Team`,
         ].join('\n');
         const htmlBody = `
-          <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;border:1px solid #e2e8f0;border-radius:12px;color:#0f172a;">
-            <h2 style="margin:0 0 8px 0;color:#00796B;">Quick Delivery Verification</h2>
-            <p style="margin:0 0 16px 0;font-size:14px;color:#475569;">Use the verification code below to complete your ${roleLabel} account verification:</p>
-            <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;padding:16px;text-align:center;margin-bottom:16px;">
-              <span style="font-size:30px;font-weight:bold;letter-spacing:6px;color:#0f172a;">${otpCode}</span>
+          <div style="font-family:Arial,sans-serif;color:#0f172a;">
+            <h2 style="margin:0 0 8px 0;color:#00796B;font-size:18px;">Official Account Verification</h2>
+            <p style="margin:0 0 14px 0;font-size:14px;color:#475569;">Use the 6-digit verification code below to authorize your <b>Quick Delivery ${roleLabel}</b> session:</p>
+            <div style="background:#f0fdfa;border:2px dashed #14b8a6;border-radius:12px;padding:16px;text-align:center;margin-bottom:16px;">
+              <span style="font-size:32px;font-weight:800;letter-spacing:7px;color:#0f172a;">${otpCode}</span>
             </div>
-            <p style="margin:0 0 8px 0;font-size:12px;color:#64748b;">Valid for 10 minutes. Never share this OTP with anyone. If you did not request this code, you can safely ignore this email.</p>
-            <hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;" />
-            <p style="margin:0;font-size:11px;color:#94a3b8;">Quick Delivery Security • Automated Verification Email</p>
+            <p style="margin:0 0 10px 0;font-size:12px;color:#475569;">Valid for <b>10 minutes</b>. Do not share this code with anyone, even callers claiming to be support.</p>
+            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px 12px;font-size:11px;color:#7c2d12;">
+              <b>Quick Delivery Security &amp; Support:</b> Write to <a href="mailto:${BRAND_SUPPORT_EMAIL}" style="color:#9a3412;font-weight:700;">${BRAND_SUPPORT_EMAIL}</a> or tap the App Info &amp; Terms links below anytime.
+            </div>
           </div>
         `.trim();
 
@@ -4101,8 +4253,52 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  if (pathname === '/privacy-policy' || pathname === '/terms' || pathname === '/delete-account') {
-    const kind = pathname === '/terms' ? 'terms' : pathname === '/delete-account' ? 'delete' : 'privacy';
+  if (pathname === '/brand-logo.jpg' || pathname === '/icon-192.png' || pathname === '/icon-512.png' || pathname === '/icon.svg') {
+    const assetCandidates = pathname === '/brand-logo.jpg'
+      ? [
+          { file: path.join(ROOT, 'app', 'src', 'main', 'res', 'drawable', 'cute_scooter_bunny_logo_1794655841710.jpg'), mime: 'image/jpeg' },
+          { file: path.join(ROOT, 'public', 'icon-192.png'), mime: 'image/png' },
+        ]
+      : [
+          {
+            file: path.join(ROOT, 'public', pathname.slice(1)),
+            mime: pathname.endsWith('.svg') ? 'image/svg+xml; charset=utf-8' : 'image/png',
+          },
+        ];
+    for (const candidate of assetCandidates) {
+      if (fs.existsSync(candidate.file)) {
+        const assetBytes = fs.readFileSync(candidate.file);
+        res.writeHead(200, {
+          'Content-Type': candidate.mime,
+          'Content-Length': String(assetBytes.length),
+          'Cache-Control': 'public, max-age=86400',
+          'Access-Control-Allow-Origin': '*',
+        });
+        if (req.method === 'HEAD') {
+          res.end();
+          return;
+        }
+        res.end(assetBytes);
+        return;
+      }
+    }
+  }
+
+  if (
+    pathname === '/privacy-policy' ||
+    pathname === '/terms' ||
+    pathname === '/delete-account' ||
+    pathname === '/about' ||
+    pathname === '/support'
+  ) {
+    const kind =
+      pathname === '/terms'
+        ? 'terms'
+        : pathname === '/delete-account'
+        ? 'delete'
+        : pathname === '/about' || pathname === '/support'
+        ? 'about'
+        : 'privacy';
     const html = renderLegalPageHtml(kind);
     const buf = Buffer.from(html, 'utf-8');
     res.writeHead(200, {

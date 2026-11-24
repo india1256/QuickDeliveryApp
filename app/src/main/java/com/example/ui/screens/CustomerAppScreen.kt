@@ -10,8 +10,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -23,6 +27,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -2275,24 +2280,35 @@ fun CustomerAppScreen(
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showGstInvoiceDialogForOrder = null },
             title = {
-                Text(
-                    text = "Tax Invoice • #${invOrder.orderId}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = DeepNavy
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    QuickDeliveryCuteBunnyLogo(
+                        size = 42.dp,
+                        borderColor = BrandOrange
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Tax Invoice • #${invOrder.orderId}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = DeepNavy
+                        )
+                        Text(
+                            text = "Quick Delivery Logistics • Official Receipt",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryTeal
+                        )
+                    }
+                }
             },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "Quick Delivery Logistics",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = PrimaryTeal
-                    )
                     Text(
                         text = "Date: ${invOrder.createdAt.ifBlank { "Live Order" }} • Status: ${invOrder.orderStatus.displayTitle}",
                         style = MaterialTheme.typography.bodySmall,
@@ -2844,6 +2860,16 @@ fun CustomerAppScreen(
                     val isDeclinedReSearching = activeOrder.orderStatus == OrderStatus.SEARCHING_RIDER &&
                         (activeOrder.rejectedByRiderIds.isNotEmpty() ||
                             activeOrder.latestRiderQuickNote?.contains("Declined", ignoreCase = true) == true)
+                    val activePulseTransition = rememberInfiniteTransition(label = "customerActivePulse")
+                    val activePulseScale by activePulseTransition.animateFloat(
+                        initialValue = 1.0f,
+                        targetValue = 1.18f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 850),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "activePulseScale"
+                    )
                     Card(
                         colors = CardDefaults.cardColors(
                             containerColor = if (isDeclinedReSearching) Color(0xFFFFF7ED) else Color(0xFFF0FDFA)
@@ -2866,12 +2892,23 @@ fun CustomerAppScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .graphicsLayer {
+                                            scaleX = activePulseScale
+                                            scaleY = activePulseScale
+                                        }
+                                        .clip(CircleShape)
+                                        .background(if (isDeclinedReSearching) Color(0xFFEA580C) else Color(0xFF10B981))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = if (isDeclinedReSearching) {
                                             "🔄 ${uiStrings.activeOrderLabel} #${activeOrder.orderId} • Searching New Rider"
                                         } else {
-                                            "🟢 ${uiStrings.activeOrderLabel} #${activeOrder.orderId} • ${activeOrder.orderStatus.displayTitle}"
+                                            "${uiStrings.activeOrderLabel} #${activeOrder.orderId} • ${activeOrder.orderStatus.displayTitle}"
                                         },
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.ExtraBold,
@@ -2925,6 +2962,16 @@ fun CustomerAppScreen(
             // STEP 1: MODULAR CARDS INSIDE LAZYCOLUMN (Prevents focus/measurement scroll jumps)
             if (currentStep == 1) {
                 item(key = "customer_step1_header_card") {
+                    val etaAnim = rememberInfiniteTransition(label = "customerEtaBadge")
+                    val etaScale by etaAnim.animateFloat(
+                        initialValue = 1.0f,
+                        targetValue = 1.06f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 1000),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "etaScale"
+                    )
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color.White),
                         shape = RoundedCornerShape(18.dp),
@@ -2963,7 +3010,11 @@ fun CustomerAppScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
                                     color = BrandOrange,
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.graphicsLayer {
+                                        scaleX = etaScale
+                                        scaleY = etaScale
+                                    }
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,

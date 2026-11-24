@@ -8,10 +8,16 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -2087,6 +2093,16 @@ fun RiderPartnerCompactScreen(
                                     }
                                 }
                             }
+                            val dutyAnim = rememberInfiniteTransition(label = "riderDutyPulse")
+                            val dutyPulseScale by dutyAnim.animateFloat(
+                                initialValue = 1.0f,
+                                targetValue = 1.07f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(durationMillis = 900),
+                                    repeatMode = RepeatMode.Reverse
+                                ),
+                                label = "dutyPulseScale"
+                            )
                             Surface(
                                 color = if (isSuspended || isCodLimitLocked) PorterRed.copy(alpha = 0.12f) else if (currentRider?.isOnline == true) Color(0xFF10B981).copy(alpha = 0.15f) else Color(0xFF64748B).copy(alpha = 0.12f),
                                 shape = RoundedCornerShape(8.dp),
@@ -2095,6 +2111,12 @@ fun RiderPartnerCompactScreen(
                                     if (isSuspended || isCodLimitLocked) PorterRed else if (currentRider?.isOnline == true) Color(0xFF10B981) else Color(0xFF94A3B8)
                                 ),
                                 modifier = Modifier
+                                    .graphicsLayer {
+                                        if (currentRider?.isOnline == true && !isSuspended && !isCodLimitLocked) {
+                                            scaleX = dutyPulseScale
+                                            scaleY = dutyPulseScale
+                                        }
+                                    }
                                     .clickable { onToggleDutyClicked() }
                                     .testTag("rider_online_status_pill")
                             ) {
@@ -2990,6 +3012,16 @@ private fun RiderProgressiveOrderCard(
     }
     val distKmSafe = order.distanceKm.coerceAtLeast(0.5)
     val perKmRate = earnDouble / distKmSafe
+    val liveOfferAnim = rememberInfiniteTransition(label = "riderLiveOfferAnim")
+    val liveOfferPulse by liveOfferAnim.animateFloat(
+        initialValue = 1.0f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 700),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "liveOfferPulse"
+    )
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -2998,7 +3030,7 @@ private fun RiderProgressiveOrderCard(
             width = if (awaitingAcceptDecision) 2.dp else 1.2.dp,
             color = if (awaitingAcceptDecision) RiderOrange else RiderTeal.copy(alpha = 0.45f)
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (awaitingAcceptDecision) 6.dp else 3.dp),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("rider_order_card_${order.orderId}")
@@ -3036,7 +3068,11 @@ private fun RiderProgressiveOrderCard(
                             Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 color = Color(0xFF059669),
-                                shape = RoundedCornerShape(999.dp)
+                                shape = RoundedCornerShape(999.dp),
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = liveOfferPulse
+                                    scaleY = liveOfferPulse
+                                }
                             ) {
                                 Text(
                                     text = "🔔 LIVE REQUEST",

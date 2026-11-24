@@ -2,9 +2,14 @@ package com.example.security
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
@@ -13,6 +18,7 @@ import com.example.data.model.DeliveryProof
 import com.example.data.model.OrderStatus
 import com.example.data.model.PickupProof
 import com.example.data.model.RiderProfile
+import com.example.ui.components.AdminExcelXlsxExporter
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -21,9 +27,9 @@ import java.util.Locale
 
 /**
  * Zero-permission Android PdfDocument generator for:
- * 1. Customer Delivery Receipt & GST Tax Invoice PDF
- * 2. Rider Partner Monthly Earning Statement PDF
- * Files are written inside `cacheDir/pdfs` and shared safely via FileProvider.
+ * 1. Customer Delivery Receipt & GST Tax Invoice PDF (with Official Brand Logo)
+ * 2. Rider Partner Monthly Earning Statement PDF (with Official Brand Logo)
+ * Files are written inside `cacheDir/pdfs`, copied to `Downloads/QuickDelivery/Invoices`, and shared safely via FileProvider.
  */
 object QuickDeliveryPdfGenerator {
 
@@ -35,6 +41,40 @@ object QuickDeliveryPdfGenerator {
         if (!dir.exists()) dir.mkdirs()
         return File(dir, fileName)
     }
+
+    private fun loadCircularBrandLogoBitmap(context: Context, sizePx: Int = 56): Bitmap? = runCatching {
+        val resId = context.resources.getIdentifier(
+            "cute_scooter_bunny_logo_1794655841710",
+            "drawable",
+            context.packageName
+        )
+        if (resId == 0) return@runCatching null
+        val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+        val src = BitmapFactory.decodeResource(context.resources, resId, opts) ?: return@runCatching null
+        val out = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FCF4E1") }
+        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#FF7A1A")
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+        val radius = sizePx / 2f
+        c.save()
+        val clipPath = Path().apply { addCircle(radius, radius, radius - 2f, Path.Direction.CW) }
+        c.clipPath(clipPath)
+        c.drawRect(0f, 0f, sizePx.toFloat(), sizePx.toFloat(), bgPaint)
+        val cropSize = minOf(src.width, src.height)
+        val srcLeft = (src.width - cropSize) / 2
+        val srcTop = (src.height - cropSize) / 2
+        val srcRect = Rect(srcLeft, srcTop, srcLeft + cropSize, srcTop + cropSize)
+        val dstRect = RectF(0f, 0f, sizePx.toFloat(), sizePx.toFloat())
+        c.drawBitmap(src, srcRect, dstRect, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
+        c.restore()
+        c.drawCircle(radius, radius, radius - 2f, borderPaint)
+        src.recycle()
+        out
+    }.getOrNull()
 
     private fun sharePdfFile(context: Context, file: File, subject: String, chooserTitle: String) {
         val authority = "${context.packageName}.fileprovider"
@@ -140,10 +180,17 @@ object QuickDeliveryPdfGenerator {
             strokeWidth = 1f
         }
 
-        // Header banner
+        // Header banner with Official Quick Delivery Brand Logo
         canvas.drawRect(0f, 0f, 595f, 92f, navyPaint)
-        canvas.drawText("QUICK DELIVERY • TAX INVOICE & RECEIPT", 36f, 44f, titlePaint)
-        canvas.drawText("FAST. SIMPLE. SECURE.  •  Order #${order.orderId}", 36f, 68f, subTitlePaint)
+        val customerLogo = loadCircularBrandLogoBitmap(context, 56)
+        val headerTextX = if (customerLogo != null) {
+            canvas.drawBitmap(customerLogo, 28f, 18f, null)
+            98f
+        } else {
+            36f
+        }
+        canvas.drawText("QUICK DELIVERY • TAX INVOICE & RECEIPT", headerTextX, 44f, titlePaint)
+        canvas.drawText("FAST. SIMPLE. SECURE.  •  Order #${order.orderId}", headerTextX, 68f, subTitlePaint)
 
         var y = 122f
         val generatedAt = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
@@ -255,6 +302,15 @@ object QuickDeliveryPdfGenerator {
         val outFile = ensurePdfFile(context, "QuickDelivery_Receipt_${cleanId}.pdf")
         FileOutputStream(outFile).use { fos -> doc.writeTo(fos) }
         doc.close()
+        runCatching {
+            AdminExcelXlsxExporter.saveBytesToPublicPhoneDownloads(
+                context = context,
+                subFolder = "Invoices",
+                fileName = outFile.name,
+                mimeType = "application/pdf",
+                bytes = outFile.readBytes()
+            )
+        }
 
         sharePdfFile(
             context = context,
@@ -323,8 +379,15 @@ object QuickDeliveryPdfGenerator {
         val generatedAt = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
 
         canvas.drawRect(0f, 0f, 595f, 90f, navyPaint)
-        canvas.drawText("PARTNER QUICK DELIVERY • EARNING STATEMENT", 36f, 42f, titlePaint)
-        canvas.drawText("$monthLabel Statement  •  Generated $generatedAt", 36f, 65f, orangeSubPaint)
+        val riderLogo = loadCircularBrandLogoBitmap(context, 54)
+        val riderHeaderX = if (riderLogo != null) {
+            canvas.drawBitmap(riderLogo, 28f, 18f, null)
+            96f
+        } else {
+            36f
+        }
+        canvas.drawText("PARTNER QUICK DELIVERY • EARNING STATEMENT", riderHeaderX, 42f, titlePaint)
+        canvas.drawText("$monthLabel Statement  •  Generated $generatedAt", riderHeaderX, 65f, orangeSubPaint)
 
         var y = 116f
         canvas.drawText("Partner Name: ${rider.name} (${rider.riderId})", 36f, y, headingPaint)
@@ -398,6 +461,15 @@ object QuickDeliveryPdfGenerator {
         val outFile = ensurePdfFile(context, "Partner_Earnings_Statement_${rider.riderId}.pdf")
         FileOutputStream(outFile).use { fos -> doc.writeTo(fos) }
         doc.close()
+        runCatching {
+            AdminExcelXlsxExporter.saveBytesToPublicPhoneDownloads(
+                context = context,
+                subFolder = "Invoices",
+                fileName = outFile.name,
+                mimeType = "application/pdf",
+                bytes = outFile.readBytes()
+            )
+        }
 
         sharePdfFile(
             context = context,
