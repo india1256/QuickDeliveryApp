@@ -1,5 +1,7 @@
 package com.example
 
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.R as CoreR
 import com.example.data.cloud.QuickDeliveryFirebaseInitializer
@@ -11,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -18,28 +21,39 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class StartupLaunchRegressionTest {
+    @get:Rule
+    val composeRule = createEmptyComposeRule()
+
     @Test
     fun customerMainActivity_launchesWithoutCrashing() {
-        val controller = Robolectric.buildActivity(CustomerMainActivity::class.java).setup()
-        assertNotNull(controller.get())
+        ActivityScenario.launch(CustomerMainActivity::class.java).use { scenario ->
+            composeRule.waitForIdle()
+            scenario.onActivity { assertNotNull(it) }
+        }
     }
 
     @Test
     fun riderMainActivity_launchesWithoutCrashing() {
-        val controller = Robolectric.buildActivity(RiderMainActivity::class.java).setup()
-        assertNotNull(controller.get())
+        ActivityScenario.launch(RiderMainActivity::class.java).use { scenario ->
+            composeRule.waitForIdle()
+            scenario.onActivity { assertNotNull(it) }
+        }
     }
 
     @Test
     fun adminMainActivity_launchesWithoutCrashing() {
-        val controller = Robolectric.buildActivity(AdminMainActivity::class.java).setup()
-        assertNotNull(controller.get())
+        ActivityScenario.launch(AdminMainActivity::class.java).use { scenario ->
+            composeRule.waitForIdle()
+            scenario.onActivity { assertNotNull(it) }
+        }
     }
 
     @Test
     fun mainActivity_launchesWithoutCrashing() {
-        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
-        assertNotNull(controller.get())
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            composeRule.waitForIdle()
+            scenario.onActivity { assertNotNull(it) }
+        }
     }
 
     @Test
