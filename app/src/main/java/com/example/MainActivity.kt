@@ -82,6 +82,7 @@ import com.example.ui.components.AdminMutualRatingsAndSuggestionsPanel
 import com.example.ui.components.AdminProfessionalLiveMirrorScreen
 import com.example.ui.components.AdminSosSupportLiveBanner
 import com.example.ui.components.AdminWebExecutiveLiveRibbon
+import com.example.ui.components.AppRemoteUpdateGateOverlay
 import com.example.ui.components.CrashRecoveryDialogOverlay
 import com.example.ui.components.FcmOrderNotificationManager
 import com.example.ui.components.LiveNetworkStatusBanner
@@ -112,6 +113,11 @@ class MainActivity : ComponentActivity() {
                     val activeRole by com.example.data.cloud.MultiPhoneLiveSyncManager.lockedPhoneRole.collectAsState()
                     val effectiveRole = if (BuildConfig.APP_ROLE != "UNIFIED") BuildConfig.APP_ROLE else activeRole
 
+                    AppRemoteUpdateGateOverlay(
+                        appRole = effectiveRole,
+                        currentVersionName = BuildConfig.VERSION_NAME,
+                        currentVersionCode = BuildConfig.VERSION_CODE
+                    )
                     CrashRecoveryDialogOverlay(appRole = effectiveRole)
 
                     when (effectiveRole) {

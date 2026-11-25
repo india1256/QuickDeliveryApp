@@ -82,6 +82,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import java.util.Locale
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -127,7 +128,7 @@ fun attemptAutoSignIn(
     }
     val clientId = try {
         QuickDeliveryFirebaseInitializer.resolveWebClientId(context)
-    } catch (e: Exception) {
+    } catch (t: Throwable) {
         onUnauthenticated()
         return
     }
@@ -153,7 +154,9 @@ fun attemptAutoSignIn(
             } else {
                 onUnauthenticated()
             }
-        } catch (e: Exception) {
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
             onUnauthenticated()
         }
     }
@@ -173,15 +176,22 @@ fun GoogleSignInButton(
         context.findActivity() ?: view.context.findActivity()
     }
     val credentialContext = hostActivity ?: context
-    val credentialManager = remember(credentialContext) { CredentialManager.create(credentialContext) }
+    val credentialManager = remember(credentialContext) {
+        runCatching { CredentialManager.create(credentialContext) }.getOrNull()
+    }
     var isLoading by remember { mutableStateOf(false) }
 
     Button(
         onClick = {
+            val cm = credentialManager
+            if (cm == null) {
+                onAuthError("Google Sign-In unavailable on this device. Please sign in with Mobile Number or Email above.")
+                return@Button
+            }
             isLoading = true
             onGoogleSignInClicked(
                 context = credentialContext,
-                credentialManager = credentialManager,
+                credentialManager = cm,
                 onAuthSuccess = {
                     isLoading = false
                     onAuthSuccess()
@@ -231,7 +241,7 @@ fun onGoogleSignInClicked(
     }
     val clientId = try {
         QuickDeliveryFirebaseInitializer.resolveWebClientId(activity)
-    } catch (e: Exception) {
+    } catch (t: Throwable) {
         onAuthError("Google Sign-In is not configured on this build. Please sign in with Mobile Number or Email above.")
         return
     }
@@ -264,6 +274,8 @@ fun onGoogleSignInClicked(
             } else {
                 onAuthError("Could not verify Google account. Please sign in with Mobile Number or Email above.")
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: GetCredentialCancellationException) {
             Log.w("Auth", "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
             onAuthCancelled()
@@ -286,8 +298,8 @@ fun onGoogleSignInClicked(
                     "Google Sign-In could not complete right now. Please sign in with Mobile Number or Email above."
             }
             onAuthError(friendlyMessage)
-        } catch (e: Exception) {
-            Log.e("Auth", "Google Sign-In failed", e)
+        } catch (t: Throwable) {
+            Log.e("Auth", "Google Sign-In failed", t)
             onAuthError("Google Sign-In could not complete right now. Please sign in with Mobile Number or Email above.")
         }
     }
@@ -330,7 +342,9 @@ fun QuickDeliveryCloudSyncBar(
     }
     val credentialContext = hostActivity ?: context
     val firebaseReady = remember(context) { QuickDeliveryFirebaseInitializer.ensureInitialized(context) != null }
-    val credentialManager = remember(credentialContext) { CredentialManager.create(credentialContext) }
+    val credentialManager = remember(credentialContext) {
+        runCatching { CredentialManager.create(credentialContext) }.getOrNull()
+    }
     val localRepo = remember(context) {
         SharedOrderRepository.getInstance(context).also { repo ->
             com.example.data.delivery.AutomatedFairRiderAssignmentEngine.ensureCleanInitialDatabaseState(repo)
@@ -371,8 +385,8 @@ fun QuickDeliveryCloudSyncBar(
     }
 
     // Automatically attempt background sign-in using existing authorized credentials
-    LaunchedEffect(firebaseReady) {
-        if (!firebaseReady) return@LaunchedEffect
+    LaunchedEffect(firebaseReady, credentialManager) {
+        if (!firebaseReady || credentialManager == null) return@LaunchedEffect
         attemptAutoSignIn(
             context = credentialContext,
             credentialManager = credentialManager,

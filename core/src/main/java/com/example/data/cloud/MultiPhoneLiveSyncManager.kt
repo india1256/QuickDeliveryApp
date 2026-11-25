@@ -397,7 +397,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.1")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.2")
                     setRequestProperty("X-QD-App-Role", activeRole)
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
                     setRequestProperty("X-QD-Sync-Sig", syncSig)
@@ -1144,7 +1144,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.1")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.2")
                     setRequestProperty("X-QD-App-Role", cleanRole)
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
                     setRequestProperty("X-QD-Sync-Sig", syncSig)
@@ -1200,7 +1200,7 @@ object MultiPhoneLiveSyncManager {
                     connectTimeout = if (isPrimary) 12_000 else 3_000
                     readTimeout = if (isPrimary) 18_000 else 3_500
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.1")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.2")
                 }
                 val code = conn.responseCode
                 val latency = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
@@ -1214,7 +1214,7 @@ object MultiPhoneLiveSyncManager {
                             isOnline = true,
                             isWakingUp = false,
                             latencyMs = latency,
-                            serverVersion = json.optString("version", "6.7.1"),
+                            serverVersion = json.optString("version", "6.7.2"),
                             totalOrders = json.optInt("totalOrders", 0),
                             searchingOrders = json.optInt("activeSearchingOrders", 0),
                             registeredRiders = json.optInt("registeredRiders", 0),
@@ -1276,7 +1276,7 @@ object MultiPhoneLiveSyncManager {
                     connectTimeout = if (isPrimary) 12_000 else 3_000
                     readTimeout = if (isPrimary) 25_000 else 5_000
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.1")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.2")
                     setRequestProperty("X-QD-Device-Id", deviceId)
                     setRequestProperty("X-QD-App-Role", "ADMIN")
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
@@ -1335,7 +1335,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.1")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.2")
                     setRequestProperty("X-QD-Device-Id", deviceId)
                     setRequestProperty("X-QD-App-Role", "ADMIN")
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
@@ -1395,7 +1395,7 @@ object MultiPhoneLiveSyncManager {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.1")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.2")
                     setRequestProperty("X-QD-Device-Id", deviceId)
                     setRequestProperty("X-QD-App-Role", "ADMIN")
                     setRequestProperty("X-QD-Sync-Ts", syncTs.toString())
@@ -1420,6 +1420,54 @@ object MultiPhoneLiveSyncManager {
             }
         }
         return Result.failure(IllegalStateException(lastError))
+    }
+
+    /**
+     * Fetches the lightweight GET /api/app-update-manifest endpoint immediately on app launch
+     * so out-of-date APKs are gated before users proceed.
+     */
+    suspend fun checkAppUpdateManifestOnce(context: Context): ServerAppUpdateManifest? = withContext(Dispatchers.IO) {
+        if (isRobolectricUnitTest) return@withContext null
+        val appContext = context.applicationContext
+        val orderedEndpoints = buildList {
+            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/app-update-manifest")) }
+            LIVE_SYNC_ENDPOINTS.forEach { ep ->
+                val target = ep.replace("/api/live-sync", "/api/app-update-manifest")
+                if (target !in this) add(target)
+            }
+            if (QuickDeliveryBrandLinks.APP_UPDATE_MANIFEST_URL !in this) {
+                add(QuickDeliveryBrandLinks.APP_UPDATE_MANIFEST_URL)
+            }
+        }
+        for (endpoint in orderedEndpoints) {
+            val isPrimary = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
+                endpoint.contains("onrender.com", ignoreCase = true)
+            val attempt = runCatching {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = if (isPrimary) 10_000 else 3_000
+                    readTimeout = if (isPrimary) 15_000 else 3_500
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("X-QD-App-Client", "QuickDelivery-Android-v6.7.2")
+                }
+                val code = conn.responseCode
+                if (code in 200..299) {
+                    val raw = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                    conn.disconnect()
+                    val json = JSONObject(raw)
+                    if (json.optBoolean("ok", true)) {
+                        QuickDeliveryOperationsManager.updateServerAppManifest(appContext, json)
+                    } else null
+                } else {
+                    conn.disconnect()
+                    null
+                }
+            }.getOrNull()
+            if (attempt != null) {
+                return@withContext attempt
+            }
+        }
+        null
     }
 }
 

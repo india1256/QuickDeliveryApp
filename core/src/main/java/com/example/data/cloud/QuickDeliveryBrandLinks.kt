@@ -20,7 +20,9 @@ object QuickDeliveryBrandLinks {
     const val CUSTOMER_APK_URL = "$PUBLIC_BASE_URL/customer-apk"
     const val RIDER_APK_URL = "$PUBLIC_BASE_URL/rider-apk"
     const val ADMIN_APK_URL = "$PUBLIC_BASE_URL/admin-apk"
+    const val ALL_IN_ONE_APK_URL = "$PUBLIC_BASE_URL/suite"
     const val LIVE_SYNC_API_URL = "$PUBLIC_BASE_URL/api/live-sync"
+    const val APP_UPDATE_MANIFEST_URL = "$PUBLIC_BASE_URL/api/app-update-manifest"
     const val BACKUP_EXPORT_URL = "$PUBLIC_BASE_URL/api/backup-export"
 
     // Support & administrative contact emails

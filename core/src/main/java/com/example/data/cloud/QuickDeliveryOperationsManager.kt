@@ -550,6 +550,85 @@ data class B2bDukaanAccountRecord(
     }
 }
 
+data class ServerAppUpdateManifest(
+    val latestVersionCode: Int = 0,
+    val latestVersionName: String = "",
+    val forceUpdateRequired: Boolean = true,
+    val updateNotes: String = "",
+    val customerUpdateUrl: String = QuickDeliveryBrandLinks.CUSTOMER_APK_URL,
+    val riderUpdateUrl: String = QuickDeliveryBrandLinks.RIDER_APK_URL,
+    val adminUpdateUrl: String = QuickDeliveryBrandLinks.ADMIN_APK_URL,
+    val unifiedUpdateUrl: String = QuickDeliveryBrandLinks.ALL_IN_ONE_APK_URL,
+    val publishedAtIso: String = ""
+) {
+    fun isUpdateAvailableForApp(currentVersionName: String, currentVersionCode: Int): Boolean {
+        if (latestVersionCode > 0 && latestVersionCode > currentVersionCode) return true
+        val target = latestVersionName.trim().removePrefix("v").removePrefix("V")
+        if (target.isBlank()) return false
+        val current = currentVersionName.trim().removePrefix("v").removePrefix("V")
+        return AdminRemoteFeatureFlags.compareSemver(target, current) > 0
+    }
+
+    fun resolveDownloadUrl(appRole: String): String = when (appRole.trim().uppercase()) {
+        "RIDER" -> riderUpdateUrl.ifBlank { QuickDeliveryBrandLinks.RIDER_APK_URL }
+        "ADMIN" -> adminUpdateUrl.ifBlank { QuickDeliveryBrandLinks.ADMIN_APK_URL }
+        "CUSTOMER" -> customerUpdateUrl.ifBlank { QuickDeliveryBrandLinks.CUSTOMER_APK_URL }
+        else -> unifiedUpdateUrl.ifBlank { QuickDeliveryBrandLinks.ALL_IN_ONE_APK_URL }
+    }
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("latestVersionCode", latestVersionCode)
+        put("latestVersionName", latestVersionName)
+        put("forceUpdateRequired", forceUpdateRequired)
+        put("updateNotes", updateNotes)
+        put("customerUpdateUrl", customerUpdateUrl)
+        put("riderUpdateUrl", riderUpdateUrl)
+        put("adminUpdateUrl", adminUpdateUrl)
+        put("unifiedUpdateUrl", unifiedUpdateUrl)
+        put("publishedAtIso", publishedAtIso)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): ServerAppUpdateManifest? {
+            val code = obj.optInt("latestVersionCode", 0).coerceAtLeast(0)
+            val name = obj.optString("latestVersionName", "").trim().take(24)
+            if (code <= 0 && name.isBlank()) return null
+            val urlsObj = obj.optJSONObject("urls")
+            val custUrl = obj.optString(
+                "customerUpdateUrl",
+                urlsObj?.optString("CUSTOMER", QuickDeliveryBrandLinks.CUSTOMER_APK_URL)
+                    ?: QuickDeliveryBrandLinks.CUSTOMER_APK_URL
+            ).trim().ifBlank { QuickDeliveryBrandLinks.CUSTOMER_APK_URL }
+            val riderUrl = obj.optString(
+                "riderUpdateUrl",
+                urlsObj?.optString("RIDER", QuickDeliveryBrandLinks.RIDER_APK_URL)
+                    ?: QuickDeliveryBrandLinks.RIDER_APK_URL
+            ).trim().ifBlank { QuickDeliveryBrandLinks.RIDER_APK_URL }
+            val adminUrl = obj.optString(
+                "adminUpdateUrl",
+                urlsObj?.optString("ADMIN", QuickDeliveryBrandLinks.ADMIN_APK_URL)
+                    ?: QuickDeliveryBrandLinks.ADMIN_APK_URL
+            ).trim().ifBlank { QuickDeliveryBrandLinks.ADMIN_APK_URL }
+            val unifiedUrl = obj.optString(
+                "unifiedUpdateUrl",
+                urlsObj?.optString("UNIFIED", QuickDeliveryBrandLinks.ALL_IN_ONE_APK_URL)
+                    ?: QuickDeliveryBrandLinks.ALL_IN_ONE_APK_URL
+            ).trim().ifBlank { QuickDeliveryBrandLinks.ALL_IN_ONE_APK_URL }
+            return ServerAppUpdateManifest(
+                latestVersionCode = code,
+                latestVersionName = name,
+                forceUpdateRequired = obj.optBoolean("forceUpdateRequired", true),
+                updateNotes = obj.optString("updateNotes", "").trim().take(240),
+                customerUpdateUrl = custUrl,
+                riderUpdateUrl = riderUrl,
+                adminUpdateUrl = adminUrl,
+                unifiedUpdateUrl = unifiedUrl,
+                publishedAtIso = obj.optString("publishedAtIso", "").trim()
+            )
+        }
+    }
+}
+
 /**
  * Shared Production Operations Manager across Customer, Rider Partner, and Admin Console:
  * - Customer Saved Addresses (Home / Office / Shop)
@@ -577,6 +656,7 @@ object QuickDeliveryOperationsManager {
     private const val KEY_TIMELINE_EVENTS = "order_timeline_events_json"
     private const val KEY_UNREACHABLE_RECORDS = "customer_unreachable_records_json"
     private const val KEY_B2B_ACCOUNTS = "b2b_dukaan_accounts_json"
+    private const val KEY_SERVER_APP_UPDATE = "server_app_update_manifest_json"
 
     private val lock = Any()
     private var loaded = false
@@ -629,6 +709,9 @@ object QuickDeliveryOperationsManager {
 
     private val _b2bAccounts = MutableStateFlow<List<B2bDukaanAccountRecord>>(emptyList())
     val b2bAccounts: StateFlow<List<B2bDukaanAccountRecord>> = _b2bAccounts.asStateFlow()
+
+    private val _serverAppUpdate = MutableStateFlow(ServerAppUpdateManifest())
+    val serverAppUpdate: StateFlow<ServerAppUpdateManifest> = _serverAppUpdate.asStateFlow()
 
     private val claimedReferralCodes = mutableSetOf<String>()
     private val creditedDisputeIds = mutableSetOf<String>()
@@ -768,6 +851,12 @@ object QuickDeliveryOperationsManager {
                     _b2bAccounts.value = (0 until arr.length())
                         .mapNotNull { arr.optJSONObject(it)?.let(B2bDukaanAccountRecord::fromJson) }
                 }
+
+                prefs.getString(KEY_SERVER_APP_UPDATE, null)?.let { raw ->
+                    ServerAppUpdateManifest.fromJson(JSONObject(raw))?.let { manifest ->
+                        _serverAppUpdate.value = manifest
+                    }
+                }
             }
         }
     }
@@ -849,6 +938,7 @@ object QuickDeliveryOperationsManager {
                         _b2bAccounts.value.forEach { put(it.toJson()) }
                     }.toString()
                 )
+                .putString(KEY_SERVER_APP_UPDATE, _serverAppUpdate.value.toJson().toString())
                 .apply()
         }
     }
@@ -1876,6 +1966,15 @@ object QuickDeliveryOperationsManager {
                 }
             }
 
+            root.optJSONObject("serverAppUpdate")?.let { updObj ->
+                ServerAppUpdateManifest.fromJson(updObj)?.let { manifest ->
+                    if (manifest != _serverAppUpdate.value) {
+                        _serverAppUpdate.value = manifest
+                        changed = true
+                    }
+                }
+            }
+
             root.optJSONObject("waitTimerStartByOrder")?.let { wtObj ->
                 val merged = _waitTimerStartByOrder.value.toMutableMap()
                 val keys = wtObj.keys()
@@ -1948,6 +2047,18 @@ object QuickDeliveryOperationsManager {
             if (changed) persist(context)
         }
         flagsUpdated?.let { applyPricingOverridesFromFlags(it, SharedOrderRepository.getInstance(context)) }
+    }
+
+    fun updateServerAppManifest(context: Context, json: JSONObject): ServerAppUpdateManifest? {
+        ensureLoaded(context)
+        val manifest = ServerAppUpdateManifest.fromJson(json) ?: return null
+        synchronized(lock) {
+            if (manifest != _serverAppUpdate.value) {
+                _serverAppUpdate.value = manifest
+                persist(context)
+            }
+        }
+        return manifest
     }
 
     // ---------------- B2B / DUKAAN MONTHLY POSTPAID ACCOUNTS & GST INVOICING ----------------

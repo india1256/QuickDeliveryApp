@@ -63,7 +63,7 @@ object QuickDeliveryCrashShield {
     private val _pendingCrashReport = MutableStateFlow<CrashReportRecord?>(null)
     val pendingCrashReport: StateFlow<CrashReportRecord?> = _pendingCrashReport.asStateFlow()
 
-    fun install(context: Context, appRole: String, appVersion: String = "6.7.1") {
+    fun install(context: Context, appRole: String, appVersion: String = "6.7.2") {
         val appCtx = context.applicationContext
         loadPendingReport(appCtx)
         if (installed) return
@@ -100,7 +100,7 @@ object QuickDeliveryCrashShield {
         appRole: String,
         exceptionSummary: String,
         stackTracePreview: String = "",
-        appVersion: String = "6.7.1"
+        appVersion: String = "6.7.2"
     ): CrashReportRecord {
         val now = System.currentTimeMillis()
         val label = SimpleDateFormat("dd MMM yyyy, hh:mm:ss a", Locale.US).format(Date(now))
@@ -199,7 +199,7 @@ object QuickDeliveryCrashShield {
         CrashReportRecord(
             crashId = obj.optString("crashId", "CR-00000"),
             appRole = obj.optString("appRole", "APP"),
-            appVersion = obj.optString("appVersion", "6.7.1"),
+            appVersion = obj.optString("appVersion", "6.7.2"),
             deviceModel = obj.optString("deviceModel", "Android Device"),
             androidSdk = obj.optInt("androidSdk", Build.VERSION.SDK_INT),
             timestampEpochMs = obj.optLong("timestampEpochMs", 0L),

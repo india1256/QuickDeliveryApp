@@ -97,6 +97,7 @@ import com.example.ui.auth.GoogleSignInButton
 import com.example.ui.auth.QuickDeliveryCloudSyncBar
 import com.example.ui.auth.QuickDeliveryGoogleAuthTokenCache
 import com.example.ui.components.AdminEnterpriseControlCenter
+import com.example.ui.components.AppRemoteUpdateGateOverlay
 import com.example.ui.components.CrashRecoveryDialogOverlay
 import com.example.ui.components.FcmOrderNotificationManager
 import com.example.ui.components.LiveNetworkStatusBanner
@@ -161,6 +162,11 @@ class AdminMainActivity : ComponentActivity() {
                         unlockedAdminPin != remoteFlags.adminSecurityPin
 
                     QuickDeliveryCloudSyncBar(showCardUi = false)
+                    AppRemoteUpdateGateOverlay(
+                        appRole = "ADMIN",
+                        currentVersionName = BuildConfig.VERSION_NAME,
+                        currentVersionCode = BuildConfig.VERSION_CODE
+                    )
                     CrashRecoveryDialogOverlay(appRole = "ADMIN")
 
                     if (!isAdminAuthorized) {

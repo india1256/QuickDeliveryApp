@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +51,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,8 +84,9 @@ private val SyncSlate = Color(0xFF64748B)
 private val SyncIndigo = Color(0xFF4338CA)
 
 /**
- * Drop-in Remote App Update / Force Update dialog for Customer & Rider apps.
- * Stays completely invisible unless Admin publishes a newer version from Admin Settings.
+ * Drop-in Remote App Update / Mandatory Force-Update gate for Customer, Rider, Admin & Unified apps.
+ * Automatically checks the server's /api/app-update-manifest on startup AND respects Admin-pushed
+ * remoteFeatureFlags, blocking app usage until updated when forceUpdateRequired is enabled.
  */
 @Composable
 fun AppRemoteUpdateGateOverlay(
@@ -93,9 +96,14 @@ fun AppRemoteUpdateGateOverlay(
 ) {
     val context = LocalContext.current
     val flags by QuickDeliveryOperationsManager.remoteFeatureFlags.collectAsState()
+    val serverManifest by QuickDeliveryOperationsManager.serverAppUpdate.collectAsState()
     var dismissedVersionKey by remember { mutableStateOf("") }
 
-    val updateAvailable = remember(
+    LaunchedEffect(Unit) {
+        MultiPhoneLiveSyncManager.checkAppUpdateManifestOnce(context)
+    }
+
+    val flagUpdateAvailable = remember(
         flags.latestAppVersionName,
         flags.latestAppVersionCode,
         currentVersionName,
@@ -103,42 +111,103 @@ fun AppRemoteUpdateGateOverlay(
     ) {
         flags.isUpdateAvailableForApp(currentVersionName, currentVersionCode)
     }
-    val versionKey = "${flags.latestAppVersionName}_${flags.latestAppVersionCode}"
-    val shouldShow = updateAvailable && (flags.forceUpdateRequired || dismissedVersionKey != versionKey)
 
-    if (!shouldShow) return
+    val serverUpdateAvailable = remember(
+        serverManifest.latestVersionName,
+        serverManifest.latestVersionCode,
+        currentVersionName,
+        currentVersionCode
+    ) {
+        serverManifest.isUpdateAvailableForApp(currentVersionName, currentVersionCode)
+    }
 
-    val targetUrl = remember(appRole, flags.customerUpdateUrl, flags.riderUpdateUrl) {
-        if (appRole.equals("RIDER", ignoreCase = true)) {
-            flags.riderUpdateUrl.ifBlank { QuickDeliveryBrandLinks.RIDER_APK_URL }
-        } else {
-            flags.customerUpdateUrl.ifBlank { QuickDeliveryBrandLinks.CUSTOMER_APK_URL }
+    val updateAvailable = flagUpdateAvailable || serverUpdateAvailable
+    if (!updateAvailable) return
+
+    val useServerAsPrimary = remember(
+        serverUpdateAvailable,
+        flagUpdateAvailable,
+        serverManifest.latestVersionCode,
+        serverManifest.latestVersionName,
+        flags.latestAppVersionCode,
+        flags.latestAppVersionName
+    ) {
+        when {
+            serverUpdateAvailable && !flagUpdateAvailable -> true
+            !serverUpdateAvailable && flagUpdateAvailable -> false
+            serverManifest.latestVersionCode != flags.latestAppVersionCode ->
+                serverManifest.latestVersionCode > flags.latestAppVersionCode
+            else -> AdminRemoteFeatureFlags.compareSemver(
+                serverManifest.latestVersionName,
+                flags.latestAppVersionName
+            ) >= 0
         }
     }
-    val targetVersionLabel = flags.latestAppVersionName.trim().ifBlank { "Build #${flags.latestAppVersionCode}" }
+
+    val effectiveForce = (serverUpdateAvailable && serverManifest.forceUpdateRequired) ||
+        (flagUpdateAvailable && flags.forceUpdateRequired)
+
+    val effectiveVersionName = if (useServerAsPrimary) serverManifest.latestVersionName else flags.latestAppVersionName
+    val effectiveVersionCode = if (useServerAsPrimary) serverManifest.latestVersionCode else flags.latestAppVersionCode
+    val effectiveNotes = if (useServerAsPrimary) {
+        serverManifest.updateNotes.ifBlank { flags.updateNotes }
+    } else {
+        flags.updateNotes.ifBlank { serverManifest.updateNotes }
+    }
+
+    val versionKey = "${effectiveVersionName}_${effectiveVersionCode}"
+    val shouldShow = effectiveForce || dismissedVersionKey != versionKey
+    if (!shouldShow) return
+
+    if (effectiveForce) {
+        BackHandler(enabled = true) {
+            // Mandatory update cannot be bypassed with the Back button.
+        }
+    }
+
+    val targetUrl = remember(
+        appRole,
+        useServerAsPrimary,
+        serverManifest,
+        flags.customerUpdateUrl,
+        flags.riderUpdateUrl,
+        flags.adminUpdateUrl
+    ) {
+        if (useServerAsPrimary) {
+            serverManifest.resolveDownloadUrl(appRole)
+        } else {
+            when (appRole.trim().uppercase()) {
+                "RIDER" -> flags.riderUpdateUrl.ifBlank { QuickDeliveryBrandLinks.RIDER_APK_URL }
+                "ADMIN" -> flags.adminUpdateUrl.ifBlank { QuickDeliveryBrandLinks.ADMIN_APK_URL }
+                "CUSTOMER" -> flags.customerUpdateUrl.ifBlank { QuickDeliveryBrandLinks.CUSTOMER_APK_URL }
+                else -> QuickDeliveryBrandLinks.ALL_IN_ONE_APK_URL
+            }
+        }
+    }
+    val targetVersionLabel = effectiveVersionName.trim().ifBlank { "Build #$effectiveVersionCode" }
 
     AlertDialog(
         onDismissRequest = {
-            if (!flags.forceUpdateRequired) {
+            if (!effectiveForce) {
                 dismissedVersionKey = versionKey
             }
         },
         properties = DialogProperties(
-            dismissOnBackPress = !flags.forceUpdateRequired,
-            dismissOnClickOutside = !flags.forceUpdateRequired
+            dismissOnBackPress = !effectiveForce,
+            dismissOnClickOutside = !effectiveForce
         ),
         icon = {
             Icon(
                 imageVector = Icons.Default.SystemUpdate,
                 contentDescription = "App Update Available",
-                tint = if (flags.forceUpdateRequired) SyncCrimson else SyncTeal,
-                modifier = Modifier.size(32.dp)
+                tint = if (effectiveForce) SyncCrimson else SyncTeal,
+                modifier = Modifier.size(34.dp)
             )
         },
         title = {
             Text(
-                text = if (flags.forceUpdateRequired) {
-                    "Required Update (v$targetVersionLabel)"
+                text = if (effectiveForce) {
+                    "Mandatory Update Required (v$targetVersionLabel)"
                 } else {
                     "New App Update Available (v$targetVersionLabel)"
                 },
@@ -149,11 +218,15 @@ fun AppRemoteUpdateGateOverlay(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "You are on v$currentVersionName. Update now to get the latest improvements and security fixes.",
+                    text = if (effectiveForce) {
+                        "Your installed version (v$currentVersionName • #$currentVersionCode) is outdated. Please download and install v$targetVersionLabel (#$effectiveVersionCode) to continue using Quick Delivery."
+                    } else {
+                        "You are on v$currentVersionName. Update now to get the latest improvements and security fixes."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = SyncSlate
                 )
-                if (flags.updateNotes.isNotBlank()) {
+                if (effectiveNotes.isNotBlank()) {
                     Surface(
                         color = Color(0xFFF0FDFA),
                         shape = RoundedCornerShape(10.dp),
@@ -161,7 +234,7 @@ fun AppRemoteUpdateGateOverlay(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = flags.updateNotes,
+                            text = effectiveNotes,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = SyncTeal,
@@ -181,7 +254,7 @@ fun AppRemoteUpdateGateOverlay(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (flags.forceUpdateRequired) SyncCrimson else SyncTeal
+                    containerColor = if (effectiveForce) SyncCrimson else SyncTeal
                 ),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
@@ -191,7 +264,7 @@ fun AppRemoteUpdateGateOverlay(
                 Text("Update Now", fontWeight = FontWeight.Bold, color = Color.White)
             }
         },
-        dismissButton = if (!flags.forceUpdateRequired) {
+        dismissButton = if (!effectiveForce) {
             {
                 TextButton(
                     onClick = { dismissedVersionKey = versionKey },

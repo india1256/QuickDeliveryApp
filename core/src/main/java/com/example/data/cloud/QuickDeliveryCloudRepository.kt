@@ -105,25 +105,48 @@ fun handleFirestoreError(exception: Exception, operationType: OperationType, pat
 object QuickDeliveryFirebaseInitializer {
     const val EXPECTED_PROJECT_ID = "gen-lang-client-0738232271"
     const val EXPECTED_DATABASE_ID = "ai-studio-android-quickdel-424e8f15-7bd2-46ff-a987-31f206ba3fe2"
+    private const val FALLBACK_APPLICATION_ID = "1:1040374081094:android:42006633163ee0a1b48c47"
+    private const val FALLBACK_GCM_SENDER_ID = "1040374081094"
+    private const val FALLBACK_STORAGE_BUCKET = "gen-lang-client-0738232271.firebasestorage.app"
+    private const val FALLBACK_WEB_CLIENT_ID = "1040374081094-dv0k8u6m5tnmaac35apduo5cu40bden6.apps.googleusercontent.com"
+
+    private fun resolveStringConfig(context: Context, name: String, fallback: String): String {
+        val pkgId = runCatching {
+            context.resources.getIdentifier(name, "string", context.packageName)
+        }.getOrDefault(0)
+        if (pkgId != 0) {
+            runCatching { context.getString(pkgId) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        val coreId = runCatching {
+            context.resources.getIdentifier(name, "string", "com.example.core")
+        }.getOrDefault(0)
+        if (coreId != 0) {
+            runCatching { context.getString(coreId) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        val legacyId = runCatching {
+            context.resources.getIdentifier(name, "string", "com.example")
+        }.getOrDefault(0)
+        if (legacyId != 0) {
+            runCatching { context.getString(legacyId) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return fallback
+    }
 
     fun ensureInitialized(context: Context): FirebaseApp? {
         val appContext = context.applicationContext
         val existing = runCatching { FirebaseApp.getApps(appContext) }.getOrDefault(emptyList())
         if (existing.isNotEmpty()) {
-            return FirebaseApp.getInstance()
+            return runCatching { FirebaseApp.getInstance() }.getOrNull()
         }
         return runCatching {
             FirebaseApp.initializeApp(appContext) ?: run {
-                val apiKeyId = appContext.resources.getIdentifier("google_api_key", "string", appContext.packageName)
-                    .takeIf { it != 0 }
-                    ?: appContext.resources.getIdentifier("google_api_key", "string", "com.example")
-                val apiKey = if (apiKeyId != 0) appContext.getString(apiKeyId) else ""
+                val apiKey = resolveStringConfig(appContext, "google_api_key", "")
                 if (apiKey.isNotBlank()) {
                     val options = FirebaseOptions.Builder()
-                        .setProjectId(appContext.getString(R.string.firebase_project_id))
-                        .setApplicationId(appContext.getString(R.string.firebase_application_id))
-                        .setGcmSenderId(appContext.getString(R.string.firebase_gcm_sender_id))
-                        .setStorageBucket(appContext.getString(R.string.firebase_storage_bucket))
+                        .setProjectId(resolveStringConfig(appContext, "firebase_project_id", EXPECTED_PROJECT_ID))
+                        .setApplicationId(resolveStringConfig(appContext, "firebase_application_id", FALLBACK_APPLICATION_ID))
+                        .setGcmSenderId(resolveStringConfig(appContext, "firebase_gcm_sender_id", FALLBACK_GCM_SENDER_ID))
+                        .setStorageBucket(resolveStringConfig(appContext, "firebase_storage_bucket", FALLBACK_STORAGE_BUCKET))
                         .setApiKey(apiKey)
                         .build()
                     FirebaseApp.initializeApp(appContext, options)
@@ -135,20 +158,21 @@ object QuickDeliveryFirebaseInitializer {
     }
 
     fun resolveWebClientId(context: Context): String {
-        val defaultId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-            .takeIf { it != 0 }
-            ?: context.resources.getIdentifier("default_web_client_id", "string", "com.example")
+        val defaultId = runCatching {
+            context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                .takeIf { it != 0 }
+                ?: context.resources.getIdentifier("default_web_client_id", "string", "com.example")
+        }.getOrDefault(0)
         if (defaultId != 0) {
-            return context.getString(defaultId)
+            runCatching { context.getString(defaultId) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
         }
-        return context.getString(R.string.firebase_web_client_id)
+        return resolveStringConfig(context, "firebase_web_client_id", FALLBACK_WEB_CLIENT_ID)
     }
 
     fun getFirestore(context: Context): FirebaseFirestore {
         ensureInitialized(context)
-        return FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        val dbId = resolveStringConfig(context.applicationContext, "firestore_database_id", EXPECTED_DATABASE_ID)
+        return FirebaseFirestore.getInstance(dbId)
     }
 }
 

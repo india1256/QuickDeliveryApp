@@ -64,6 +64,7 @@ data class AdminRemoteFeatureFlags(
     val updateNotes: String = "",
     val customerUpdateUrl: String = QuickDeliveryBrandLinks.CUSTOMER_APK_URL,
     val riderUpdateUrl: String = QuickDeliveryBrandLinks.RIDER_APK_URL,
+    val adminUpdateUrl: String = QuickDeliveryBrandLinks.ADMIN_APK_URL,
     val emergencyBookingsPaused: Boolean = false,
     val emergencyPauseReason: String = "New bookings are temporarily paused by Operations. Please try again shortly.",
     val operatingHoursEnabled: Boolean = false,
@@ -241,6 +242,7 @@ data class AdminRemoteFeatureFlags(
         put("updateNotes", updateNotes)
         put("customerUpdateUrl", customerUpdateUrl)
         put("riderUpdateUrl", riderUpdateUrl)
+        put("adminUpdateUrl", adminUpdateUrl)
         put("emergencyBookingsPaused", emergencyBookingsPaused)
         put("emergencyPauseReason", emergencyPauseReason)
         put("operatingHoursEnabled", operatingHoursEnabled)
@@ -346,6 +348,8 @@ data class AdminRemoteFeatureFlags(
                     .trim().ifBlank { QuickDeliveryBrandLinks.CUSTOMER_APK_URL },
                 riderUpdateUrl = obj.optString("riderUpdateUrl", QuickDeliveryBrandLinks.RIDER_APK_URL)
                     .trim().ifBlank { QuickDeliveryBrandLinks.RIDER_APK_URL },
+                adminUpdateUrl = obj.optString("adminUpdateUrl", QuickDeliveryBrandLinks.ADMIN_APK_URL)
+                    .trim().ifBlank { QuickDeliveryBrandLinks.ADMIN_APK_URL },
                 emergencyBookingsPaused = obj.optBoolean("emergencyBookingsPaused", false),
                 emergencyPauseReason = obj.optString(
                     "emergencyPauseReason",

@@ -13,7 +13,8 @@ const ROOT = process.cwd();
 const BRAND_DOMAIN = 'quickdelivery.co.in';
 const BRAND_ORIGIN = 'https://quickdelivery.co.in';
 const BRAND_SUPPORT_EMAIL = 'support@quickdelivery.co.in';
-const APP_SUITE_VERSION = '6.7.1';
+const APP_SUITE_VERSION = '6.7.2';
+const APP_SUITE_BUILD_CODE = 85;
 const ADMIN_ALLOWLIST_EMAILS = new Set([
   'ravindergupta141@gmail.com',
   'admin@quickdelivery.co.in',
@@ -2360,6 +2361,12 @@ function configureNginxDirectApkServing() {
             add_header Access-Control-Allow-Origin "*";
         }
 
+        location = /api/app-update-manifest {
+            proxy_pass http://localhost:3000/api/app-update-manifest;
+            proxy_set_header Host localhost:3000;
+            add_header Access-Control-Allow-Origin "*";
+        }
+
         location = /api/support-email-status {
             proxy_pass http://localhost:3000/api/support-email-status;
             proxy_set_header Host localhost:3000;
@@ -2510,6 +2517,38 @@ function maskOrderPiiForRole(orderObj, viewerRole = 'UNIFIED') {
   return cloned;
 }
 
+function buildServerAppUpdateManifest() {
+  const adminFlags = syncState.remoteFeatureFlags || {};
+  const adminCode = Number(adminFlags.latestAppVersionCode || 0);
+  const adminName = String(adminFlags.latestAppVersionName || '').trim();
+  const useAdminTarget = adminCode > APP_SUITE_BUILD_CODE;
+  return {
+    latestVersionCode: useAdminTarget ? adminCode : APP_SUITE_BUILD_CODE,
+    latestVersionName: useAdminTarget ? (adminName || APP_SUITE_VERSION) : APP_SUITE_VERSION,
+    forceUpdateRequired: useAdminTarget ? Boolean(adminFlags.forceUpdateRequired) : true,
+    updateNotes:
+      (useAdminTarget ? String(adminFlags.updateNotes || '').trim() : '') ||
+      `Quick Delivery v${APP_SUITE_VERSION} is required (startup stability fix, automatic mandatory update gate & live sync improvements).`,
+    customerUpdateUrl: `${BRAND_ORIGIN}/customer-apk`,
+    riderUpdateUrl: `${BRAND_ORIGIN}/rider-apk`,
+    adminUpdateUrl: `${BRAND_ORIGIN}/admin-apk`,
+    unifiedUpdateUrl: `${BRAND_ORIGIN}/suite`,
+    urls: {
+      CUSTOMER: `${BRAND_ORIGIN}/customer-apk`,
+      RIDER: `${BRAND_ORIGIN}/rider-apk`,
+      ADMIN: `${BRAND_ORIGIN}/admin-apk`,
+      UNIFIED: `${BRAND_ORIGIN}/suite`,
+    },
+    directDownloadUrls: {
+      CUSTOMER: `${BRAND_ORIGIN}/dl/QuickDelivery-Customer.apk`,
+      RIDER: `${BRAND_ORIGIN}/dl/QuickDelivery-Rider-Partner.apk`,
+      ADMIN: `${BRAND_ORIGIN}/dl/QuickDelivery-Admin-Enterprise.apk`,
+      UNIFIED: `${BRAND_ORIGIN}/dl/QuickDelivery-AllInOne-Hub.apk`,
+    },
+    publishedAtIso: new Date().toISOString(),
+  };
+}
+
 function buildSyncResponsePayload(viewerRole = 'UNIFIED') {
   const now = Date.now();
   const connectedDevices = [];
@@ -2525,6 +2564,7 @@ function buildSyncResponsePayload(viewerRole = 'UNIFIED') {
     ok: true,
     serverTimeEpochMs: now,
     resetEpochMs: syncState.resetEpochMs,
+    serverAppUpdate: buildServerAppUpdateManifest(),
     securityStats: ensureSecurityStats(),
     connectedDevices,
     orders: Object.values(syncState.ordersById)
@@ -4134,6 +4174,24 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ ok: false, error: 'Malformed webhook payload' }));
       }
     });
+    return;
+  }
+
+  if (pathname === '/api/app-update-manifest') {
+    const manifestJson = JSON.stringify(
+      {
+        ok: true,
+        ...buildServerAppUpdateManifest(),
+      },
+      null,
+      2
+    );
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(manifestJson);
     return;
   }
 

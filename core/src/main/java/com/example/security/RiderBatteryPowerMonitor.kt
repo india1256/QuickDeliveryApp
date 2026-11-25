@@ -216,7 +216,14 @@ fun RiderBatteryPowerMonitorCard(
             addAction(Intent.ACTION_BATTERY_CHANGED)
             addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
         }
-        runCatching { context.registerReceiver(receiver, filter) }
+        runCatching {
+            androidx.core.content.ContextCompat.registerReceiver(
+                context,
+                receiver,
+                filter,
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        }
         onDispose {
             runCatching { context.unregisterReceiver(receiver) }
         }

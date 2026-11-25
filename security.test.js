@@ -360,8 +360,8 @@ test('7. Rider Battery Monitoring Service: automatically throttles GPS update fr
 test('8. OTP Email & Root Website Security: OTP emails must NOT link to quickdelivery.co.in and root / must serve public brand page without exposing Admin/Rider APKs', () => {
   const serverSource = fs.readFileSync('./scripts/apk-download-server.mjs', 'utf8');
 
-  // 8a. Suite version synced to 6.7.1
-  assert.match(serverSource, /const APP_SUITE_VERSION = '6\.7\.1';/);
+  // 8a. Suite version synced to 6.7.2
+  assert.match(serverSource, /const APP_SUITE_VERSION = '6\.7\.2';/);
 
   // 8b. Extract send-email-otp handler and verify ZERO clickable quickdelivery.co.in links in OTP text/HTML
   const otpStart = serverSource.indexOf("if (pathname === '/api/auth/send-email-otp' && req.method === 'POST')");
@@ -930,6 +930,21 @@ test('13. Post-Delivery Rider Phone Masking, Admin Chat Audit, Strong Policies &
     const adminData = await adminSyncRes.json();
     const adminDoneOrd = adminData.orders.find((o) => o.orderId === 'QD-MASK-DONE');
     assert.equal(adminDoneOrd.customerPhone, '9845099887', 'Admin audit keeps full number');
+    assert.ok(adminData.serverAppUpdate, '/api/live-sync must expose serverAppUpdate manifest');
+    assert.equal(adminData.serverAppUpdate.latestVersionName, '6.7.2');
+    assert.equal(adminData.serverAppUpdate.latestVersionCode, 85);
+    assert.equal(adminData.serverAppUpdate.forceUpdateRequired, true);
+
+    const manifestRes = await fetch(`${baseUrl}/api/app-update-manifest`);
+    assert.equal(manifestRes.status, 200);
+    const manifestData = await manifestRes.json();
+    assert.equal(manifestData.ok, true);
+    assert.equal(manifestData.latestVersionName, '6.7.2');
+    assert.equal(manifestData.latestVersionCode, 85);
+    assert.equal(manifestData.forceUpdateRequired, true);
+    assert.match(manifestData.urls.CUSTOMER, /\/customer-apk$/);
+    assert.match(manifestData.urls.RIDER, /\/rider-apk$/);
+    assert.match(manifestData.urls.ADMIN, /\/admin-apk$/);
 
     assert.match(serverSource, /100% financial recovery of the shipment amount/);
   } finally {
