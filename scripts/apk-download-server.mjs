@@ -77,7 +77,7 @@ function resolvePersistentStoragePaths() {
 const STORAGE_PATHS = resolvePersistentStoragePaths();
 const SYNC_STATE_FILE = STORAGE_PATHS.syncFile;
 const BACKUP_DIR = STORAGE_PATHS.backupDir;
-const CLOUD_RUN_MAX_SAFE_APK_BYTES = 33000000; // < 31.5 MiB (well below Cloud Run's 32 MiB = 33,554,432 limit)
+const CLOUD_RUN_MAX_SAFE_APK_BYTES = 65000000; // < 62 MiB
 
 const APK_FILE_NAMES = [
   'QuickDelivery-Customer.apk',
@@ -2594,8 +2594,9 @@ function buildSyncResponsePayload(viewerRole = 'UNIFIED') {
 }
 
 const server = http.createServer((req, res) => {
-  const rawUrl = req.url || '/';
-  const [pathname, queryString = ''] = rawUrl.split('?');
+  try {
+    const rawUrl = req.url || '/';
+    const [pathname, queryString = ''] = rawUrl.split('?');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -4807,6 +4808,13 @@ const server = http.createServer((req, res) => {
     return;
   }
   res.end(buf);
+  } catch (err) {
+    console.error('Server request error:', err);
+    try {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end('Quick Delivery Server Error: ' + (err?.message || String(err)));
+    } catch {}
+  }
 });
 
 server.on('error', () => {
