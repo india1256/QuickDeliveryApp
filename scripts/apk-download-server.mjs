@@ -77,7 +77,7 @@ function resolvePersistentStoragePaths() {
 const STORAGE_PATHS = resolvePersistentStoragePaths();
 const SYNC_STATE_FILE = STORAGE_PATHS.syncFile;
 const BACKUP_DIR = STORAGE_PATHS.backupDir;
-const CLOUD_RUN_MAX_SAFE_APK_BYTES = 65000000; // < 62 MiB
+const CLOUD_RUN_MAX_SAFE_APK_BYTES = 33400000; // Strictly < 32.00 MiB (33,554,432 bytes) Cloud Run HTTP/1.1 response limit
 
 const APK_FILE_NAMES = [
   'QuickDelivery-Customer.apk',
@@ -98,8 +98,8 @@ function isValidStandaloneApk(filePath) {
 
 function resolveSourceApkPath(requestedFileName = '') {
   const candidates = [
-    requestedFileName ? path.join('/var/www/assets/apks', requestedFileName) : '',
     requestedFileName ? path.join(ROOT, 'public', 'apks', requestedFileName) : '',
+    requestedFileName ? path.join('/var/www/assets/apks', requestedFileName) : '',
   ].filter(Boolean);
 
   for (const candidate of candidates) {
@@ -2230,7 +2230,7 @@ function configureNginxDirectApkServing() {
             types { }
             default_type application/vnd.android.package-archive;
             add_header Content-Disposition 'attachment; filename="${getVersionedDownloadFileName('QuickDelivery-Customer.apk')}"';
-            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            add_header Cache-Control "public, max-age=60, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
@@ -2240,7 +2240,7 @@ function configureNginxDirectApkServing() {
             types { }
             default_type application/vnd.android.package-archive;
             add_header Content-Disposition 'attachment; filename="${getVersionedDownloadFileName('QuickDelivery-Rider-Partner.apk')}"';
-            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            add_header Cache-Control "public, max-age=60, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
@@ -2250,7 +2250,7 @@ function configureNginxDirectApkServing() {
             types { }
             default_type application/vnd.android.package-archive;
             add_header Content-Disposition 'attachment; filename="${getVersionedDownloadFileName('QuickDelivery-Admin-Enterprise.apk')}"';
-            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            add_header Cache-Control "public, max-age=60, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
@@ -2260,7 +2260,7 @@ function configureNginxDirectApkServing() {
             types { }
             default_type application/vnd.android.package-archive;
             add_header Content-Disposition 'attachment; filename="${getVersionedDownloadFileName('QuickDelivery-AllInOne-Hub.apk')}"';
-            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            add_header Cache-Control "public, max-age=60, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }
@@ -2342,7 +2342,7 @@ function configureNginxDirectApkServing() {
             types { }
             default_type application/vnd.android.package-archive;
             add_header Content-Disposition "attachment";
-            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            add_header Cache-Control "public, max-age=60, must-revalidate";
             add_header Access-Control-Allow-Origin "*";
             add_header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges";
         }

@@ -449,21 +449,39 @@ def main():
         subprocess.run([APKSIGNER_BIN, "verify", signed_tmp], check=True)
 
         signed_apk = open(signed_tmp, "rb").read()
+        CLOUD_RUN_MAX_SAFE_BYTES = 33400000
         out_pub = os.path.join("public/apks", filename)
-        out_pub_tmp = out_pub + ".tmp"
-        with open(out_pub_tmp, "wb") as f:
-            f.write(signed_apk)
-        os.replace(out_pub_tmp, out_pub)
+        pub_valid_under_cap = False
+        if os.path.exists(out_pub) and 1000000 < os.path.getsize(out_pub) < CLOUD_RUN_MAX_SAFE_BYTES:
+            try:
+                subprocess.run([ZIPALIGN_BIN, "-c", "4", out_pub], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run([APKSIGNER_BIN, "verify", out_pub], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                pub_valid_under_cap = True
+            except Exception:
+                pub_valid_under_cap = False
+
+        if len(signed_apk) >= CLOUD_RUN_MAX_SAFE_BYTES and pub_valid_under_cap:
+            print(
+                f"Preserving Cloud Run-safe (<32 MiB) {filename} ({os.path.getsize(out_pub)} bytes); skipped oversized {len(signed_apk)} byte output."
+            )
+            apk_to_publish = open(out_pub, "rb").read()
+        else:
+            out_pub_tmp = out_pub + ".tmp"
+            with open(out_pub_tmp, "wb") as f:
+                f.write(signed_apk)
+            os.replace(out_pub_tmp, out_pub)
+            apk_to_publish = signed_apk
+            print(f"Built, zipaligned & v1/v2/v3-signed {filename} ({len(signed_apk)} bytes) for role={role}")
+
         if www_apks_writable:
             try:
                 out_www = os.path.join("/var/www/assets/apks", filename)
                 out_www_tmp = out_www + ".tmp"
                 with open(out_www_tmp, "wb") as f:
-                    f.write(signed_apk)
+                    f.write(apk_to_publish)
                 os.replace(out_www_tmp, out_www)
             except OSError:
                 pass
-        print(f"Built, zipaligned & v1/v2/v3-signed {filename} ({len(signed_apk)} bytes) for role={role}")
 
 
 if __name__ == "__main__":
