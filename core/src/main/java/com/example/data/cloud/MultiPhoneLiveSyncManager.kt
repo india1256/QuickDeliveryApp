@@ -74,12 +74,39 @@ object MultiPhoneLiveSyncManager {
     private const val PREFS_NAME = "quick_delivery_multi_phone_live_sync_prefs"
     private const val KEY_DEVICE_ID = "device_id"
     private const val KEY_LOCKED_ROLE = "locked_phone_role"
+    private const val KEY_CUSTOM_SYNC_ENDPOINT = "custom_sync_endpoint"
 
     private val LIVE_SYNC_ENDPOINTS = listOf(
         QuickDeliveryBrandLinks.LIVE_SYNC_API_URL
     )
 
     fun getConfiguredSyncEndpoints(): List<String> = LIVE_SYNC_ENDPOINTS
+
+    fun getCustomSyncEndpoint(context: Context): String {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString(KEY_CUSTOM_SYNC_ENDPOINT, "").orEmpty()
+    }
+
+    fun setCustomSyncEndpoint(context: Context, endpointUrl: String) {
+        val clean = endpointUrl.trim().removeSuffix("/")
+        val fullUrl = if (clean.endsWith("/api/live-sync")) clean else "$clean/api/live-sync"
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_CUSTOM_SYNC_ENDPOINT, fullUrl).apply()
+        triggerImmediateSync(context)
+    }
+
+    private fun getOrderedEndpointsForPath(context: Context, apiPath: String): List<String> {
+        val custom = getCustomSyncEndpoint(context)
+        val customTarget = if (custom.isNotBlank()) custom.replace("/api/live-sync", apiPath) else ""
+        return buildList {
+            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", apiPath)) }
+            if (customTarget.isNotBlank() && customTarget !in this) add(customTarget)
+            LIVE_SYNC_ENDPOINTS.forEach { ep ->
+                val target = ep.replace("/api/live-sync", apiPath)
+                if (target !in this) add(target)
+            }
+        }
+    }
 
     @Volatile
     private var lastWorkingEndpoint: String? = null
@@ -357,10 +384,7 @@ object MultiPhoneLiveSyncManager {
             put("chatMessages", com.example.ui.components.OrderLiveChatManager.exportAllMessagesToJsonArray())
         }
 
-        val orderedEndpoints = buildList {
-            lastWorkingEndpoint?.let { add(it) }
-            LIVE_SYNC_ENDPOINTS.forEach { if (it != lastWorkingEndpoint) add(it) }
-        }
+        val orderedEndpoints = getOrderedEndpointsForPath(context, "/api/live-sync")
         val syncTs = System.currentTimeMillis()
         val syncSig = com.example.security.QuickDeliverySecurityGuard.computeSyncIntegritySignature(
             deviceId = deviceId,
@@ -1125,13 +1149,7 @@ object MultiPhoneLiveSyncManager {
             role = cleanRole,
             timestampEpochMs = syncTs
         )
-        val orderedEndpoints = buildList {
-            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", apiPath)) }
-            LIVE_SYNC_ENDPOINTS.forEach { ep ->
-                val target = ep.replace("/api/live-sync", apiPath)
-                if (target !in this) add(target)
-            }
-        }
+        val orderedEndpoints = getOrderedEndpointsForPath(context, apiPath)
         var lastErrorMsg = "Could not connect to Quick Delivery verification server."
         for (endpoint in orderedEndpoints) {
             val isPrimary = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
@@ -1181,13 +1199,7 @@ object MultiPhoneLiveSyncManager {
      * Pings GET /api/health to detect Online / Render Waking Up / Offline status with live counts.
      */
     fun pingServerHealth(context: Context): ServerHealthSnapshot {
-        val orderedEndpoints = buildList {
-            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/health")) }
-            LIVE_SYNC_ENDPOINTS.forEach { ep ->
-                val target = ep.replace("/api/live-sync", "/api/health")
-                if (target !in this) add(target)
-            }
-        }
+        val orderedEndpoints = getOrderedEndpointsForPath(context, "/api/health")
         var lastErr = "Server unreachable"
         var sawColdStart = false
         for (endpoint in orderedEndpoints) {
@@ -1259,13 +1271,7 @@ object MultiPhoneLiveSyncManager {
             role = "ADMIN",
             timestampEpochMs = syncTs
         )
-        val orderedEndpoints = buildList {
-            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/backup-export")) }
-            LIVE_SYNC_ENDPOINTS.forEach { ep ->
-                val target = ep.replace("/api/live-sync", "/api/backup-export")
-                if (target !in this) add(target)
-            }
-        }
+        val orderedEndpoints = getOrderedEndpointsForPath(context, "/api/backup-export")
         var lastError = "Unable to download cloud backup."
         for (endpoint in orderedEndpoints) {
             val isPrimary = endpoint.contains("quickdelivery.co.in", ignoreCase = true) ||
@@ -1312,13 +1318,7 @@ object MultiPhoneLiveSyncManager {
             role = "ADMIN",
             timestampEpochMs = syncTs
         )
-        val orderedEndpoints = buildList {
-            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/backup-restore")) }
-            LIVE_SYNC_ENDPOINTS.forEach { ep ->
-                val target = ep.replace("/api/live-sync", "/api/backup-restore")
-                if (target !in this) add(target)
-            }
-        }
+        val orderedEndpoints = getOrderedEndpointsForPath(context, "/api/backup-restore")
         val payload = JSONObject().apply {
             put("deviceId", deviceId)
             put("snapshot", parsed)
@@ -1375,13 +1375,7 @@ object MultiPhoneLiveSyncManager {
             role = "ADMIN",
             timestampEpochMs = syncTs
         )
-        val orderedEndpoints = buildList {
-            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/backup-email")) }
-            LIVE_SYNC_ENDPOINTS.forEach { ep ->
-                val target = ep.replace("/api/live-sync", "/api/backup-email")
-                if (target !in this) add(target)
-            }
-        }
+        val orderedEndpoints = getOrderedEndpointsForPath(context, "/api/backup-email")
         val payload = JSONObject().apply { put("deviceId", deviceId) }
         var lastError = "Unable to trigger backup email right now."
         for (endpoint in orderedEndpoints) {
@@ -1429,12 +1423,7 @@ object MultiPhoneLiveSyncManager {
     suspend fun checkAppUpdateManifestOnce(context: Context): ServerAppUpdateManifest? = withContext(Dispatchers.IO) {
         if (isRobolectricUnitTest) return@withContext null
         val appContext = context.applicationContext
-        val orderedEndpoints = buildList {
-            lastWorkingEndpoint?.let { add(it.replace("/api/live-sync", "/api/app-update-manifest")) }
-            LIVE_SYNC_ENDPOINTS.forEach { ep ->
-                val target = ep.replace("/api/live-sync", "/api/app-update-manifest")
-                if (target !in this) add(target)
-            }
+        val orderedEndpoints = getOrderedEndpointsForPath(context, "/api/app-update-manifest").toMutableList().apply {
             if (QuickDeliveryBrandLinks.APP_UPDATE_MANIFEST_URL !in this) {
                 add(QuickDeliveryBrandLinks.APP_UPDATE_MANIFEST_URL)
             }
